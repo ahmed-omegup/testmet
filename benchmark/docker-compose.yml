@@ -16,11 +16,17 @@ services:
       - METEOR_ALLOW_SUPERUSER=true
     depends_on:
       - mongo
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   tester:
     build: ./tester
     depends_on:
-      - meteor
+      meteor:
+        condition: service_healthy
     environment:
       - MONGO_URL=mongodb://mongo:27017/benchmark
       - METEOR_URL=ws://meteor:3000/websocket

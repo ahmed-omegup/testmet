@@ -2,8 +2,9 @@ FROM node:20
 
 WORKDIR /app
 
-# Install Meteor
-RUN curl https://install.meteor.com/ | sh
+# Install Meteor and curl for health check
+RUN curl https://install.meteor.com/ | sh && \
+    apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 # Initialize Meteor project
 RUN meteor create --release 3.0.2 --bare --allow-superuser temp && \

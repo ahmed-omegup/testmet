@@ -52,27 +52,67 @@ function customerRange(c) {
   return [a, Math.min(1000, a + width)];
 }
 
-async function spawnCustomers() {
-  const start = Date.now();
-  let active = 0;
-  for (let c = 0; c < CUSTOMERS; c++) {
-    const ws = new WebSocket(METEOR_URL);
-    const [a, b] = customerRange(c);
-    ws.on("open", () => {
-      ws.send(
-        JSON.stringify({
-          msg: "sub",
-          id: `sub${c}`,
-          name: "latestDocs",
-          params: [a, b],
-        })
-      );
-      active++;
-    });
-    if (c % 1000 === 0) console.log(`Spawned ${c} customers`);
-    await sleep(0.1); // 100 µs each
+async function spawnCustomers(count) {
+  const customers = [];
+  let successful = 0;
+  let failed = 0;
+  
+  for (let i = 0; i < count; i++) {
+    try {
+      const ws = new WebSocket('ws://meteor:3000/websocket', {
+        handshakeTimeout: 30000 // 30 second timeout instead of 10
+      });
+      
+      // Add error handler before waiting for open
+      ws.on('error', (err) => {
+        console.error(`WS error for customer ${i}:`, err.message);
+        failed++;
+      });
+      
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Connection timeout'));
+        }, 30000);
+        
+        ws.on('open', () => {
+          clearTimeout(timeout);
+          // Send DDP connect message
+          ws.send(JSON.stringify({ msg: 'connect', version: '1', support: ['1'] }));
+          resolve();
+        });
+        
+        ws.on('error', (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        });
+      });
+
+      // After connection, subscribe to a random range
+      const a = Math.floor(prng() * 800000);
+      const b = a + 200000;
+      const subId = `sub_${i}`;
+      ws.send(JSON.stringify({ msg: 'sub', id: subId, name: 'latestDocs', params: [a, b] }));
+
+      customers.push(ws);
+      successful++;
+      
+      // Slow down spawn rate: wait 10ms every 100 connections
+      if ((i + 1) % 100 === 0) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    } catch (err) {
+      failed++;
+      console.error(`Failed to spawn customer ${i}:`, err.message);
+      // Continue trying to spawn more customers
+    }
+
+    if ((successful + failed) % 1000 === 0) {
+      console.log(`Progress: ${successful} connected, ${failed} failed (total attempted: ${successful + failed})`);
+    }
   }
-  console.log(`All ${CUSTOMERS} customers started in ${Date.now() - start}ms`);
+  
+  console.log(`\nFinal: ${successful} customers connected, ${failed} failed`);
+  return customers;
 }
 
 async function periodicUpdates() {
@@ -126,7 +166,17 @@ async function periodicUpdates() {
 }
 
 (async () => {
-  await seedDb();
-  await spawnCustomers();
+  // Seed database with 1M documents
+  await seedDb(1000000);
+  
+  // Spawn 10,000 simulated customers (realistic load test)
+  const customers = await spawnCustomers(10000);
+  
+  // Run 10 seconds of updates/inserts/deletes
   await periodicUpdates();
+  
+  // Cleanup
+  customers.forEach(ws => ws.close());
+  console.log('Benchmark complete!');
+  process.exit(0);
 })();
