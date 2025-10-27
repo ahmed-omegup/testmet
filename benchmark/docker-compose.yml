@@ -3,28 +3,22 @@ version: "3.9"
 services:
   mongo:
     image: mongo:6
-    container_name: mongo
     restart: unless-stopped
-    ports:
-      - "27017:27017"
     volumes:
       - mongo_data:/data/db
 
   meteor:
     build: ./meteor
-    container_name: meteor
     restart: unless-stopped
     environment:
       - MONGO_URL=mongodb://mongo:27017/benchmark
       - PORT=3000
+      - METEOR_ALLOW_SUPERUSER=true
     depends_on:
       - mongo
-    ports:
-      - "3000:3000"
 
   tester:
     build: ./tester
-    container_name: tester
     depends_on:
       - meteor
     environment:

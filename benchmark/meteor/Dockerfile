@@ -2,8 +2,13 @@ FROM node:20
 
 WORKDIR /app
 
-# Meteor 3 CLI (async/await–based)
-RUN npm install -g meteor@3.0.0-beta.9
+# Install Meteor
+RUN curl https://install.meteor.com/ | sh
+
+# Initialize Meteor project
+RUN meteor create --release 3.0.2 --bare --allow-superuser temp && \
+    mv temp/.meteor .meteor && \
+    rm -rf temp
 
 COPY package.json .
 RUN npm install
@@ -11,4 +16,4 @@ RUN npm install
 COPY . .
 
 EXPOSE 3000
-CMD ["meteor", "run", "--port", "3000", "--once"]
+CMD ["meteor", "run", "--port", "3000", "--release", "3.0.2"]
