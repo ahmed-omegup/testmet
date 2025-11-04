@@ -7,6 +7,7 @@ const METEOR_URL = process.env.METEOR_URL;
 const CUSTOMERS = parseInt(process.env.CUSTOMERS || "20000");
 const DURATION = parseInt(process.env.DURATION || "10");
 const INIT_TIME = parseInt(process.env.INIT_TIME || "10");
+const N = parseInt(process.env.DOCUMENTS || "1000000");
 
 // Deterministic PRNG
 function prng(seed) {
@@ -34,7 +35,6 @@ async function seedDb() {
     await docs.drop({});
     console.log("DB cleared");
 
-    const N = 1_000_000;
     console.log(`Seeding ${N} documents...`);
     const bulk = [];
     for (let i = 0; i < N; i++) {
@@ -65,9 +65,9 @@ async function seedDb() {
 }
 
 function customerRange(c) {
-  const a = (c % 10_000) * 0.9;
-  const width = 50 + (c % 200);
-  return [Math.floor(a), Math.min(1000, Math.floor(a + width))];
+  const width = 100 + Math.floor(rand() % 500);
+  const a = (rand() * (N - width));
+  return [Math.floor(a), Math.floor(a + width)];
 }
 
 async function spawnCustomers(count, initTime) {
@@ -98,13 +98,11 @@ async function spawnCustomers(count, initTime) {
     });
 
     let n = 0;
-    const ww = i === 100 ? fs.openSync('ws_message.log', 'w') : null;
+    const ww = i === 100 ? fs.openSync('./log/ws_message.log', 'w') : null;
     ws.on('message', (data) => {
       try {
         if(i === 100) {
-          fs.write(ww, data + '\n', { flag: 'a' }, err => {
-            if (err) fatal('Failed to write ws message log:', err);
-          });
+          fs.writeSync(ww, data + '\n', { flag: 'a' });
         }
         const msg = JSON.parse(data);
         if (msg.msg === 'added') n++;
@@ -124,8 +122,16 @@ async function spawnCustomers(count, initTime) {
       fatal(`WebSocket error for customer ${i}`, err);
     });
 
-    customers.push(ws);
-    
+    customers.push(new Promise((resolve) => {
+      ws.on('close', () => {
+        if (n) {
+          fatal(`WebSocket closed unexpectedly for customer ${i}, still holding ${n} documents`);
+        }
+        if(i === 100) fs.closeSync(ww);
+        resolve(i);
+      });
+    }));
+
     // Progress every 10k customers
     if ((i + 1) % 100 === 0) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
@@ -150,11 +156,10 @@ async function periodicUpdates(duration) {
   try {
     await client.connect();
     const docs = client.db("benchmark").collection("docs");
-    const N = 1_000_000; // We know we seeded 1M docs
     
-    const updatesPerTick = Math.floor(0.05 * N); // 5% updates
-    const insertsPerTick = Math.floor(0.01 * N); // 1% inserts
-    const deletesPerTick = Math.floor(0.01 * N); // 1% deletes
+    const updatesPerTick = Math.floor(0.5 * N); // 5% updates
+    const insertsPerTick = Math.floor(0.1 * N); // 1% inserts
+    const deletesPerTick = Math.floor(0.1 * N); // 1% deletes
     
     for (let tick = 0; tick < duration; tick++) {
       const tickStart = Date.now();
@@ -230,10 +235,9 @@ async function periodicUpdates(duration) {
     await periodicUpdates(DURATION);
     
     // Cleanup
-    console.log("\n=== CLEANUP ===");
-    customers.forEach(ws => ws.close());
-    
-    console.log("\n=== BENCHMARK COMPLETE ===");
+    console.log("\n=== WAITING FOR CUSTOMERS TO FINISH ===");
+    const res = await Promise.all(customers);
+    console.log("\n=== BENCHMARK COMPLETE ===", res);
   } catch (err) {
     fatal("Benchmark failed", err);
   }
