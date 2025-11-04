@@ -1,0 +1,15 @@
+{
+  "name": "meteor-benchmark",
+  "private": true,
+  "scripts": {
+    "start": "meteor run"
+  },
+  "dependencies": {
+    "@babel/runtime": "^7.20.0"
+  },
+  "meteor": {
+    "mainModule": {
+      "server": "server/main.js"
+    }
+  }
+}
