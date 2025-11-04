@@ -47,10 +47,10 @@ services:
     environment:
       - MONGO_URL=mongodb://mongo:27017/benchmark?replicaSet=rs0&directConnection=true
       - METEOR_URL=ws://meteor:3000/websocket
-      - CUSTOMERS=500
+      - CUSTOMERS=100
       - DURATION=10
       - INIT_TIME=10
-      - DOCUMENTS=10000
+      - DOCUMENTS=1000
     volumes:
       - ./tester/main.js:/app/main.js
       - ./tester/log:/app/log

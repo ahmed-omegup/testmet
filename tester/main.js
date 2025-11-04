@@ -65,8 +65,8 @@ async function seedDb() {
 }
 
 function customerRange(c) {
-  const width = 100 + Math.floor(rand() % 500);
-  const a = (rand() * (N - width));
+  const width = 100 + rand() * 500;
+  const a = rand() * (1000 - width);
   return [Math.floor(a), Math.floor(a + width)];
 }
 
@@ -87,26 +87,28 @@ async function spawnCustomers(count, initTime) {
     });
     
     // Handle connection and send messages when ready
+    const ww = i === 0 ? fs.openSync('./log/ws_message.log', 'w') : null;
     ws.on('open', () => {
       // Send DDP connect message
-      ws.send(JSON.stringify({ msg: 'connect', version: '1', support: ['1'] }));
+      const connect = JSON.stringify({ msg: 'connect', version: '1', support: ['1'] })
+      ws.send(connect);
+      ww && fs.writeSync(ww, '-> ' + new Date() + ': ' + connect + '\n', { flag: 'a' });
       
       // Subscribe to deterministic range
       const [a, b] = customerRange(i);
       const subId = `sub_${i}`;
-      ws.send(JSON.stringify({ msg: 'sub', id: subId, name: 'latestDocs', params: [a, b] }));
+      const subsMsg = JSON.stringify({ msg: 'sub', id: subId, name: 'latestDocs', params: [a, b] })
+      ws.send(subsMsg);
+      ww && fs.writeSync(ww, '-> ' + new Date() + ': ' + subsMsg + '\n', { flag: 'a' });
     });
 
     let n = 0;
-    const ww = i === 100 ? fs.openSync('./log/ws_message.log', 'w') : null;
     ws.on('message', (data) => {
       try {
-        if(i === 100) {
-          fs.writeSync(ww, data + '\n', { flag: 'a' });
-        }
+        ww && fs.writeSync(ww, '<- ' + new Date() + ': ' + data + '\n', { flag: 'a' });
         const msg = JSON.parse(data);
         if (msg.msg === 'added') n++;
-        if (msg.msg === 'removed') {
+        if (msg.msg === 'removed' || ['changed', 'added'].includes(msg.msg) && msg.fields.timestamp === -1) {
           n--;
           if (n === 0) {
             console.log(`Customer ${i} received all documents, closing connection`);
@@ -127,7 +129,7 @@ async function spawnCustomers(count, initTime) {
         if (n) {
           fatal(`WebSocket closed unexpectedly for customer ${i}, still holding ${n} documents`);
         }
-        if(i === 100) fs.closeSync(ww);
+        if(i === 0) fs.closeSync(ww);
         resolve(i);
       });
     }));
@@ -210,7 +212,7 @@ async function periodicUpdates(duration) {
         await sleep(remaining);
       }
     }
-    await docs.deleteMany({}); // Clean up after updates
+    await docs.updateMany({}, {$set: {timestamp: -1}}); // Clean up after updates
   } catch (err) {
     fatal("Periodic updates failed", err);
   } finally {
