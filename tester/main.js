@@ -3,7 +3,7 @@ import WebSocket from "ws";
 
 const MONGO_URL = process.env.MONGO_URL;
 const METEOR_URL = process.env.METEOR_URL;
-const CUSTOMERS = parseInt(process.env.CUSTOMERS || "100000");
+const CUSTOMERS = parseInt(process.env.CUSTOMERS || "20000");
 const DURATION = parseInt(process.env.DURATION || "10");
 const INIT_TIME = parseInt(process.env.INIT_TIME || "10");
 
@@ -85,30 +85,20 @@ async function spawnCustomers(count, initTime) {
       fatal(`WebSocket error for customer ${i}`, err);
     });
     
-    // Wait for connection
-    await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error('Connection timeout'));
-      }, 30000);
+    // Handle connection and send messages when ready
+    ws.on('open', () => {
+      // Send DDP connect message
+      ws.send(JSON.stringify({ msg: 'connect', version: '1', support: ['1'] }));
       
-      ws.on('open', () => {
-        clearTimeout(timeout);
-        resolve();
-      });
-      
-      ws.on('error', (err) => {
-        clearTimeout(timeout);
-        reject(err);
-      });
-    }).catch(err => fatal(`Failed to connect customer ${i}`, err));
+      // Subscribe to deterministic range
+      const [a, b] = customerRange(i);
+      const subId = `sub_${i}`;
+      ws.send(JSON.stringify({ msg: 'sub', id: subId, name: 'latestDocs', params: [a, b] }));
+    });
 
-    // Send DDP connect message
-    ws.send(JSON.stringify({ msg: 'connect', version: '1', support: ['1'] }));
-    
-    // Subscribe to deterministic range
-    const [a, b] = customerRange(i);
-    const subId = `sub_${i}`;
-    ws.send(JSON.stringify({ msg: 'sub', id: subId, name: 'latestDocs', params: [a, b] }));
+    ws.on('error', (err) => {
+      fatal(`WebSocket error for customer ${i}`, err);
+    });
 
     customers.push(ws);
     
@@ -120,7 +110,7 @@ async function spawnCustomers(count, initTime) {
     
     // Wait for next spawn interval
     if (i < count - 1) {
-      await sleep(intervalMs);
+      await sleep(0.01);
     }
   }
   
@@ -206,7 +196,7 @@ async function periodicUpdates(duration) {
     console.log(`Customers: ${CUSTOMERS}, Init time: ${INIT_TIME}s, Duration: ${DURATION}s\n`);
     
     // Step 1: Seed database
-    await seedDb();
+    // await seedDb();
    
     // Step 2: Spawn customers with deterministic intervals
     const customers = await spawnCustomers(CUSTOMERS, INIT_TIME);

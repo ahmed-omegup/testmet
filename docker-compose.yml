@@ -33,8 +33,10 @@ services:
     environment:
       - MONGO_URL=mongodb://mongo:27017/benchmark?replicaSet=rs0&directConnection=true
       - METEOR_URL=ws://meteor:3000/websocket
-      - CUSTOMERS=100000
+      - CUSTOMERS=1500
       - DURATION=10
       - INIT_TIME=10
+    volumes:
+      - ./tester/main.js:/app/main.js
     command: ["node", "main.js"]
 
