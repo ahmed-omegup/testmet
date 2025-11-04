@@ -30,7 +30,7 @@ async function seedDb() {
     const db = client.db("benchmark");
     const docs = db.collection("docs");
     
-    await docs.deleteMany({});
+    await docs.drop({});
     console.log("DB cleared");
 
     const N = 1_000_000;
@@ -49,11 +49,13 @@ async function seedDb() {
       });
       if (bulk.length === 10_000) {
         await docs.bulkWrite(bulk);
+        console.log(`  Inserted ${i + 1}/${N} documents`);
         bulk.length = 0;
       }
     }
     if (bulk.length) await docs.bulkWrite(bulk);
-    console.log(`Seeding complete: ${N} documents inserted`);
+    const [{ total }] = await docs.aggregate([{$count: 'total'}]).toArray();
+    console.log(`Seeding complete: ${total}/${N} documents inserted`);
   } catch (err) {
     fatal("Failed to seed database", err);
   } finally {
@@ -111,7 +113,7 @@ async function spawnCustomers(count, initTime) {
     customers.push(ws);
     
     // Progress every 10k customers
-    if ((i + 1) % 10000 === 0) {
+    if ((i + 1) % 100 === 0) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
       console.log(`Progress: ${i + 1}/${count} customers connected (${elapsed}s)`);
     }
@@ -204,8 +206,8 @@ async function periodicUpdates(duration) {
     console.log(`Customers: ${CUSTOMERS}, Init time: ${INIT_TIME}s, Duration: ${DURATION}s\n`);
     
     // Step 1: Seed database
-    await seedDb();
-    
+    // await seedDb();
+   
     // Step 2: Spawn customers with deterministic intervals
     const customers = await spawnCustomers(CUSTOMERS, INIT_TIME);
     

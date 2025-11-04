@@ -6,10 +6,9 @@ services:
     command:
       - --storageEngine=wiredTiger
       - --replSet=rs0
+      - --quiet
     volumes:
       - ./mongo/init-rs.js:/docker-entrypoint-initdb.d/init-rs.js
-    logging:
-      driver: "none"
 
   meteor:
     build: ./meteor
