@@ -206,7 +206,7 @@ async function periodicUpdates(duration) {
     console.log(`Customers: ${CUSTOMERS}, Init time: ${INIT_TIME}s, Duration: ${DURATION}s\n`);
     
     // Step 1: Seed database
-    // await seedDb();
+    await seedDb();
    
     // Step 2: Spawn customers with deterministic intervals
     const customers = await spawnCustomers(CUSTOMERS, INIT_TIME);
