@@ -22,6 +22,7 @@ services:
     restart: unless-stopped
     environment:
       - MONGO_URL=mongodb://mongo:27017/benchmark?replicaSet=rs0&directConnection=true
+      - OPLOG_URL=mongodb://mongo:27017/local?replicaSet=rs0&directConnection=true
       - PORT=3000
       - METEOR_ALLOW_SUPERUSER=true
     depends_on:
@@ -50,7 +51,7 @@ services:
       - CUSTOMERS=500
       - DURATION=10
       - INIT_TIME=10
-      - DOCUMENTS=1000000
+      - DOCUMENTS=10000
     volumes:
       - ./tester/main.js:/app/main.js
       - ./tester/log:/app/log

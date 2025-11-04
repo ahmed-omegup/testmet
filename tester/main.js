@@ -8,7 +8,6 @@ const CUSTOMERS = parseInt(process.env.CUSTOMERS || "20000");
 const DURATION = parseInt(process.env.DURATION || "10");
 const INIT_TIME = parseInt(process.env.INIT_TIME || "10");
 const N = parseInt(process.env.DOCUMENTS || "1000000");
-const RANGE = N;
 
 // Deterministic PRNG
 function prng(seed) {
@@ -44,7 +43,7 @@ async function seedDb() {
           document: {
             _id: `doc_${i}`,
             name: `doc_${i}`,
-            score: Math.floor(rand() * RANGE),
+            score: Math.floor(rand() * 1000),
             timestamp: i,
           },
         },
@@ -67,7 +66,7 @@ async function seedDb() {
 
 function customerRange(c) {
   const width = 100 + rand() * 500;
-  const a = rand() * (RANGE - width);
+  const a = rand() * (1000 - width);
   return [Math.floor(a), Math.floor(a + width)];
 }
 
@@ -175,7 +174,7 @@ async function periodicUpdates(duration) {
           updateOne: {
             filter: { _id: id },
             update: {
-              $set: { score: Math.floor(rand() * RANGE), timestamp: tick },
+              $set: { score: Math.floor(rand() * 1000), timestamp: tick },
             },
           },
         });
@@ -189,7 +188,7 @@ async function periodicUpdates(duration) {
             document: {
               _id: id,
               name: id,
-              score: Math.floor(rand() * RANGE),
+              score: Math.floor(rand() * 1000),
               timestamp: tick,
             },
           },
