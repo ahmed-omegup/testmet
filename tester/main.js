@@ -1,3 +1,4 @@
+import fs from "fs";
 import { MongoClient } from "mongodb";
 import WebSocket from "ws";
 
@@ -64,7 +65,7 @@ async function seedDb() {
 }
 
 function customerRange(c) {
-  const a = (c % 1000) * 0.9;
+  const a = (c % 10_000) * 0.9;
   const width = 50 + (c % 200);
   return [Math.floor(a), Math.min(1000, Math.floor(a + width))];
 }
@@ -94,6 +95,29 @@ async function spawnCustomers(count, initTime) {
       const [a, b] = customerRange(i);
       const subId = `sub_${i}`;
       ws.send(JSON.stringify({ msg: 'sub', id: subId, name: 'latestDocs', params: [a, b] }));
+    });
+
+    let n = 0;
+    const ww = i === 100 ? fs.openSync('ws_message.log', 'w') : null;
+    ws.on('message', (data) => {
+      try {
+        if(i === 100) {
+          fs.write(ww, data + '\n', { flag: 'a' }, err => {
+            if (err) fatal('Failed to write ws message log:', err);
+          });
+        }
+        const msg = JSON.parse(data);
+        if (msg.msg === 'added') n++;
+        if (msg.msg === 'removed') {
+          n--;
+          if (n === 0) {
+            console.log(`Customer ${i} received all documents, closing connection`);
+            ws.close();
+          }
+        }
+      } catch (err) {
+        fatal(`Failed to parse message for customer ${i}`, err);
+      }
     });
 
     ws.on('error', (err) => {
@@ -181,6 +205,7 @@ async function periodicUpdates(duration) {
         await sleep(remaining);
       }
     }
+    await docs.deleteMany({}); // Clean up after updates
   } catch (err) {
     fatal("Periodic updates failed", err);
   } finally {
@@ -196,7 +221,7 @@ async function periodicUpdates(duration) {
     console.log(`Customers: ${CUSTOMERS}, Init time: ${INIT_TIME}s, Duration: ${DURATION}s\n`);
     
     // Step 1: Seed database
-    // await seedDb();
+    await seedDb();
    
     // Step 2: Spawn customers with deterministic intervals
     const customers = await spawnCustomers(CUSTOMERS, INIT_TIME);
@@ -209,7 +234,6 @@ async function periodicUpdates(duration) {
     customers.forEach(ws => ws.close());
     
     console.log("\n=== BENCHMARK COMPLETE ===");
-    process.exit(0);
   } catch (err) {
     fatal("Benchmark failed", err);
   }

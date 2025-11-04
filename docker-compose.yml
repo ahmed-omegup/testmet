@@ -9,6 +9,13 @@ services:
       - --quiet
     volumes:
       - ./mongo/init-rs.js:/docker-entrypoint-initdb.d/init-rs.js
+    deploy:
+      resources:
+        limits:
+          memory: 2G        # Hard limit
+        reservations:
+          memory: 1G        # Soft limit (guaranteed)
+
 
   meteor:
     build: ./meteor
@@ -24,6 +31,13 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'       # Also limit CPU cores
+        reservations:
+          memory: 512M
 
   tester:
     build: ./tester
@@ -34,7 +48,7 @@ services:
       - MONGO_URL=mongodb://mongo:27017/benchmark?replicaSet=rs0&directConnection=true
       - METEOR_URL=ws://meteor:3000/websocket
       - CUSTOMERS=1500
-      - DURATION=10
+      - DURATION=1
       - INIT_TIME=10
     volumes:
       - ./tester/main.js:/app/main.js
