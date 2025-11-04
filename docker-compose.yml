@@ -50,7 +50,7 @@ services:
       - CUSTOMERS=500
       - DURATION=10
       - INIT_TIME=10
-      - DOCUMENTS=10000
+      - DOCUMENTS=1000000
     volumes:
       - ./tester/main.js:/app/main.js
       - ./tester/log:/app/log
