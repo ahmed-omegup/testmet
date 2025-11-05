@@ -1,9 +1,15 @@
 import fs from "fs";
 import { MongoClient } from "mongodb";
 import WebSocket from "ws";
+import r from "rethinkdb";
 
+// Detect which database we're using
+const USE_RETHINKDB = process.env.RETHINKDB_HOST ? true : false;
 const MONGO_URL = process.env.MONGO_URL;
-const METEOR_URL = process.env.METEOR_URL;
+const METEOR_URL = process.env.METEOR_URL || process.env.SERVER_URL;
+const RETHINKDB_HOST = process.env.RETHINKDB_HOST;
+const RETHINKDB_PORT = parseInt(process.env.RETHINKDB_PORT || '28015');
+
 const CUSTOMERS = parseInt(process.env.CUSTOMERS || "20000");
 const DURATION = parseInt(process.env.DURATION || "10");
 const INIT_TIME = parseInt(process.env.INIT_TIME || "10");
@@ -26,7 +32,15 @@ function fatal(msg, err) {
 }
 
 async function seedDb() {
-  console.log("=== SEEDING DATABASE ===");
+  if (USE_RETHINKDB) {
+    return await seedRethinkDB();
+  } else {
+    return await seedMongoDB();
+  }
+}
+
+async function seedMongoDB() {
+  console.log("=== SEEDING MONGODB ===");
   const client = new MongoClient(MONGO_URL);
   try {
     await client.connect();
@@ -62,6 +76,46 @@ async function seedDb() {
     fatal("Failed to seed database", err);
   } finally {
     await client.close();
+  }
+}
+
+async function seedRethinkDB() {
+  console.log("=== SEEDING RETHINKDB ===");
+  let conn = null;
+  try {
+    conn = await r.connect({ host: RETHINKDB_HOST, port: RETHINKDB_PORT });
+    
+    // Clear existing data
+    try {
+      await r.db('benchmark').table('docs').delete().run(conn);
+      console.log("DB cleared");
+    } catch (err) {
+      // Table might not exist yet
+      console.log("Table not found, will be created by server");
+    }
+
+    console.log(`Seeding ${N} documents...`);
+    const batchSize = 10000;
+    for (let i = 0; i < N; i += batchSize) {
+      const batch = [];
+      for (let j = i; j < Math.min(i + batchSize, N); j++) {
+        batch.push({
+          id: `doc_${j}`,
+          name: `doc_${j}`,
+          score: Math.floor(rand() * RANGE),
+          timestamp: j,
+        });
+      }
+      await r.db('benchmark').table('docs').insert(batch).run(conn);
+      console.log(`  Inserted ${Math.min(i + batchSize, N)}/${N} documents`);
+    }
+    
+    const count = await r.db('benchmark').table('docs').count().run(conn);
+    console.log(`Seeding complete: ${count}/${N} documents inserted`);
+  } catch (err) {
+    fatal("Failed to seed RethinkDB", err);
+  } finally {
+    if (conn) await conn.close();
   }
 }
 
@@ -153,6 +207,14 @@ async function spawnCustomers(count, initTime) {
 }
 
 async function periodicUpdates(duration) {
+  if (USE_RETHINKDB) {
+    return await periodicUpdatesRethinkDB(duration);
+  } else {
+    return await periodicUpdatesMongoDB(duration);
+  }
+}
+
+async function periodicUpdatesMongoDB(duration) {
   console.log(`\n=== RUNNING UPDATES FOR ${duration}s ===`);
   const client = new MongoClient(MONGO_URL);
   
@@ -218,6 +280,75 @@ async function periodicUpdates(duration) {
     fatal("Periodic updates failed", err);
   } finally {
     await client.close();
+  }
+  
+  console.log("Periodic updates complete");
+}
+
+async function periodicUpdatesRethinkDB(duration) {
+  console.log(`\n=== RUNNING UPDATES FOR ${duration}s ===`);
+  let conn = null;
+  
+  try {
+    conn = await r.connect({ host: RETHINKDB_HOST, port: RETHINKDB_PORT });
+    const table = r.db('benchmark').table('docs');
+    
+    const updatesPerTick = Math.floor(0.05 * N); // 5% updates
+    const insertsPerTick = Math.floor(0.01 * N); // 1% inserts
+    const deletesPerTick = Math.floor(0.01 * N); // 1% deletes
+    
+    for (let tick = 0; tick < duration; tick++) {
+      const tickStart = Date.now();
+      const operations = [];
+      
+      // Updates
+      for (let i = 0; i < updatesPerTick; i++) {
+        const id = `doc_${Math.floor(rand() * N)}`;
+        operations.push(
+          table.get(id).update({
+            score: Math.floor(rand() * RANGE),
+            timestamp: tick
+          }).run(conn)
+        );
+      }
+      
+      // Inserts
+      const inserts = [];
+      for (let i = 0; i < insertsPerTick; i++) {
+        const id = `doc_${N + tick * insertsPerTick + i}`;
+        inserts.push({
+          id: id,
+          name: id,
+          score: Math.floor(rand() * RANGE),
+          timestamp: tick,
+        });
+      }
+      if (inserts.length) {
+        operations.push(table.insert(inserts).run(conn));
+      }
+      
+      // Deletes
+      for (let i = 0; i < deletesPerTick; i++) {
+        const id = `doc_${Math.floor(rand() * N)}`;
+        operations.push(table.get(id).delete().run(conn));
+      }
+
+      await Promise.all(operations).catch(err => fatal(`Operations failed at tick ${tick}`, err));
+      
+      const elapsed = Date.now() - tickStart;
+      console.log(`Tick ${tick + 1}/${duration}: ${operations.length} operations (${elapsed}ms)`);
+      
+      // Sleep until next tick
+      const remaining = 1000 - elapsed;
+      if (remaining > 0) {
+        await sleep(remaining);
+      }
+    }
+    await table.update({timestamp: -1}).run(conn); // Clean up after updates
+  } catch (err) {
+    fatal("Periodic updates failed", err);
+  } finally {
+    if (conn) await conn.close();
   }
   
   console.log("Periodic updates complete");

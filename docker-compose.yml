@@ -22,13 +22,13 @@ services:
     restart: unless-stopped
     environment:
       - MONGO_URL=mongodb://mongo:27017/benchmark?replicaSet=rs0&directConnection=true
-      - MONGO_OPLOG_URL=mongodb://mongo:27017/local?replicaSet=rs0&directConnection=true
+      - MONGO_OPLOG_URLX=mongodb://mongo:27017/local?replicaSet=rs0&directConnection=true
       - PORT=3000
       - METEOR_ALLOW_SUPERUSER=true
     depends_on:
       - mongo
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -51,7 +51,7 @@ services:
       - CUSTOMERS=500
       - DURATION=50
       - INIT_TIME=10
-      - DENSITY=100
+      - DENSITY=0.001
       - DOCUMENTS=10000
     volumes:
       - ./tester/main.js:/app/main.js
