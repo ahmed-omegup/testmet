@@ -191,7 +191,7 @@ export async function periodicUpdatesRethinkDB(duration) {
         });
       }
       if (inserts.length) {
-        operations.push(...Array(inserts.length).fill(table.insert(inserts).run(conn)));
+        operations.push(table.insert(inserts).run(conn));
       }
       
       // Deletes
