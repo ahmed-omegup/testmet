@@ -22,7 +22,7 @@ services:
     restart: unless-stopped
     environment:
       - MONGO_URL=mongodb://mongo:27017/benchmark?replicaSet=rs0&directConnection=true
-      - OPLOG_URL=mongodb://mongo:27017/local?replicaSet=rs0&directConnection=true
+      - MONGO_OPLOG_URL=mongodb://mongo:27017/local?replicaSet=rs0&directConnection=true
       - PORT=3000
       - METEOR_ALLOW_SUPERUSER=true
     depends_on:
@@ -49,8 +49,9 @@ services:
       - MONGO_URL=mongodb://mongo:27017/benchmark?replicaSet=rs0&directConnection=true
       - METEOR_URL=ws://meteor:3000/websocket
       - CUSTOMERS=500
-      - DURATION=10
+      - DURATION=50
       - INIT_TIME=10
+      - DENSITY=100
       - DOCUMENTS=10000
     volumes:
       - ./tester/main.js:/app/main.js
