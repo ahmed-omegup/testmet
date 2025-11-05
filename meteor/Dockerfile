@@ -1,10 +1,9 @@
 # Build stage
-FROM node:trixie-slim AS builder
+FROM meteor332 AS builder
 
 WORKDIR /app
 
-# Download and install Meteor
-RUN npx --yes meteor
+ENV PATH="$PATH:/root/.meteor"
 
 # Initialize Meteor project
 RUN meteor create --bare --allow-superuser temp && \

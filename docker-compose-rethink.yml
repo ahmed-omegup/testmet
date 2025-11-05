@@ -15,37 +15,13 @@ services:
         reservations:
           memory: 1G
 
-  rethinkdb-server:
-    build: ./rethinkdb-server
-    restart: unless-stopped
-    environment:
-      - RETHINKDB_HOST=rethinkdb
-      - RETHINKDB_PORT=28015
-      - PORT=3000
-    depends_on:
-      - rethinkdb
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: '2.0'
-        reservations:
-          memory: 512M
-
   tester:
     build: ./tester
     depends_on:
-      rethinkdb-server:
-        condition: service_healthy
+      - rethinkdb
     environment:
       - RETHINKDB_HOST=rethinkdb
       - RETHINKDB_PORT=28015
-      - SERVER_URL=ws://rethinkdb-server:3000/websocket
       - CUSTOMERS=500
       - DURATION=10
       - INIT_TIME=10
