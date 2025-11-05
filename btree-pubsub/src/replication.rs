@@ -63,7 +63,7 @@ async fn setup_replication_slot(client: &Client) -> Result<(), Box<dyn std::erro
     if rows.is_empty() {
         info!("Creating replication slot...");
         client
-            .simple_query("SELECT pg_create_logical_replication_slot('btree_pubsub_slot', 'pgoutput')")
+            .simple_query("SELECT pg_create_logical_replication_slot('btree_pubsub_slot', 'test_decoding')")
             .await?;
         info!("Replication slot created");
     } else {
@@ -80,8 +80,8 @@ async fn consume_changes(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Starting to consume logical replication stream...");
 
-    // Subscribe to changes from the 'docs' table
-    let query = "SELECT * FROM pg_logical_slot_peek_changes('btree_pubsub_slot', NULL, NULL, 'publication_names', 'electric_publication_default')";
+    // Subscribe to changes from the 'docs' table using test_decoding
+    let query = "SELECT * FROM pg_logical_slot_get_changes('btree_pubsub_slot', NULL, NULL)";
 
     loop {
         match client.simple_query(query).await {
@@ -111,19 +111,18 @@ async fn process_wal_event(
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     storage: &Arc<SubscriptionStore>,
 ) {
-    // Parse logical decoding output
-    // Simple parser for pgoutput format
-    // Example: "table public.docs: INSERT: id[text]:'doc_1' name[text]:'doc_1' score[integer]:500 timestamp[integer]:0"
+    // Parse test_decoding output format
+    // Example: "table public.docs: INSERT: id[text]:'doc_1' score[integer]:500 name[text]:'doc_1' timestamp[bigint]:0"
     
     if !data.contains("table public.docs") {
         return;
     }
 
-    let operation = if data.contains("INSERT") {
+    let operation = if data.contains("INSERT:") {
         "insert"
-    } else if data.contains("UPDATE") {
+    } else if data.contains("UPDATE:") {
         "update"
-    } else if data.contains("DELETE") {
+    } else if data.contains("DELETE:") {
         "delete"
     } else {
         return;
