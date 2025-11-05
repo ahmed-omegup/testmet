@@ -11,7 +11,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
+          memory: 3G
         reservations:
           memory: 1G
 
@@ -22,11 +22,11 @@ services:
     environment:
       - RETHINKDB_HOST=rethinkdb
       - RETHINKDB_PORT=28015
-      - CUSTOMERS=20000
+      - CUSTOMERS=5000
       - DURATION=50
       - INIT_TIME=10
-      - DENSITY=0.1
-      - DOCUMENTS=2000
+      - DENSITY=0.2
+      - DOCUMENTS=10000
     volumes:
       - ./tester/main.js:/app/main.js
       - ./tester/log:/app/log

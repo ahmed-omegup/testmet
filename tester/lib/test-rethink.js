@@ -164,8 +164,8 @@ export async function periodicUpdatesRethinkDB(duration) {
 
     console.log('******', updatesPerTick + insertsPerTick + deletesPerTick)
     
+    const tickStart = Date.now();
     for (let tick = 0; tick < duration; tick++) {
-      const tickStart = Date.now();
       const operations = [];
       
       // Updates
@@ -203,12 +203,12 @@ export async function periodicUpdatesRethinkDB(duration) {
       await Promise.all(operations).catch(err => fatal(`Operations failed at tick ${tick}`, err));
       
       const elapsed = Date.now() - tickStart;
-      console.log(`Tick ${tick + 1}/${duration}: ${operations.length} operations (${elapsed}ms)`);
+      console.log(`Tick ${tick + 1}/${duration}: ${operations.length} operations (${Math.round(elapsed/100)/10}s)`);
       
       // Sleep until next tick
       const remaining = 1000 - elapsed;
       if (remaining > 0) {
-        await sleep(remaining);
+        await sleep(0.01);
       }
     }
     await table.update({timestamp: -1}).run(conn); // Clean up after updates

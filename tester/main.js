@@ -32,7 +32,13 @@ const USE_RETHINKDB = RETHINKDB_HOST ? true : false;
     
     // Cleanup
     console.log("\n=== WAITING FOR CUSTOMERS TO FINISH ===");
+    let n = 0
+    customers.forEach(c => c.then(()=>n++));
+    const interval = setInterval(() => {
+      console.log(`Completed customers: ${n}/${CUSTOMERS}`);
+    }, 5000);
     const res = await Promise.all(customers);
+    clearInterval(interval);
     console.log("\n=== BENCHMARK COMPLETE ===");
     console.log(`Successfully completed for ${res.length} customers`);
   } catch (err) {

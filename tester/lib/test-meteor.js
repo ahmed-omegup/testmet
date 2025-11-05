@@ -85,24 +85,22 @@ export async function spawnCustomersMeteor(count, initTime) {
     });
 
     let n = 0;
-    let cleanupStarted = false;
     ws.on('message', (data) => {
       try {
         ww && fs.writeSync(ww, '<- ' + new Date() + ': ' + data + '\n', { flag: 'a' });
         const msg = JSON.parse(data);
-        
-        if (msg.msg === 'added') {
+        if (msg.msg === 'ping') {
+          // Respond to ping
+          const pong = JSON.stringify({ msg: 'pong' });
+          ws.send(pong);
+          ww && fs.writeSync(ww, '-> ' + new Date() + ': ' + pong + '\n', { flag: 'a' });
+        } else if (msg.msg === 'added' && msg.fields.timestamp !== -1) {
           n++;
-        } else if (msg.msg === 'removed') {
-          if (cleanupStarted) {
-            n--;
-            if (n <= 0) {
-              console.log(`Customer ${i} received all documents, closing connection`);
-              ws.close();
-            }
+        } else if (msg.msg === 'removed' || msg.msg === 'changed' && msg.fields.timestamp === -1) {
+          n--;
+          if (n <= 0) {
+            ws.close();
           }
-        } else if (msg.msg === 'changed' && msg.fields && msg.fields.timestamp === -1) {
-          cleanupStarted = true;
         }
       } catch (err) {
         fatal(`Failed to parse message for customer ${i}`, err);
@@ -152,6 +150,7 @@ export async function periodicUpdatesMongoDB(duration) {
     const insertsPerTick = Math.floor(0.01 * N); // 1% inserts
     const deletesPerTick = Math.floor(0.01 * N); // 1% deletes
     
+    const allStart = Date.now();
     for (let tick = 0; tick < duration; tick++) {
       const tickStart = Date.now();
       const bulk = [];
@@ -193,7 +192,8 @@ export async function periodicUpdatesMongoDB(duration) {
       await docs.bulkWrite(bulk).catch(err => fatal(`Bulk write failed at tick ${tick}`, err));
       
       const elapsed = Date.now() - tickStart;
-      console.log(`Tick ${tick + 1}/${duration}: ${bulk.length} operations (${elapsed}ms)`);
+      const overAllElapsed = Date.now() - allStart;
+      console.log(`Tick ${tick + 1}/${duration}: ${bulk.length} operations (${Math.round(overAllElapsed/100)/10}s)`);
       
       // Sleep until next tick
       const remaining = 1000 - elapsed;
