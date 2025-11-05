@@ -28,7 +28,7 @@ export function fatal(msg, err) {
 
 // Customer range calculation
 export function customerRange(c) {
-  const width = 100 + rand() * 500;
+  const width = 100 + Math.min(rand() * 500);
   const a = rand() * (RANGE - width);
   return [Math.floor(a), Math.floor(a + width)];
 }

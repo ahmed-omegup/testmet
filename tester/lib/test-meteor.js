@@ -118,7 +118,7 @@ export async function spawnCustomersMeteor(count, initTime) {
         if (n) {
           fatal(`WebSocket closed unexpectedly for customer ${i}, still holding ${n} documents`);
         }
-        if(i === 0) fs.closeSync(ww);
+        ww && fs.closeSync(ww);
         resolve(i);
       });
     }));

@@ -1,3 +1,4 @@
+import fs from "fs";
 import r from "rethinkdb";
 import {
   RETHINKDB_HOST,
@@ -82,30 +83,21 @@ export async function spawnCustomersRethinkDB(count, initTime) {
   const conn = await r.connect({ host: RETHINKDB_HOST, port: RETHINKDB_PORT });
   
   for (let i = 0; i < count; i++) {
+    const ww = i === 0 ? fs.openSync('./log/rethinkdb.log', 'w') : null;
     const [minScore, maxScore] = customerRange(i);
+    ww && fs.writeSync(ww, '-> ' + new Date() + ': listening to [' + minScore + ' .. ' + maxScore + ']\n', { flag: 'a' });
     
     // Create changefeed for this customer's range
     const customerPromise = (async () => {
       let n = 0;
-      let cleanupStarted = false;
       
       try {
-        // Initial query
-        const initialDocs = await r.db('benchmark')
-          .table('docs')
-          .between(minScore, maxScore, { index: 'score' })
-          .orderBy(r.desc('timestamp'))
-          .limit(50)
-          .run(conn);
-        
-        const docsArray = await initialDocs.toArray();
-        n = docsArray.length;
         
         // Setup changefeed
         const cursor = await r.db('benchmark')
           .table('docs')
           .between(minScore, maxScore, { index: 'score' })
-          .changes({ includeInitial: false })
+          .changes({ includeInitial: true })
           .run(conn);
         
         // Wait for cleanup signal
@@ -115,15 +107,16 @@ export async function spawnCustomersRethinkDB(count, initTime) {
               reject(err);
               return;
             }
-            
-            if (change.new_val && change.new_val.timestamp === -1) {
-              cleanupStarted = true;
-            }
-            
-            if (cleanupStarted && change.old_val && !change.new_val) {
+            ww && fs.writeSync(ww, '<- ' + new Date() + ': ' + JSON.stringify(change) + '\n', { flag: 'a' });
+
+            const added = change.new_val && change.new_val.timestamp !== -1;
+            const removed = change.old_val && change.old_val.timestamp !== -1;
+            const delta = (added ? 1 : 0) - (removed ? 1 : 0);            
+            if (delta) {
               // Document removed during cleanup
-              n--;
-              if (n <= 0) {
+              n += delta;
+              if (!n) {
+                ww && fs.closeSync(ww);
                 cursor.close();
                 resolve(i);
               }
@@ -147,12 +140,13 @@ export async function spawnCustomersRethinkDB(count, initTime) {
     
     // Wait for next spawn interval
     if (i < count - 1) {
-      await sleep(intervalMs);
+      await sleep(0.01);
     }
   }
   
   const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
   console.log(`All ${count} customers spawned in ${totalTime}s`);
+  Promise.all(customers).then(()=>conn.close())
   return customers;
 }
 
@@ -167,6 +161,8 @@ export async function periodicUpdatesRethinkDB(duration) {
     const updatesPerTick = Math.floor(0.05 * N); // 5% updates
     const insertsPerTick = Math.floor(0.01 * N); // 1% inserts
     const deletesPerTick = Math.floor(0.01 * N); // 1% deletes
+
+    console.log('******', updatesPerTick + insertsPerTick + deletesPerTick)
     
     for (let tick = 0; tick < duration; tick++) {
       const tickStart = Date.now();
@@ -195,7 +191,7 @@ export async function periodicUpdatesRethinkDB(duration) {
         });
       }
       if (inserts.length) {
-        operations.push(table.insert(inserts).run(conn));
+        operations.push(...Array(inserts.length).fill(table.insert(inserts).run(conn)));
       }
       
       // Deletes
