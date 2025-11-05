@@ -5,6 +5,7 @@ export const RETHINKDB_HOST = process.env.RETHINKDB_HOST;
 export const RETHINKDB_PORT = parseInt(process.env.RETHINKDB_PORT || '28015');
 export const POSTGRES_URL = process.env.POSTGRES_URL;
 export const ELECTRIC_URL = process.env.ELECTRIC_URL;
+export const BTREE_URL = process.env.BTREE_URL;
 
 export const CUSTOMERS = parseInt(process.env.CUSTOMERS || "20000");
 export const DURATION = parseInt(process.env.DURATION || "10");

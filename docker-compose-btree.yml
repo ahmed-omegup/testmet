@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=benchmark
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_wal_senders=10
+    ports:
+      - "5432:5432"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  btree-pubsub:
+    build: ./btree-pubsub
+    restart: unless-stopped
+    environment:
+      - POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/benchmark
+      - RUST_LOG=info
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
+    volumes:
+      - ./btree-pubsub/data:/app/data
+
+  tester:
+    build: ./tester
+    depends_on:
+      - btree-pubsub
+      - postgres
+    environment:
+      - BTREE_URL=ws://btree-pubsub:8080
+      - POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/benchmark
+      - CUSTOMERS=500
+      - DURATION=10
+      - INIT_TIME=10
+      - DOCUMENTS=10000
+    volumes:
+      - ./tester/main.js:/app/main.js
+      - ./tester/lib:/app/lib
+      - ./tester/log:/app/log
+    command: ["node", "main.js"]
