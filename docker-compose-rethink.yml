@@ -22,11 +22,11 @@ services:
     environment:
       - RETHINKDB_HOST=rethinkdb
       - RETHINKDB_PORT=28015
-      - CUSTOMERS=1000
+      - CUSTOMERS=100000
       - DURATION=50
       - INIT_TIME=10
-      - DENSITY=0.1
-      - DOCUMENTS=10000
+      - DENSITY=0.001
+      - DOCUMENTS=1000000
     volumes:
       - ./tester/main.js:/app/main.js
       - ./tester/log:/app/log
