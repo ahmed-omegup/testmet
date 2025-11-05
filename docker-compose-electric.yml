@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=benchmark
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+    ports:
+      - "5432:5432"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  electric:
+    image: electricsql/electric:latest
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/benchmark
+      - ELECTRIC_WRITE_TO_PG_MODE=direct_writes
+      - LOGICAL_PUBLISHER_HOST=electric
+      - PG_PROXY_PASSWORD=proxy_password
+      - ELECTRIC_INSECURE=true
+    ports:
+      - "5133:3000"  # HTTP port for Electric (3000 internal)
+      - "65432:65432" # Postgres proxy port
+    depends_on:
+      postgres:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/v1/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
+
+  tester:
+    build: ./tester
+    depends_on:
+      electric:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+    environment:
+      - ELECTRIC_URL=http://electric:3000
+      - POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/benchmark
+      - CUSTOMERS=100
+      - DURATION=50
+      - INIT_TIME=10
+      - DENSITY=0.2
+      - DOCUMENTS=10000
+    volumes:
+      - ./tester/main.js:/app/main.js
+      - ./tester/lib:/app/lib
+      - ./tester/log:/app/log
+    command: ["node", "main.js"]
