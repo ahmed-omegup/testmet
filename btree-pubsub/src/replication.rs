@@ -4,6 +4,8 @@ use tokio::sync::RwLock;
 use tracing::{info, error, warn};
 use crate::btree_index::RangeQueryIndex;
 use crate::storage::SubscriptionStore;
+use bytes::{Buf, Bytes};
+use prost::Message;
 
 /// Start PostgreSQL logical replication reader
 pub async fn start_replication(
@@ -63,7 +65,7 @@ async fn setup_replication_slot(client: &Client) -> Result<(), Box<dyn std::erro
     if rows.is_empty() {
         info!("Creating replication slot...");
         client
-            .simple_query("SELECT pg_create_logical_replication_slot('btree_pubsub_slot', 'test_decoding')")
+            .simple_query("SELECT pg_create_logical_replication_slot('btree_pubsub_slot', 'decoderbufs')")
             .await?;
         info!("Replication slot created");
     } else {
@@ -80,19 +82,15 @@ async fn consume_changes(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Starting to consume logical replication stream...");
 
-    // Subscribe to changes from the 'docs' table using test_decoding
-    let query = "SELECT * FROM pg_logical_slot_get_changes('btree_pubsub_slot', NULL, NULL)";
+    // Subscribe to changes using decoderbufs (outputs protobuf)
+    let query = "SELECT data FROM pg_logical_slot_get_binary_changes('btree_pubsub_slot', NULL, NULL)";
 
     loop {
-        match client.simple_query(query).await {
-            Ok(messages) => {
-                for message in messages {
-                    if let SimpleQueryMessage::Row(row) = message {
-                        // Parse WAL data
-                        // Format: lsn | xid | data
-                        if let Some(data) = row.get(2) {
-                            process_wal_event(data, &range_index, &storage).await;
-                        }
+        match client.query(query, &[]).await {
+            Ok(rows) => {
+                for row in rows {
+                    if let Ok(data) = row.try_get::<_, Vec<u8>>(0) {
+                        process_protobuf_event(&data, &range_index, &storage).await;
                     }
                 }
             }
@@ -106,34 +104,29 @@ async fn consume_changes(
     }
 }
 
-async fn process_wal_event(
-    data: &str,
+async fn process_protobuf_event(
+    data: &[u8],
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     storage: &Arc<SubscriptionStore>,
 ) {
-    // Parse test_decoding output format
-    // Example: "table public.docs: INSERT: id[text]:'doc_1' score[integer]:500 name[text]:'doc_1' timestamp[bigint]:0"
+    // Decode decoderbufs protobuf format
+    // Simplified decoding - decoderbufs uses a nested structure
     
-    if !data.contains("table public.docs") {
-        return;
-    }
+    let mut buf = Bytes::copy_from_slice(data);
+    
+    // Try to parse the message
+    if let Some((table_name, op, id, score)) = parse_decoderbufs_message(&mut buf) {
+        if table_name != "docs" {
+            return;
+        }
 
-    let operation = if data.contains("INSERT:") {
-        "insert"
-    } else if data.contains("UPDATE:") {
-        "update"
-    } else if data.contains("DELETE:") {
-        "delete"
-    } else {
-        return;
-    };
+        let operation = match op {
+            1 => "insert",
+            2 => "update",
+            3 => "delete",
+            _ => return,
+        };
 
-    // Extract fields
-    let score = extract_field(data, "score");
-    let id = extract_string_field(data, "id");
-    let timestamp = extract_field(data, "timestamp");
-
-    if let (Some(score), Some(id)) = (score, id) {
         // Find all connections interested in this score
         let connections = {
             let index = range_index.read().await;
@@ -141,12 +134,8 @@ async fn process_wal_event(
         };
 
         info!(
-            "Event: {} doc={} score={} timestamp={:?} -> {} connections",
-            operation,
-            id,
-            score,
-            timestamp,
-            connections.len()
+            "Event: {} doc={} score={} -> {} connections",
+            operation, id, score, connections.len()
         );
 
         // Update storage and send to connections
@@ -177,34 +166,148 @@ async fn process_wal_event(
     }
 }
 
-fn extract_field(data: &str, field: &str) -> Option<i32> {
-    // Simple extraction: "score[integer]:500"
-    if let Some(start) = data.find(&format!("{}[", field)) {
-        if let Some(colon) = data[start..].find(':') {
-            let value_start = start + colon + 1;
-            if let Some(end) = data[value_start..].find(|c: char| !c.is_numeric() && c != '-') {
-                return data[value_start..value_start + end].parse().ok();
-            } else {
-                return data[value_start..].trim().parse().ok();
-            }
-        }
-    }
-    None
-}
-
-fn extract_string_field(data: &str, field: &str) -> Option<String> {
-    // Extract string field: "id[text]:'doc_123'"
-    if let Some(start) = data.find(&format!("{}[", field)) {
-        if let Some(colon) = data[start..].find(':') {
-            let value_start = start + colon + 1;
-            let rest = &data[value_start..];
-            // Skip leading quote
-            if rest.starts_with('\'') {
-                if let Some(end) = rest[1..].find('\'') {
-                    return Some(rest[1..1 + end].to_string());
+// Simple protobuf parser for decoderbufs format
+fn parse_decoderbufs_message(buf: &mut Bytes) -> Option<(String, u32, String, i32)> {
+    // Decoderbufs message structure (simplified):
+    // Field 1: operation (INSERT=1, UPDATE=2, DELETE=3)
+    // Field 2: schema
+    // Field 3: table
+    // Field 4: columns (repeated)
+    
+    let mut operation = 0u32;
+    let mut table_name = String::new();
+    let mut id_value = String::new();
+    let mut score_value = 0i32;
+    
+    while buf.remaining() > 0 {
+        // Read field tag
+        let tag = match prost::encoding::decode_varint(buf) {
+            Ok(v) => v,
+            Err(_) => break,
+        };
+        
+        let field_num = (tag >> 3) as u32;
+        let wire_type = (tag & 0x7) as u32;
+        
+        match field_num {
+            1 => {
+                // operation
+                if wire_type == 0 {
+                    operation = prost::encoding::decode_varint(buf).ok()? as u32;
                 }
             }
+            3 => {
+                // table name
+                if wire_type == 2 {
+                    let len = prost::encoding::decode_varint(buf).ok()? as usize;
+                    if buf.remaining() >= len {
+                        table_name = String::from_utf8_lossy(&buf.copy_to_bytes(len)).to_string();
+                    }
+                }
+            }
+            4 => {
+                // columns (repeated)
+                if wire_type == 2 {
+                    let len = prost::encoding::decode_varint(buf).ok()? as usize;
+                    if buf.remaining() >= len {
+                        let mut col_buf = buf.copy_to_bytes(len);
+                        if let Some((name, value)) = parse_column(&mut col_buf) {
+                            if name == "id" {
+                                id_value = value.clone();
+                            } else if name == "score" {
+                                score_value = value.parse().unwrap_or(0);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {
+                // Skip unknown fields
+                skip_field(buf, wire_type)?;
+            }
         }
     }
-    None
+    
+    if !table_name.is_empty() && !id_value.is_empty() {
+        Some((table_name, operation, id_value, score_value))
+    } else {
+        None
+    }
+}
+
+fn parse_column(buf: &mut Bytes) -> Option<(String, String)> {
+    let mut col_name = String::new();
+    let mut col_value = String::new();
+    
+    while buf.remaining() > 0 {
+        let tag = prost::encoding::decode_varint(buf).ok()?;
+        let field_num = (tag >> 3) as u32;
+        let wire_type = (tag & 0x7) as u32;
+        
+        match field_num {
+            1 => {
+                // column name
+                if wire_type == 2 {
+                    let len = prost::encoding::decode_varint(buf).ok()? as usize;
+                    if buf.remaining() >= len {
+                        col_name = String::from_utf8_lossy(&buf.copy_to_bytes(len)).to_string();
+                    }
+                }
+            }
+            5 => {
+                // column value (string)
+                if wire_type == 2 {
+                    let len = prost::encoding::decode_varint(buf).ok()? as usize;
+                    if buf.remaining() >= len {
+                        col_value = String::from_utf8_lossy(&buf.copy_to_bytes(len)).to_string();
+                    }
+                }
+            }
+            _ => {
+                skip_field(buf, wire_type)?;
+            }
+        }
+    }
+    
+    if !col_name.is_empty() {
+        Some((col_name, col_value))
+    } else {
+        None
+    }
+}
+
+fn skip_field(buf: &mut Bytes, wire_type: u32) -> Option<()> {
+    match wire_type {
+        0 => {
+            // Varint
+            prost::encoding::decode_varint(buf).ok()?;
+        }
+        1 => {
+            // 64-bit
+            if buf.remaining() >= 8 {
+                buf.advance(8);
+            } else {
+                return None;
+            }
+        }
+        2 => {
+            // Length-delimited
+            let len = prost::encoding::decode_varint(buf).ok()? as usize;
+            if buf.remaining() >= len {
+                buf.advance(len);
+            } else {
+                return None;
+            }
+        }
+        5 => {
+            // 32-bit
+            if buf.remaining() >= 4 {
+                buf.advance(4);
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    }
+    Some(())
 }
