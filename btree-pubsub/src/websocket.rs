@@ -6,6 +6,7 @@ use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::{info, error, warn};
 use uuid::Uuid;
+use tokio_postgres::{NoTls, Row};
 
 use crate::btree_index::RangeQueryIndex;
 use crate::storage::SubscriptionStore;
@@ -15,12 +16,14 @@ use crate::storage::SubscriptionStore;
 enum ClientMessage {
     #[serde(rename = "subscribe")]
     Subscribe {
-        query_id: String,
         min_score: i32,
         max_score: i32,
     },
     #[serde(rename = "unsubscribe")]
-    Unsubscribe { query_id: String },
+    Unsubscribe {
+        min_score: i32,
+        max_score: i32,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -97,13 +100,11 @@ async fn handle_connection(
                 if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
                     match client_msg {
                         ClientMessage::Subscribe {
-                            query_id,
                             min_score,
                             max_score,
                         } => {
                             handle_subscribe(
                                 &connection_id,
-                                query_id,
                                 min_score,
                                 max_score,
                                 &range_index,
@@ -112,8 +113,8 @@ async fn handle_connection(
                             )
                             .await?;
                         }
-                        ClientMessage::Unsubscribe { query_id } => {
-                            handle_unsubscribe(&connection_id, &query_id, &range_index).await?;
+                        ClientMessage::Unsubscribe { min_score, max_score } => {
+                            handle_unsubscribe(&connection_id, min_score, max_score, &range_index).await?;
                         }
                     }
                 } else {
@@ -151,17 +152,19 @@ async fn handle_connection(
 
 async fn handle_subscribe<S>(
     connection_id: &str,
-    query_id: String,
     min_score: i32,
     max_score: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
-    _storage: &Arc<SubscriptionStore>,
+    storage: &Arc<SubscriptionStore>,
     ws_sender: &mut S,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     S: SinkExt<Message> + Unpin,
     <S as futures_util::Sink<Message>>::Error: std::error::Error + Send + Sync + 'static,
 {
+    // Generate query_id from range
+    let query_id = format!("{}:{}", min_score, max_score);
+    
     info!(
         "Subscribe: conn={} query={} range=[{}, {}]",
         connection_id, query_id, min_score, max_score
@@ -178,11 +181,35 @@ where
         );
     }
 
-    // TODO: Send initial data snapshot
-    // For now, just acknowledge subscription
+    // Execute PostgreSQL query for initial data
+    let pg_url = std::env::var("POSTGRES_URL")
+        .unwrap_or_else(|_| "postgresql://postgres:postgres@localhost:5432/benchmark".to_string());
+    
+    let (client, connection) = tokio_postgres::connect(&pg_url, tokio_postgres::NoTls).await?;
+    
+    // Spawn connection handler
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            error!("PostgreSQL connection error: {}", e);
+        }
+    });
+
+    // Query documents in range
+    let query = "SELECT id, score FROM documents WHERE score >= $1 AND score <= $2";
+    let rows = client.query(query, &[&min_score, &max_score]).await?;
+    
+    let initial_count = rows.len();
+    
+    // Apply DB results with state machine
+    for row in rows {
+        let doc_id: String = row.get(0);
+        storage.apply_db_result(connection_id, &query_id, &doc_id)?;
+    }
+
+    // Send subscription acknowledgment with initial count
     let response = ServerMessage::Subscribed {
         query_id,
-        initial_count: 0,
+        initial_count,
     };
 
     ws_sender
@@ -194,13 +221,17 @@ where
 
 async fn handle_unsubscribe(
     connection_id: &str,
-    query_id: &str,
+    min_score: i32,
+    max_score: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Generate query_id from range
+    let query_id = format!("{}:{}", min_score, max_score);
+    
     info!("Unsubscribe: conn={} query={}", connection_id, query_id);
 
     let mut index = range_index.write().await;
-    index.remove_query(query_id);
+    index.remove_query(&query_id);
 
     Ok(())
 }

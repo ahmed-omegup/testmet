@@ -3,12 +3,39 @@ use heed::types::*;
 use heed::byteorder::BigEndian;
 use std::path::Path;
 
+/// Document state in the state machine
+/// -1: Document was deleted before DB query completed
+///  0: Document exists from DB query result (not set)
+///  1: Document exists (from insertion event or confirmed by DB query)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DocState {
+    Deleted = -1,
+    NotSet = 0,
+    Exists = 1,
+}
+
+impl From<i8> for DocState {
+    fn from(val: i8) -> Self {
+        match val {
+            -1 => DocState::Deleted,
+            0 => DocState::NotSet,
+            _ => DocState::Exists,
+        }
+    }
+}
+
+impl From<DocState> for i8 {
+    fn from(state: DocState) -> Self {
+        state as i8
+    }
+}
+
 /// LMDB-based storage for subscription tracking
-/// - connection_documents: connection:query:id -> exists
-/// - document_connections: id:connection -> count
+/// - connection_documents: connection:query:node:id -> state (i8: -1, 0, 1)
+/// - document_connections: id:connection -> count (u32)
 pub struct SubscriptionStore {
     env: Env,
-    connection_documents: Database<Str, U8>,
+    connection_documents: Database<Str, I8>,
     document_connections: Database<Str, U32<BigEndian>>,
 }
 
@@ -35,7 +62,7 @@ impl SubscriptionStore {
         })
     }
 
-    /// Add a document to a connection's subscription
+    /// Add a document to a connection's subscription (insertion event: any -> 1)
     pub fn add_document_to_connection(
         &self,
         connection_id: &str,
@@ -44,14 +71,103 @@ impl SubscriptionStore {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut wtxn = self.env.write_txn()?;
 
-        // connection:query:id -> exists
-        let conn_key = format!("{}:{}:{}", connection_id, query_id, doc_id);
-        self.connection_documents.put(&mut wtxn, &conn_key, &1)?;
+        // connection:query:node:id -> 1 (exists)
+        let conn_key = format!("{}:{}:node:{}", connection_id, query_id, doc_id);
+        let old_state = self.connection_documents.get(&wtxn, &conn_key)?;
+        
+        // Insertion event: any -> 1
+        self.connection_documents.put(&mut wtxn, &conn_key, &(DocState::Exists as i8))?;
 
-        // id:connection -> count
-        let doc_key = format!("{}:{}", doc_id, connection_id);
-        let count = self.document_connections.get(&wtxn, &doc_key)?.unwrap_or(0);
-        self.document_connections.put(&mut wtxn, &doc_key, &(count + 1))?;
+        // Update id:connection count if state changed from non-1 to 1
+        if old_state != Some(DocState::Exists as i8) {
+            let doc_key = format!("{}:{}", doc_id, connection_id);
+            let count = self.document_connections.get(&wtxn, &doc_key)?.unwrap_or(0);
+            self.document_connections.put(&mut wtxn, &doc_key, &(count + 1))?;
+        }
+
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Handle deletion event
+    pub fn handle_deletion(
+        &self,
+        connection_id: &str,
+        query_id: &str,
+        doc_id: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut wtxn = self.env.write_txn()?;
+
+        let conn_key = format!("{}:{}:node:{}", connection_id, query_id, doc_id);
+        let old_state = self.connection_documents.get(&wtxn, &conn_key)?;
+
+        match old_state {
+            None => {
+                // No existing key: create with -1
+                self.connection_documents.put(&mut wtxn, &conn_key, &(DocState::Deleted as i8))?;
+            }
+            Some(state_val) => {
+                // Existing key: delete it
+                self.connection_documents.delete(&mut wtxn, &conn_key)?;
+                
+                // Update count if it was in Exists state
+                if state_val == DocState::Exists as i8 {
+                    let doc_key = format!("{}:{}", doc_id, connection_id);
+                    if let Some(count) = self.document_connections.get(&wtxn, &doc_key)? {
+                        if count <= 1 {
+                            self.document_connections.delete(&mut wtxn, &doc_key)?;
+                        } else {
+                            self.document_connections.put(&mut wtxn, &doc_key, &(count - 1))?;
+                        }
+                    }
+                }
+            }
+        }
+
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Apply DB query result for a document
+    /// State transitions: -1 -> 0, 0 -> 1, 1 -> 1
+    pub fn apply_db_result(
+        &self,
+        connection_id: &str,
+        query_id: &str,
+        doc_id: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut wtxn = self.env.write_txn()?;
+
+        let conn_key = format!("{}:{}:node:{}", connection_id, query_id, doc_id);
+        let old_state = self.connection_documents.get(&wtxn, &conn_key)?;
+
+        match old_state {
+            None => {
+                // Not set: 0 -> 1
+                self.connection_documents.put(&mut wtxn, &conn_key, &(DocState::Exists as i8))?;
+                
+                // Update count
+                let doc_key = format!("{}:{}", doc_id, connection_id);
+                let count = self.document_connections.get(&wtxn, &doc_key)?.unwrap_or(0);
+                self.document_connections.put(&mut wtxn, &doc_key, &(count + 1))?;
+            }
+            Some(state_val) if state_val == DocState::Deleted as i8 => {
+                // -1 -> 0 (ignore, was deleted)
+                self.connection_documents.put(&mut wtxn, &conn_key, &(DocState::NotSet as i8))?;
+            }
+            Some(state_val) if state_val == DocState::NotSet as i8 => {
+                // 0 -> 1
+                self.connection_documents.put(&mut wtxn, &conn_key, &(DocState::Exists as i8))?;
+                
+                // Update count
+                let doc_key = format!("{}:{}", doc_id, connection_id);
+                let count = self.document_connections.get(&wtxn, &doc_key)?.unwrap_or(0);
+                self.document_connections.put(&mut wtxn, &doc_key, &(count + 1))?;
+            }
+            Some(_) => {
+                // 1 -> 1 (already exists, no change)
+            }
+        }
 
         wtxn.commit()?;
         Ok(())
@@ -64,22 +180,7 @@ impl SubscriptionStore {
         query_id: &str,
         doc_id: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut wtxn = self.env.write_txn()?;
-
-        let conn_key = format!("{}:{}:{}", connection_id, query_id, doc_id);
-        self.connection_documents.delete(&mut wtxn, &conn_key)?;
-
-        let doc_key = format!("{}:{}", doc_id, connection_id);
-        if let Some(count) = self.document_connections.get(&wtxn, &doc_key)? {
-            if count <= 1 {
-                self.document_connections.delete(&mut wtxn, &doc_key)?;
-            } else {
-                self.document_connections.put(&mut wtxn, &doc_key, &(count - 1))?;
-            }
-        }
-
-        wtxn.commit()?;
-        Ok(())
+        self.handle_deletion(connection_id, query_id, doc_id)
     }
 
     /// Check if a connection already has this document
@@ -90,7 +191,7 @@ impl SubscriptionStore {
         doc_id: &str,
     ) -> Result<bool, Box<dyn std::error::Error>> {
         let rtxn = self.env.read_txn()?;
-        let key = format!("{}:{}:{}", connection_id, query_id, doc_id);
+        let key = format!("{}:{}:node:{}", connection_id, query_id, doc_id);
         Ok(self.connection_documents.get(&rtxn, &key)?.is_some())
     }
 
@@ -118,13 +219,13 @@ impl SubscriptionStore {
         query_id: &str,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let rtxn = self.env.read_txn()?;
-        let prefix = format!("{}:{}:", connection_id, query_id);
+        let prefix = format!("{}:{}:node:", connection_id, query_id);
         let mut documents = Vec::new();
 
         let iter = self.connection_documents.prefix_iter(&rtxn, &prefix)?;
         for result in iter {
             let (key, _) = result?;
-            if let Some(doc_id) = key.split(':').nth(2) {
+            if let Some(doc_id) = key.split(':').nth(3) {
                 documents.push(doc_id.to_string());
             }
         }
@@ -154,8 +255,8 @@ impl SubscriptionStore {
             
             // Also update document_connections
             let parts: Vec<&str> = key.split(':').collect();
-            if parts.len() >= 3 {
-                let doc_id = parts[2];
+            if parts.len() >= 4 {
+                let doc_id = parts[3];
                 let doc_key = format!("{}:{}", doc_id, connection_id);
                 self.document_connections.delete(&mut wtxn, &doc_key).ok();
             }
