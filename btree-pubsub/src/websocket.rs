@@ -6,7 +6,6 @@ use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::{info, error, warn};
 use uuid::Uuid;
-use tokio_postgres::{NoTls, Row};
 
 use crate::btree_index::RangeQueryIndex;
 use crate::storage::SubscriptionStore;
@@ -56,6 +55,7 @@ pub async fn start_websocket_server(
     addr: &str,
     range_index: Arc<RwLock<RangeQueryIndex>>,
     storage: Arc<SubscriptionStore>,
+    pool: Arc<deadpool_postgres::Pool>,
 ) {
     let listener = TcpListener::bind(addr).await.expect("Failed to bind");
     info!("WebSocket server listening on {}", addr);
@@ -64,9 +64,10 @@ pub async fn start_websocket_server(
         info!("New connection from: {}", peer);
         let range_index = range_index.clone();
         let storage = storage.clone();
+        let pool = pool.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, range_index, storage).await {
+            if let Err(e) = handle_connection(stream, range_index, storage, pool).await {
                 error!("Error handling connection: {}", e);
             }
         });
@@ -77,6 +78,7 @@ async fn handle_connection(
     stream: TcpStream,
     range_index: Arc<RwLock<RangeQueryIndex>>,
     storage: Arc<SubscriptionStore>,
+    pool: Arc<deadpool_postgres::Pool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ws_stream = accept_async(stream).await?;
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
@@ -109,6 +111,7 @@ async fn handle_connection(
                                 max_score,
                                 &range_index,
                                 &storage,
+                                &pool,
                                 &mut ws_sender,
                             )
                             .await?;
@@ -156,6 +159,7 @@ async fn handle_subscribe<S>(
     max_score: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     storage: &Arc<SubscriptionStore>,
+    pool: &Arc<deadpool_postgres::Pool>,
     ws_sender: &mut S,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
@@ -181,18 +185,8 @@ where
         );
     }
 
-    // Execute PostgreSQL query for initial data
-    let pg_url = std::env::var("POSTGRES_URL")
-        .unwrap_or_else(|_| "postgresql://postgres:postgres@localhost:5432/benchmark".to_string());
-    
-    let (client, connection) = tokio_postgres::connect(&pg_url, tokio_postgres::NoTls).await?;
-    
-    // Spawn connection handler
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            error!("PostgreSQL connection error: {}", e);
-        }
-    });
+    // Get a connection from the pool
+    let client = pool.get().await?;
 
     // Query documents in range
     let query = "SELECT id, score FROM documents WHERE score >= $1 AND score <= $2";

@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 use tracing_subscriber;
+use deadpool_postgres::{Config, Runtime, ManagerConfig, RecyclingMethod};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -29,9 +30,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let range_index = Arc::new(RwLock::new(RangeQueryIndex::new(0, 1000)));
     let storage = Arc::new(SubscriptionStore::new("./data")?);
 
-    // PostgreSQL connection string
+    // PostgreSQL connection pool
     let pg_url = std::env::var("POSTGRES_URL")
         .unwrap_or_else(|_| "postgresql://postgres:postgres@localhost:5432/benchmark".to_string());
+    
+    let mut cfg = Config::new();
+    cfg.url = Some(pg_url.clone());
+    cfg.manager = Some(ManagerConfig { recycling_method: RecyclingMethod::Fast });
+    let pool = cfg.create_pool(Some(Runtime::Tokio1), tokio_postgres::NoTls)?;
+    let pool = Arc::new(pool);
+
+    info!("PostgreSQL connection pool created");
 
     // Start PostgreSQL logical replication reader
     let replication_handle = tokio::spawn(start_replication(
@@ -45,6 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "0.0.0.0:8080",
         range_index.clone(),
         storage.clone(),
+        pool.clone(),
     ));
 
     info!("B-Tree PubSub Server started");
