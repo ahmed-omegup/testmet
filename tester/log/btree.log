@@ -1,3 +1,4 @@
--> Thu Nov 06 2025 20:42:36 GMT+0000 (Coordinated Universal Time): listening to [420 .. 905]
-<- Thu Nov 06 2025 20:42:36 GMT+0000 (Coordinated Universal Time): {"type":"connected","connection_id":"e591ace2-5454-4ee0-89f4-8d7703235ecc"}
--> Thu Nov 06 2025 20:42:36 GMT+0000 (Coordinated Universal Time): {"type":"subscribe","query_id":"query_0","min_score":420,"max_score":905}
+-> Thu Nov 06 2025 20:53:49 GMT+0000 (Coordinated Universal Time): listening to [420 .. 905]
+<- Thu Nov 06 2025 20:53:49 GMT+0000 (Coordinated Universal Time): {"type":"connected","connection_id":"16cf0d9d-2143-42d9-a390-2ab88d93b5b0"}
+-> Thu Nov 06 2025 20:53:49 GMT+0000 (Coordinated Universal Time): {"type":"subscribe","query_id":"query_0","min_score":420,"max_score":905}
+<- Thu Nov 06 2025 20:54:09 GMT+0000 (Coordinated Universal Time): {"type":"subscribed","query_id":"420:905","initial_count":4836}

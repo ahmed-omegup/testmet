@@ -30,7 +30,7 @@ services:
     restart: unless-stopped
     environment:
       - POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/benchmark
-      - RUST_LOG=warn
+      - RUST_LOG=info
     ports:
       - "8080:8080"
     depends_on:
@@ -50,11 +50,11 @@ services:
     environment:
       - BTREE_URL=ws://btree-pubsub:8080
       - POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/benchmark
-      - CUSTOMERS=500
+      - CUSTOMERS=2
       - DURATION=10
       - INIT_TIME=10
-      - DENSITY=10
-      - DOCUMENTS=10000
+      - DENSITY=1
+      - DOCUMENTS=1000
     volumes:
       - ./tester/main.js:/app/main.js
       - ./tester/lib:/app/lib
