@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: debezium/postgres:17-alpine
+    image: debezium/postgres:16-alpine
     restart: unless-stopped
     environment:
       - POSTGRES_DB=benchmark
@@ -30,7 +30,7 @@ services:
     restart: unless-stopped
     environment:
       - POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/benchmark
-      - RUST_LOG=info
+      - RUST_LOG=warn
     ports:
       - "8080:8080"
     depends_on:
@@ -42,9 +42,6 @@ services:
           cpus: '2.0'
         reservations:
           memory: 512M
-    volumes:
-      - ./btree-pubsub/data:/app/data
-
   tester:
     build: ./tester
     depends_on:
@@ -56,6 +53,7 @@ services:
       - CUSTOMERS=500
       - DURATION=10
       - INIT_TIME=10
+      - DENSITY=10
       - DOCUMENTS=10000
     volumes:
       - ./tester/main.js:/app/main.js

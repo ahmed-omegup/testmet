@@ -14,6 +14,8 @@ export const N = parseInt(process.env.DOCUMENTS || "1000000");
 export const DENSITY = parseFloat(process.env.DENSITY || "10"); // N/RANGE
 export const RANGE = N / DENSITY;
 
+console.log({RANGE})
+
 // Deterministic PRNG
 function prng(seed) {
   return () => (seed = (seed * 48271) % 0x7fffffff) / 0x7fffffff;

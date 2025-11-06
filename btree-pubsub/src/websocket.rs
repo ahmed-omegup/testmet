@@ -125,7 +125,7 @@ async fn handle_connection(
                 break;
             }
             Err(e) => {
-                error!("WebSocket error: {}", e);
+                warn!("WebSocket error: {}", e);
                 break;
             }
             _ => {}

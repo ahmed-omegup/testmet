@@ -10,15 +10,17 @@ use websocket::start_websocket_server;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, Level};
+use tracing::info;
 use tracing_subscriber;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing with filter to suppress tokio_postgres connection INFO logs
+    // Initialize tracing - respects RUST_LOG environment variable
     tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
-        .with_env_filter("btree_pubsub=info,tokio_postgres::connection=warn")
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "btree_pubsub=info,tokio_postgres::connection=warn".into())
+        )
         .init();
 
     info!("Starting B-Tree PubSub Server");
