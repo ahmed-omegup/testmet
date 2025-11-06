@@ -2,13 +2,14 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use futures_util::{StreamExt, SinkExt};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc};
 use serde::{Deserialize, Serialize};
 use tracing::{info, error, warn};
 use uuid::Uuid;
 
 use crate::btree_index::RangeQueryIndex;
 use crate::storage::SubscriptionStore;
+use crate::connection_registry::{ConnectionRegistry, Notification};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
@@ -56,6 +57,7 @@ pub async fn start_websocket_server(
     range_index: Arc<RwLock<RangeQueryIndex>>,
     storage: Arc<SubscriptionStore>,
     pool: Arc<deadpool_postgres::Pool>,
+    registry: Arc<ConnectionRegistry>,
 ) {
     let listener = TcpListener::bind(addr).await.expect("Failed to bind");
     info!("WebSocket server listening on {}", addr);
@@ -65,9 +67,10 @@ pub async fn start_websocket_server(
         let range_index = range_index.clone();
         let storage = storage.clone();
         let pool = pool.clone();
+        let registry = registry.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, range_index, storage, pool).await {
+            if let Err(e) = handle_connection(stream, range_index, storage, pool, registry).await {
                 error!("Error handling connection: {}", e);
             }
         });
@@ -79,21 +82,53 @@ async fn handle_connection(
     range_index: Arc<RwLock<RangeQueryIndex>>,
     storage: Arc<SubscriptionStore>,
     pool: Arc<deadpool_postgres::Pool>,
-) -> Result<(), Box<dyn std::error::Error>> {
+    registry: Arc<ConnectionRegistry>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ws_stream = accept_async(stream).await?;
-    let (mut ws_sender, mut ws_receiver) = ws_stream.split();
+    let (ws_sender, mut ws_receiver) = ws_stream.split();
 
     // Generate connection ID
     let connection_id = Uuid::new_v4().to_string();
     info!("Connection established: {}", connection_id);
 
+    // Create notification channel for outgoing messages
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    
+    // Register connection in registry
+    let (notif_tx, mut notif_rx) = mpsc::unbounded_channel();
+    registry.register(connection_id.clone(), notif_tx).await;
+
     // Send connection ID
     let msg = ServerMessage::Connected {
         connection_id: connection_id.clone(),
     };
-    ws_sender
-        .send(Message::Text(serde_json::to_string(&msg)?))
-        .await?;
+    let _ = tx.send(serde_json::to_string(&msg)?);
+
+    // Spawn task to send messages to WebSocket
+    let connection_id_clone = connection_id.clone();
+    tokio::spawn(async move {
+        let mut ws_sender = ws_sender;
+        loop {
+            tokio::select! {
+                // Forward notifications from replication events
+                Some(notification) = notif_rx.recv() => {
+                    if let Ok(json) = serde_json::to_string(&notification) {
+                        if ws_sender.send(Message::Text(json)).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+                // Forward other messages (subscribe responses, etc)
+                Some(msg) = rx.recv() => {
+                    if ws_sender.send(Message::Text(msg)).await.is_err() {
+                        break;
+                    }
+                }
+                else => break,
+            }
+        }
+        info!("Sender task ended for {}", connection_id_clone);
+    });
 
     // Handle messages
     while let Some(msg) = ws_receiver.next().await {
@@ -112,7 +147,7 @@ async fn handle_connection(
                                 &range_index,
                                 &storage,
                                 &pool,
-                                &mut ws_sender,
+                                &tx,
                             )
                             .await?;
                         }
@@ -137,6 +172,7 @@ async fn handle_connection(
     }
 
     // Cleanup on disconnect
+    registry.unregister(&connection_id).await;
     {
         let mut index = range_index.write().await;
         let queries = index.get_queries_for_connection(&connection_id);
@@ -153,19 +189,15 @@ async fn handle_connection(
     Ok(())
 }
 
-async fn handle_subscribe<S>(
+async fn handle_subscribe(
     connection_id: &str,
     min_score: i32,
     max_score: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     storage: &Arc<SubscriptionStore>,
     pool: &Arc<deadpool_postgres::Pool>,
-    ws_sender: &mut S,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    S: SinkExt<Message> + Unpin,
-    <S as futures_util::Sink<Message>>::Error: std::error::Error + Send + Sync + 'static,
-{
+    sender: &mpsc::UnboundedSender<String>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Generate query_id from range
     let query_id = format!("{}:{}", min_score, max_score);
     
@@ -186,11 +218,24 @@ where
     }
 
     // Get a connection from the pool
-    let client = pool.get().await?;
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to get DB connection from pool: {}", e);
+            return Err(format!("Database connection error: {}", e).into());
+        }
+    };
 
     // Query documents in range
-    let query = "SELECT id, score FROM documents WHERE score >= $1 AND score <= $2";
-    let rows = client.query(query, &[&min_score, &max_score]).await?;
+    let query = "SELECT id, score FROM docs WHERE score >= $1 AND score <= $2";
+    let rows = match client.query(query, &[&min_score, &max_score]).await {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to query documents: {:?}", e);
+            error!("Query was: {} with params [{}, {}]", query, min_score, max_score);
+            return Err(format!("Database query error: {:?}", e).into());
+        }
+    };
     
     let initial_count = rows.len();
     
@@ -206,9 +251,7 @@ where
         initial_count,
     };
 
-    ws_sender
-        .send(Message::Text(serde_json::to_string(&response)?))
-        .await?;
+    sender.send(serde_json::to_string(&response)?)?;
 
     Ok(())
 }
@@ -218,7 +261,7 @@ async fn handle_unsubscribe(
     min_score: i32,
     max_score: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Generate query_id from range
     let query_id = format!("{}:{}", min_score, max_score);
     

@@ -4,17 +4,18 @@ use tokio::sync::RwLock;
 use tracing::{info, error, warn};
 use crate::btree_index::RangeQueryIndex;
 use crate::storage::SubscriptionStore;
+use crate::connection_registry::{ConnectionRegistry, Notification};
 use bytes::{Buf, Bytes};
-use prost::Message;
 
 /// Start PostgreSQL logical replication reader
 pub async fn start_replication(
     pg_url: String,
     range_index: Arc<RwLock<RangeQueryIndex>>,
     storage: Arc<SubscriptionStore>,
+    registry: Arc<ConnectionRegistry>,
 ) {
     // Run replication - any error is fatal
-    if let Err(e) = run_replication(&pg_url, range_index, storage).await {
+    if let Err(e) = run_replication(&pg_url, range_index, storage, registry).await {
         error!("Fatal replication error: {}", e);
         std::process::exit(1);
     }
@@ -24,6 +25,7 @@ async fn run_replication(
     pg_url: &str,
     range_index: Arc<RwLock<RangeQueryIndex>>,
     storage: Arc<SubscriptionStore>,
+    registry: Arc<ConnectionRegistry>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Connect to PostgreSQL with notice filter
     let (client, connection) = tokio_postgres::connect(pg_url, NoTls).await?;
@@ -41,7 +43,7 @@ async fn run_replication(
     setup_replication_slot(&client).await?;
 
     // Start consuming changes
-    consume_changes(client, range_index, storage).await?;
+    consume_changes(client, range_index, storage, registry).await?;
 
     Ok(())
 }
@@ -72,6 +74,7 @@ async fn consume_changes(
     client: Client,
     range_index: Arc<RwLock<RangeQueryIndex>>,
     storage: Arc<SubscriptionStore>,
+    registry: Arc<ConnectionRegistry>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Starting to consume logical replication stream...");
 
@@ -83,7 +86,7 @@ async fn consume_changes(
             Ok(rows) => {
                 for row in rows {
                     if let Ok(data) = row.try_get::<_, Vec<u8>>(0) {
-                        process_protobuf_event(&data, &range_index, &storage).await;
+                        process_protobuf_event(&data, &range_index, &storage, &registry).await;
                     }
                 }
             }
@@ -101,6 +104,7 @@ async fn process_protobuf_event(
     data: &[u8],
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     storage: &Arc<SubscriptionStore>,
+    registry: &Arc<ConnectionRegistry>,
 ) {
     // Decode decoderbufs protobuf format
     // Simplified decoding - decoderbufs uses a nested structure
@@ -141,14 +145,48 @@ async fn process_protobuf_event(
             for query in queries {
                 if score >= query.min_score && score <= query.max_score {
                     match operation {
-                        "insert" | "update" => {
+                        "insert" => {
                             if let Err(e) = storage.add_document_to_connection(&conn_id, &query.query_id, &id) {
                                 error!("Failed to add document to connection: {}", e);
+                            } else {
+                                // Send Added notification
+                                registry.notify(
+                                    &conn_id,
+                                    Notification::Added {
+                                        query_id: query.query_id.clone(),
+                                        id: id.clone(),
+                                        score,
+                                    },
+                                ).await;
+                            }
+                        }
+                        "update" => {
+                            if let Err(e) = storage.add_document_to_connection(&conn_id, &query.query_id, &id) {
+                                error!("Failed to update document in connection: {}", e);
+                            } else {
+                                // Send Updated notification
+                                registry.notify(
+                                    &conn_id,
+                                    Notification::Updated {
+                                        query_id: query.query_id.clone(),
+                                        id: id.clone(),
+                                        score,
+                                    },
+                                ).await;
                             }
                         }
                         "delete" => {
                             if let Err(e) = storage.remove_document_from_connection(&conn_id, &query.query_id, &id) {
                                 error!("Failed to remove document from connection: {}", e);
+                            } else {
+                                // Send Removed notification
+                                registry.notify(
+                                    &conn_id,
+                                    Notification::Removed {
+                                        query_id: query.query_id.clone(),
+                                        id: id.clone(),
+                                    },
+                                ).await;
                             }
                         }
                         _ => {}

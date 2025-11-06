@@ -68,7 +68,7 @@ impl SubscriptionStore {
         connection_id: &str,
         query_id: &str,
         doc_id: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut wtxn = self.env.write_txn()?;
 
         // connection:query:node:id -> 1 (exists)
@@ -95,7 +95,7 @@ impl SubscriptionStore {
         connection_id: &str,
         query_id: &str,
         doc_id: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut wtxn = self.env.write_txn()?;
 
         let conn_key = format!("{}:{}:node:{}", connection_id, query_id, doc_id);
@@ -135,7 +135,7 @@ impl SubscriptionStore {
         connection_id: &str,
         query_id: &str,
         doc_id: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut wtxn = self.env.write_txn()?;
 
         let conn_key = format!("{}:{}:node:{}", connection_id, query_id, doc_id);
@@ -179,7 +179,7 @@ impl SubscriptionStore {
         connection_id: &str,
         query_id: &str,
         doc_id: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.handle_deletion(connection_id, query_id, doc_id)
     }
 
@@ -234,7 +234,7 @@ impl SubscriptionStore {
     }
 
     /// Remove all subscriptions for a connection
-    pub fn remove_connection(&self, connection_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn remove_connection(&self, connection_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut wtxn = self.env.write_txn()?;
         let prefix = format!("{}:", connection_id);
 
