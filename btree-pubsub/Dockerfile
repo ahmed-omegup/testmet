@@ -1,11 +1,3 @@
-FROM rust:latest as builder
-
-WORKDIR /app
-COPY Cargo.toml Cargo.lock ./
-COPY src ./src
-
-RUN cargo build --release
-
 FROM debian:sid-slim
 
 RUN apt-get update && apt-get install -y \
@@ -14,7 +6,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=builder /app/target/release/btree-pubsub /app/btree-pubsub
+
+# Copy pre-built binary from local machine
+COPY target/release/btree-pubsub /app/btree-pubsub
 
 ENV RUST_LOG=info
 ENV POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/benchmark
