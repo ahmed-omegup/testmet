@@ -15,9 +15,10 @@ use tracing_subscriber;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing
+    // Initialize tracing with filter to suppress tokio_postgres connection INFO logs
     tracing_subscriber::fmt()
         .with_max_level(Level::INFO)
+        .with_env_filter("btree_pubsub=info,tokio_postgres::connection=warn")
         .init();
 
     info!("Starting B-Tree PubSub Server");

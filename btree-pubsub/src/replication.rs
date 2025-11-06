@@ -13,17 +13,10 @@ pub async fn start_replication(
     range_index: Arc<RwLock<RangeQueryIndex>>,
     storage: Arc<SubscriptionStore>,
 ) {
-    loop {
-        match run_replication(&pg_url, range_index.clone(), storage.clone()).await {
-            Ok(_) => {
-                info!("Replication ended normally");
-                break;
-            }
-            Err(e) => {
-                error!("Replication error: {}, retrying in 5s...", e);
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-            }
-        }
+    // Run replication - any error is fatal
+    if let Err(e) = run_replication(&pg_url, range_index, storage).await {
+        error!("Fatal replication error: {}", e);
+        std::process::exit(1);
     }
 }
 
@@ -32,10 +25,10 @@ async fn run_replication(
     range_index: Arc<RwLock<RangeQueryIndex>>,
     storage: Arc<SubscriptionStore>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Connect to PostgreSQL
+    // Connect to PostgreSQL with notice filter
     let (client, connection) = tokio_postgres::connect(pg_url, NoTls).await?;
 
-    // Spawn connection task
+    // Spawn connection task and suppress notices
     tokio::spawn(async move {
         if let Err(e) = connection.await {
             error!("PostgreSQL connection error: {}", e);
