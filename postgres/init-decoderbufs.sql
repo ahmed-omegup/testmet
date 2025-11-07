@@ -1,0 +1,3 @@
+-- Enable decoderbufs extension
+-- Note: decoderbufs is a logical decoding output plugin, not a regular extension
+-- It gets loaded via the replication slot creation

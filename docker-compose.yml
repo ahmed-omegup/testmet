@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: debezium/postgres:16-alpine
+    build: ./postgres
     restart: unless-stopped
     environment:
       - POSTGRES_DB=benchmark
