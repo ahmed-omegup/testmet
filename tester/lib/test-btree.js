@@ -243,7 +243,7 @@ export async function periodicUpdatesBTree(duration) {
       // Sleep until next tick
       const remaining = 1000 - elapsed;
       if (remaining > 0) {
-        await sleep(0.01);
+        await sleep(remaining);
       }
     }
     
