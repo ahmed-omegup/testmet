@@ -96,7 +96,6 @@ export async function spawnCustomersBTree(count, initTime) {
       return new Promise((resolve, reject) => {
         const ws = new WebSocket(BTREE_URL);
         let connectionId = null;
-        let queryId = `query_${i}`;
         
         ws.on('open', () => {
           // Wait for connection ID first
@@ -112,7 +111,6 @@ export async function spawnCustomersBTree(count, initTime) {
               // Subscribe to range
               const subscribeMsg = JSON.stringify({
                 type: 'subscribe',
-                query_id: queryId,
                 min_score: minScore,
                 max_score: maxScore
               });
@@ -121,30 +119,26 @@ export async function spawnCustomersBTree(count, initTime) {
             } else if (msg.type === 'subscribed') {
               // Subscription confirmed
             } else if (msg.type === 'added') {
-              if (msg.query_id === queryId && msg.timestamp !== -1) {
+              if (msg.timestamp !== -1) {
                 n++;
               }
             } else if (msg.type === 'updated') {
               // Score might have changed, check if still in range
-              if (msg.query_id === queryId) {
-                if (msg.timestamp === -1) {
-                  // Cleanup started
-                  n--;
-                  if (n <= 0) {
-                    ww && fs.closeSync(ww);
-                    ws.close();
-                    resolve(i);
-                  }
-                }
-              }
-            } else if (msg.type === 'removed') {
-              if (msg.query_id === queryId) {
+              if (msg.timestamp === -1) {
+                // Cleanup started
                 n--;
                 if (n <= 0) {
                   ww && fs.closeSync(ww);
                   ws.close();
                   resolve(i);
                 }
+              }
+            } else if (msg.type === 'removed') {
+              n--;
+              if (n <= 0) {
+                ww && fs.closeSync(ww);
+                ws.close();
+                resolve(i);
               }
             }
           } catch (err) {
