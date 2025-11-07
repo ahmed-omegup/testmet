@@ -33,6 +33,8 @@ services:
       - RUST_LOG=btree_pubsub=info,tokio_postgres::connection=warn
     ports:
       - "8080:8080"
+    volumes:
+      - ./btree-pubsub/target/release/btree-pubsub:/app/btree-pubsub
     depends_on:
       - postgres
     deploy:

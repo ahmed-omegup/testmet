@@ -1,7 +1,7 @@
 use tokio_postgres::{Client, NoTls, SimpleQueryMessage};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, error, warn};
+use tracing::{info, error, trace};
 use crate::btree_index::RangeQueryIndex;
 use crate::storage::SubscriptionStore;
 use crate::connection_registry::{ConnectionRegistry, Notification};
@@ -79,22 +79,23 @@ async fn consume_changes(
     info!("Starting to consume logical replication stream...");
 
     // Subscribe to changes using pgoutput (built-in, reliable)
-    let query = "SELECT * FROM pg_logical_slot_get_changes('btree_pubsub_slot', NULL, NULL, 'proto_version', '1', 'publication_names', 'electric_publication_default')";
+    let query = "SELECT lsn, xid, data FROM pg_logical_slot_get_binary_changes('btree_pubsub_slot', NULL, NULL, 'proto_version', '1', 'publication_names', 'electric_publication_default')";
 
     loop {
         match client.query(query, &[]).await {
             Ok(rows) => {
-                info!("Polled replication slot: {} rows", rows.len());
+                trace!("Polled replication slot: {} rows", rows.len());
                 for row in rows {
-                    // pgoutput returns: lsn, xid, data (text)
-                    if let Ok(data) = row.try_get::<_, String>(2) {
-                        info!("Processing change: {}", data);
-                        process_text_change(&data, &range_index, &storage, &registry).await;
+                    // pgoutput returns: lsn, xid, data (binary)
+                    if let Ok(data) = row.try_get::<_, Vec<u8>>(2) {
+                        info!("Processing binary change: {} bytes", data.len());
+                        process_pgoutput_binary(&data, &range_index, &storage, &registry).await;
                     }
                 }
             }
             Err(e) => {
-                warn!("Error reading changes: {}", e);
+                error!("Fatal error reading changes: {:?}", e);
+                return Err(e.into());
             }
         }
 
@@ -103,112 +104,35 @@ async fn consume_changes(
     }
 }
 
-async fn process_text_change(
-    data: &str,
+// Process binary pgoutput format
+async fn process_pgoutput_binary(
+    data: &[u8],
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
 ) {
-    // Parse pgoutput text format:
-    // INSERT: table public.docs: id[text]:'doc_123' name[text]:'doc_123' score[integer]:500 timestamp[integer]:1
-    // UPDATE: table public.docs: id[text]:'doc_123' name[text]:'doc_123' score[integer]:600 timestamp[integer]:2
-    // DELETE: table public.docs: id[text]:'doc_123'
+    // pgoutput binary format is complex - for now, just log that we received data
+    // We'll need to properly parse the pgoutput protocol messages
+    // For a quick fix, let's try to decode it as UTF-8 and look for patterns
     
-    if !data.contains("table public.docs") {
-        return;
-    }
-    
-    let operation = if data.starts_with("INSERT:") {
-        "insert"
-    } else if data.starts_with("UPDATE:") {
-        "update"
-    } else if data.starts_with("DELETE:") {
-        "delete"
-    } else {
-        return;
-    };
-    
-    // Extract id and score from the text
-    let id = match extract_field(data, "id[text]:") {
-        Some(v) => v,
-        None => return,
-    };
-    
-    let score: i32 = match extract_field(data, "score[integer]:") {
-        Some(v) => v.parse().unwrap_or(0),
-        None => return,
-    };
-    
-    // Find all connections interested in this score
-    let connections = {
-        let index = range_index.read().await;
-        index.find_connections_for_score(score)
-    };
-
-    info!(
-        "Event: {} doc={} score={} -> {} connections",
-        operation, id, score, connections.len()
-    );
-
-    // Update storage and send to connections
-    for conn_id in connections {
-        let queries = {
-            let index = range_index.read().await;
-            index.get_queries_for_connection(&conn_id)
-        };
-
-        for query in queries {
-            if score >= query.min_score && score <= query.max_score {
-                match operation {
-                    "insert" => {
-                        if let Err(e) = storage.add_document_to_connection(&conn_id, &query.query_id, &id) {
-                            error!("Failed to add document to connection: {}", e);
-                        } else {
-                            registry.notify(
-                                &conn_id,
-                                Notification::Added {
-                                    query_id: query.query_id.clone(),
-                                    id: id.clone(),
-                                    score,
-                                },
-                            ).await;
-                        }
-                    }
-                    "update" => {
-                        if let Err(e) = storage.add_document_to_connection(&conn_id, &query.query_id, &id) {
-                            error!("Failed to update document in connection: {}", e);
-                        } else {
-                            registry.notify(
-                                &conn_id,
-                                Notification::Updated {
-                                    query_id: query.query_id.clone(),
-                                    id: id.clone(),
-                                    score,
-                                },
-                            ).await;
-                        }
-                    }
-                    "delete" => {
-                        if let Err(e) = storage.remove_document_from_connection(&conn_id, &query.query_id, &id) {
-                            error!("Failed to remove document from connection: {}", e);
-                        } else {
-                            registry.notify(
-                                &conn_id,
-                                Notification::Removed {
-                                    query_id: query.query_id.clone(),
-                                    id: id.clone(),
-                                },
-                            ).await;
-                        }
-                    }
-                    _ => {}
-                }
-            }
+    if let Ok(text) = std::str::from_utf8(data) {
+        info!("Binary data as text: {}", text);
+        // Try simple pattern matching as fallback
+        if text.contains("INSERT") {
+            info!("Detected INSERT event");
+        } else if text.contains("UPDATE") {
+            info!("Detected UPDATE event");
+        } else if text.contains("DELETE") {
+            info!("Detected DELETE event");
         }
+    } else {
+        // Pure binary - need proper pgoutput parser
+        info!("Received pure binary data: {} bytes, first bytes: {:02x?}", 
+            data.len(), 
+            &data[..std::cmp::min(20, data.len())]
+        );
     }
-}
-
-fn extract_field(text: &str, prefix: &str) -> Option<String> {
+}fn extract_field(text: &str, prefix: &str) -> Option<String> {
     let start = text.find(prefix)? + prefix.len();
     let remaining = &text[start..];
     

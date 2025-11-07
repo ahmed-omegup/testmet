@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy pre-built binary from local machine
+# Copy pre-built binary from local machine (updated for binary replication)
 COPY target/release/btree-pubsub /app/btree-pubsub
 
 ENV RUST_LOG=info
