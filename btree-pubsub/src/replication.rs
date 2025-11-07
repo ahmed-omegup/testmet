@@ -60,7 +60,7 @@ async fn setup_replication_slot(client: &Client) -> Result<(), Box<dyn std::erro
     if rows.is_empty() {
         info!("Creating replication slot...");
         client
-            .simple_query("SELECT pg_create_logical_replication_slot('btree_pubsub_slot', 'decoderbufs')")
+            .simple_query("SELECT pg_create_logical_replication_slot('btree_pubsub_slot', 'pgoutput')")
             .await?;
         info!("Replication slot created");
     } else {
@@ -78,15 +78,18 @@ async fn consume_changes(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Starting to consume logical replication stream...");
 
-    // Subscribe to changes using decoderbufs (outputs protobuf)
-    let query = "SELECT data FROM pg_logical_slot_get_binary_changes('btree_pubsub_slot', NULL, NULL)";
+    // Subscribe to changes using pgoutput (built-in, reliable)
+    let query = "SELECT * FROM pg_logical_slot_get_changes('btree_pubsub_slot', NULL, NULL, 'proto_version', '1', 'publication_names', 'electric_publication_default')";
 
     loop {
         match client.query(query, &[]).await {
             Ok(rows) => {
+                info!("Polled replication slot: {} rows", rows.len());
                 for row in rows {
-                    if let Ok(data) = row.try_get::<_, Vec<u8>>(0) {
-                        process_protobuf_event(&data, &range_index, &storage, &registry).await;
+                    // pgoutput returns: lsn, xid, data (text)
+                    if let Ok(data) = row.try_get::<_, String>(2) {
+                        info!("Processing change: {}", data);
+                        process_text_change(&data, &range_index, &storage, &registry).await;
                     }
                 }
             }
@@ -97,6 +100,126 @@ async fn consume_changes(
 
         // Small delay to avoid spinning
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+}
+
+async fn process_text_change(
+    data: &str,
+    range_index: &Arc<RwLock<RangeQueryIndex>>,
+    storage: &Arc<SubscriptionStore>,
+    registry: &Arc<ConnectionRegistry>,
+) {
+    // Parse pgoutput text format:
+    // INSERT: table public.docs: id[text]:'doc_123' name[text]:'doc_123' score[integer]:500 timestamp[integer]:1
+    // UPDATE: table public.docs: id[text]:'doc_123' name[text]:'doc_123' score[integer]:600 timestamp[integer]:2
+    // DELETE: table public.docs: id[text]:'doc_123'
+    
+    if !data.contains("table public.docs") {
+        return;
+    }
+    
+    let operation = if data.starts_with("INSERT:") {
+        "insert"
+    } else if data.starts_with("UPDATE:") {
+        "update"
+    } else if data.starts_with("DELETE:") {
+        "delete"
+    } else {
+        return;
+    };
+    
+    // Extract id and score from the text
+    let id = match extract_field(data, "id[text]:") {
+        Some(v) => v,
+        None => return,
+    };
+    
+    let score: i32 = match extract_field(data, "score[integer]:") {
+        Some(v) => v.parse().unwrap_or(0),
+        None => return,
+    };
+    
+    // Find all connections interested in this score
+    let connections = {
+        let index = range_index.read().await;
+        index.find_connections_for_score(score)
+    };
+
+    info!(
+        "Event: {} doc={} score={} -> {} connections",
+        operation, id, score, connections.len()
+    );
+
+    // Update storage and send to connections
+    for conn_id in connections {
+        let queries = {
+            let index = range_index.read().await;
+            index.get_queries_for_connection(&conn_id)
+        };
+
+        for query in queries {
+            if score >= query.min_score && score <= query.max_score {
+                match operation {
+                    "insert" => {
+                        if let Err(e) = storage.add_document_to_connection(&conn_id, &query.query_id, &id) {
+                            error!("Failed to add document to connection: {}", e);
+                        } else {
+                            registry.notify(
+                                &conn_id,
+                                Notification::Added {
+                                    query_id: query.query_id.clone(),
+                                    id: id.clone(),
+                                    score,
+                                },
+                            ).await;
+                        }
+                    }
+                    "update" => {
+                        if let Err(e) = storage.add_document_to_connection(&conn_id, &query.query_id, &id) {
+                            error!("Failed to update document in connection: {}", e);
+                        } else {
+                            registry.notify(
+                                &conn_id,
+                                Notification::Updated {
+                                    query_id: query.query_id.clone(),
+                                    id: id.clone(),
+                                    score,
+                                },
+                            ).await;
+                        }
+                    }
+                    "delete" => {
+                        if let Err(e) = storage.remove_document_from_connection(&conn_id, &query.query_id, &id) {
+                            error!("Failed to remove document from connection: {}", e);
+                        } else {
+                            registry.notify(
+                                &conn_id,
+                                Notification::Removed {
+                                    query_id: query.query_id.clone(),
+                                    id: id.clone(),
+                                },
+                            ).await;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+fn extract_field(text: &str, prefix: &str) -> Option<String> {
+    let start = text.find(prefix)? + prefix.len();
+    let remaining = &text[start..];
+    
+    // Handle quoted values like 'doc_123'
+    if remaining.starts_with('\'') {
+        let end = remaining[1..].find('\'')?;
+        Some(remaining[1..=end].to_string())
+    } else {
+        // Handle unquoted values (numbers)
+        let end = remaining.find(' ').unwrap_or(remaining.len());
+        Some(remaining[..end].to_string())
     }
 }
 
