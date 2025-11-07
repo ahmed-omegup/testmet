@@ -15,8 +15,3 @@ heed = "0.20"  # LMDB wrapper for Rust
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.6", features = ["v4"] }
-etl = { git = "https://github.com/supabase/etl" }
-async-trait = "0.1"
-url = "2.5"
-
-[build-dependencies]

@@ -2,6 +2,8 @@ use heed::{Database, Env, EnvOpenOptions};
 use heed::types::*;
 use heed::byteorder::BigEndian;
 use std::path::Path;
+use std::sync::RwLock;
+use std::collections::HashMap;
 
 /// Document state in the state machine
 /// -1: Document was deleted before DB query completed
@@ -30,6 +32,14 @@ impl From<DocState> for i8 {
     }
 }
 
+/// Document metadata for replication tracking
+#[derive(Debug, Clone)]
+struct DocumentMetadata {
+    customer_id: i32,
+    score: f64,
+    deleted: bool,
+}
+
 /// LMDB-based storage for subscription tracking
 /// - connection_documents: connection:query:node:id -> state (i8: -1, 0, 1)
 /// - document_connections: id:connection -> count (u32)
@@ -37,6 +47,8 @@ pub struct SubscriptionStore {
     env: Env,
     connection_documents: Database<Str, I8>,
     document_connections: Database<Str, U32<BigEndian>>,
+    // In-memory cache for document metadata (for replication)
+    doc_metadata: RwLock<HashMap<i32, DocumentMetadata>>,
 }
 
 impl SubscriptionStore {
@@ -59,6 +71,7 @@ impl SubscriptionStore {
             env,
             connection_documents,
             document_connections,
+            doc_metadata: RwLock::new(HashMap::new()),
         })
     }
 
@@ -264,5 +277,35 @@ impl SubscriptionStore {
 
         wtxn.commit()?;
         Ok(())
+    }
+
+    /// Track document metadata from replication events
+    pub fn track_document(&self, id: i32, customer_id: i32, score: f64) {
+        let mut metadata = self.doc_metadata.write().unwrap();
+        metadata.insert(id, DocumentMetadata {
+            customer_id,
+            score,
+            deleted: false,
+        });
+    }
+
+    /// Get score for a document
+    pub fn get_score(&self, id: i32) -> Option<f64> {
+        let metadata = self.doc_metadata.read().unwrap();
+        metadata.get(&id).map(|m| m.score)
+    }
+
+    /// Get customer_id for a document
+    pub fn get_customer_id(&self, id: i32) -> Option<i32> {
+        let metadata = self.doc_metadata.read().unwrap();
+        metadata.get(&id).map(|m| m.customer_id)
+    }
+
+    /// Mark a document as deleted
+    pub fn mark_deleted(&self, id: i32) {
+        let mut metadata = self.doc_metadata.write().unwrap();
+        if let Some(doc) = metadata.get_mut(&id) {
+            doc.deleted = true;
+        }
     }
 }
