@@ -36,7 +36,7 @@ impl From<DocState> for i8 {
 #[derive(Debug, Clone)]
 struct DocumentMetadata {
     customer_id: i32,
-    score: f64,
+    score: i32,
     deleted: bool,
 }
 
@@ -280,7 +280,7 @@ impl SubscriptionStore {
     }
 
     /// Track document metadata from replication events
-    pub fn track_document(&self, id: i32, customer_id: i32, score: f64) {
+    pub fn track_document(&self, id: i32, customer_id: i32, score: i32) {
         let mut metadata = self.doc_metadata.write().unwrap();
         metadata.insert(id, DocumentMetadata {
             customer_id,
@@ -290,7 +290,7 @@ impl SubscriptionStore {
     }
 
     /// Get score for a document
-    pub fn get_score(&self, id: i32) -> Option<f64> {
+    pub fn get_score(&self, id: i32) -> Option<i32> {
         let metadata = self.doc_metadata.read().unwrap();
         metadata.get(&id).map(|m| m.score)
     }
