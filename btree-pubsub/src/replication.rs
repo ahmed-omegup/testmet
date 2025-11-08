@@ -5,6 +5,12 @@ use tracing::{info, error, warn};
 use crate::btree_index::RangeQueryIndex;
 use crate::storage::SubscriptionStore;
 use crate::connection_registry::{ConnectionRegistry, Notification};
+use prost::Message;
+
+// Include the generated protobuf code
+mod decoderbufs {
+    include!(concat!(env!("OUT_DIR"), "/decoderbufs.rs"));
+}
 
 /// Start PostgreSQL logical replication reader
 pub async fn start_replication(
@@ -59,7 +65,7 @@ async fn setup_replication_slot(client: &Client) -> Result<(), Box<dyn std::erro
     if rows.is_empty() {
         info!("Creating replication slot...");
         client
-            .simple_query("SELECT pg_create_logical_replication_slot('btree_pubsub_slot', 'pgoutput')")
+            .simple_query("SELECT pg_create_logical_replication_slot('btree_pubsub_slot', 'decoderbufs')")
             .await?;
         info!("Replication slot created");
     } else {
@@ -77,7 +83,7 @@ async fn consume_changes(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Starting to consume logical replication stream...");
 
-    let query = "SELECT lsn, xid, data FROM pg_logical_slot_get_binary_changes('btree_pubsub_slot', NULL, NULL, 'proto_version', '1', 'publication_names', 'electric_publication_default')";
+    let query = "SELECT lsn, xid, data FROM pg_logical_slot_get_binary_changes('btree_pubsub_slot', NULL, NULL)";
 
     loop {
         match client.query(query, &[]).await {
@@ -88,7 +94,7 @@ async fn consume_changes(
                 for row in rows {
                     if let Ok(data) = row.try_get::<_, Vec<u8>>(2) {
                         info!("Processing message of {} bytes", data.len());
-                        process_pgoutput_message(&data, &range_index, &storage, &registry).await;
+                        process_decoderbufs_message(&data, &range_index, &storage, &registry).await;
                     }
                 }
             }
@@ -102,8 +108,8 @@ async fn consume_changes(
     }
 }
 
-// Simple pgoutput message parser
-async fn process_pgoutput_message(
+// Process decoderbufs protobuf message
+async fn process_decoderbufs_message(
     data: &[u8],
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     storage: &Arc<SubscriptionStore>,
@@ -113,120 +119,86 @@ async fn process_pgoutput_message(
         return;
     }
 
-    // pgoutput message type is first byte
-    let msg_type = data[0] as char;
+    // Decode protobuf message
+    let row_msg = match decoderbufs::RowMessage::decode(data) {
+        Ok(msg) => msg,
+        Err(e) => {
+            error!("Failed to decode protobuf message: {}", e);
+            return;
+        }
+    };
+
+    // Check operation type
+    let op = row_msg.op();
     
-    match msg_type {
-        'B' => {}, // Begin - start of transaction
-        'C' => {}, // Commit - end of transaction  
-        'I' => {
-            // Insert message
-            if let Some((id, score)) = parse_insert_message(data) {
+    match op {
+        decoderbufs::Op::Insert => {
+            if let Some((id, score)) = extract_id_and_score(&row_msg.new_tuple) {
                 handle_insert(id, score, range_index, storage, registry).await;
             }
         }
-        'U' => {
-            // Update message
-            if let Some((id, score)) = parse_update_message(data) {
+        decoderbufs::Op::Update => {
+            if let Some((id, score)) = extract_id_and_score(&row_msg.new_tuple) {
                 handle_update(id, score, range_index, storage, registry).await;
             }
         }
-        'D' => {
-            // Delete message
-            if let Some(id) = parse_delete_message(data) {
+        decoderbufs::Op::Delete => {
+            if let Some(id) = extract_id(&row_msg.old_tuple) {
                 handle_delete(id, range_index, storage, registry).await;
             }
         }
-        'R' => {}, // Relation - table schema info
+        decoderbufs::Op::Begin | decoderbufs::Op::Commit => {
+            // Transaction markers - ignore
+        }
         _ => {
-            warn!("Unknown pgoutput message type: {}", msg_type);
+            warn!("Unknown operation type: {:?}", op);
         }
     }
 }
 
-fn parse_insert_message(data: &[u8]) -> Option<(String, i32)> {
-    // pgoutput binary format: I\0\0..N\0\u{4}t<len>value1 t<len>value2 t<len>value3 t<len>value4
-    // Columns: id (text), name (text), score (int), timestamp (int)
-    
-    let text = String::from_utf8_lossy(data);
-    info!("Parsing INSERT from: {:?}", text);
-    
-    // Find all text values between 't' markers
-    let mut values = Vec::new();
-    let mut i = 0;
-    while i < data.len() {
-        if data[i] == b't' && i + 5 < data.len() {
-            // Next 4 bytes are length (big-endian)
-            let len = u32::from_be_bytes([data[i+1], data[i+2], data[i+3], data[i+4]]) as usize;
-            let start = i + 5;
-            if start + len <= data.len() {
-                let value = String::from_utf8_lossy(&data[start..start+len]).to_string();
-                values.push(value);
-                i = start + len;
-                continue;
+fn extract_id_and_score(tuple: &[decoderbufs::DatumMessage]) -> Option<(String, i32)> {
+    let mut id: Option<String> = None;
+    let mut score: Option<i32> = None;
+
+    for datum in tuple {
+        let col_name = datum.column_name.as_ref()?;
+        
+        match col_name.as_str() {
+            "id" => {
+                if let Some(decoderbufs::datum_message::Datum::DatumString(ref s)) = datum.datum {
+                    id = Some(s.clone());
+                }
             }
+            "score" => {
+                if let Some(decoderbufs::datum_message::Datum::DatumInt32(s)) = datum.datum {
+                    score = Some(s);
+                } else if let Some(decoderbufs::datum_message::Datum::DatumInt64(s)) = datum.datum {
+                    score = Some(s as i32);
+                }
+            }
+            _ => {}
         }
-        i += 1;
     }
-    
-    info!("Parsed values: {:?}", values);
-    
-    // Extract id (column 0) and score (column 2)
-    let id = values.get(0)?.clone();
-    let score = values.get(2)?.parse::<i32>().ok()?;
-    
-    info!("Parsed INSERT: id={}, score={}", id, score);
-    Some((id, score))
+
+    if let (Some(id), Some(score)) = (id, score) {
+        info!("Extracted: id={}, score={}", id, score);
+        Some((id, score))
+    } else {
+        None
+    }
 }
 
-fn parse_update_message(data: &[u8]) -> Option<(String, i32)> {
-    // UPDATE format: U\0\0..N or O (new tuple marker)\0\u{4}t<len>value1 t<len>value2 ...
-    let text = String::from_utf8_lossy(data);
-    
-    // Find all text values between 't' markers
-    let mut values = Vec::new();
-    let mut i = 0;
-    while i < data.len() {
-        if data[i] == b't' && i + 5 < data.len() {
-            let len = u32::from_be_bytes([data[i+1], data[i+2], data[i+3], data[i+4]]) as usize;
-            let start = i + 5;
-            if start + len <= data.len() {
-                let value = String::from_utf8_lossy(&data[start..start+len]).to_string();
-                values.push(value);
-                i = start + len;
-                continue;
+fn extract_id(tuple: &[decoderbufs::DatumMessage]) -> Option<String> {
+    for datum in tuple {
+        if let Some(ref col_name) = datum.column_name {
+            if col_name == "id" {
+                if let Some(decoderbufs::datum_message::Datum::DatumString(ref s)) = datum.datum {
+                    info!("Extracted DELETE id={}", s);
+                    return Some(s.clone());
+                }
             }
         }
-        i += 1;
     }
-    
-    // Extract id (column 0) and score (column 2)
-    let id = values.get(0)?.clone();
-    let score = values.get(2)?.parse::<i32>().ok()?;
-    
-    info!("Parsed UPDATE: id={}, score={}", id, score);
-    Some((id, score))
-}
-
-fn parse_delete_message(data: &[u8]) -> Option<String> {
-    // DELETE format: D\0\0..K or O (old tuple marker)\0\u{4}t<len>value
-    let text = String::from_utf8_lossy(data);
-    
-    // Find the first text value
-    let mut i = 0;
-    while i < data.len() {
-        if data[i] == b't' && i + 5 < data.len() {
-            let len = u32::from_be_bytes([data[i+1], data[i+2], data[i+3], data[i+4]]) as usize;
-            let start = i + 5;
-            if start + len <= data.len() {
-                let id = String::from_utf8_lossy(&data[start..start+len]).to_string();
-                info!("Parsed DELETE: id={}", id);
-                return Some(id);
-            }
-        }
-        i += 1;
-    }
-    
     None
 }
 
