@@ -209,32 +209,23 @@ async fn handle_insert(
     storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
 ) {
-    // Update storage (we don't need customer_id anymore)
-    // Just track the document ID and score
-    
-    // Find connections interested in this score and notify them
-    let connections = {
-        let index = range_index.read().await;
-        index.find_connections_for_score(score)
+    // Get queries this document matches
+    let matches = {
+        let mut index = range_index.write().await;
+        index.get_queries_for_document(&id, score)
     };
     
-    for conn_id in connections {
-        // Get all queries for this connection and find ones that match the score
-        let queries = {
-            let index = range_index.read().await;
-            index.get_queries_for_connection(&conn_id)
-        };
-        
-        for query in queries {
-            if score >= query.min_score && score <= query.max_score {
-                info!("Notifying connection {} (query {}) about INSERT: {}", conn_id, query.query_id, id);
-                let notification = Notification::Added {
-                    query_id: query.query_id,
-                    id: id.clone(),
-                    score,
-                };
-                registry.notify(&conn_id, notification).await;
-            }
+    // Notify connections for each query the document was added to
+    for query_id in matches.added_to {
+        let index = range_index.read().await;
+        if let Some(query) = index.get_query(&query_id) {
+            info!("Notifying connection {} (query {}) about INSERT: {}", query.connection_id, query_id, id);
+            let notification = Notification::Added {
+                query_id: query_id.clone(),
+                id: id.clone(),
+                score,
+            };
+            registry.notify(&query.connection_id, notification).await;
         }
     }
 }
@@ -246,29 +237,36 @@ async fn handle_update(
     storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
 ) {
-    // Find connections affected by this update
-    let new_connections = {
-        let index = range_index.read().await;
-        index.find_connections_for_score(new_score)
+    // Get queries this document was added to or removed from
+    let matches = {
+        let mut index = range_index.write().await;
+        index.get_queries_for_document(&id, new_score)
     };
     
-    // Notify connections that have this document in their range
-    for conn_id in &new_connections {
-        let queries = {
-            let index = range_index.read().await;
-            index.get_queries_for_connection(conn_id)
-        };
-        
-        for query in queries {
-            if new_score >= query.min_score && new_score <= query.max_score {
-                info!("Notifying connection {} (query {}) about UPDATE: {}", conn_id, query.query_id, id);
-                let notification = Notification::Updated {
-                    query_id: query.query_id,
-                    id: id.clone(),
-                    score: new_score,
-                };
-                registry.notify(conn_id, notification).await;
-            }
+    // Notify about additions
+    for query_id in matches.added_to {
+        let index = range_index.read().await;
+        if let Some(query) = index.get_query(&query_id) {
+            info!("Notifying connection {} (query {}) about ADD (update): {}", query.connection_id, query_id, id);
+            let notification = Notification::Added {
+                query_id: query_id.clone(),
+                id: id.clone(),
+                score: new_score,
+            };
+            registry.notify(&query.connection_id, notification).await;
+        }
+    }
+    
+    // Notify about removals
+    for query_id in matches.removed_from {
+        let index = range_index.read().await;
+        if let Some(query) = index.get_query(&query_id) {
+            info!("Notifying connection {} (query {}) about REMOVE (update): {}", query.connection_id, query_id, id);
+            let notification = Notification::Removed {
+                query_id: query_id.clone(),
+                id: id.clone(),
+            };
+            registry.notify(&query.connection_id, notification).await;
         }
     }
 }
@@ -279,8 +277,21 @@ async fn handle_delete(
     storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
 ) {
-    // We don't know the score of the deleted document, so we can't find connections easily
-    // For now, we'll skip delete notifications
-    // In a real implementation, we'd need to track document scores
-    info!("DELETE received for {}, but skipping notification (score unknown)", id);
+    // Get all queries this document was in and notify removal
+    let query_ids = {
+        let mut index = range_index.write().await;
+        index.remove_document(&id)
+    };
+    
+    for query_id in query_ids {
+        let index = range_index.read().await;
+        if let Some(query) = index.get_query(&query_id) {
+            info!("Notifying connection {} (query {}) about DELETE: {}", query.connection_id, query_id, id);
+            let notification = Notification::Removed {
+                query_id: query_id.clone(),
+                id: id.clone(),
+            };
+            registry.notify(&query.connection_id, notification).await;
+        }
+    }
 }
