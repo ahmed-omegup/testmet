@@ -106,7 +106,7 @@ class DocsTreap {
 
 type QueryId = number;
 
-interface QueryInfo { id: QueryId; a: number; k: number; }
+interface QueryInfo { id: QueryId; a: number; k: number; max: number; }
 
 class QueriesNode {
 	key: number; // a
@@ -117,6 +117,11 @@ class QueriesNode {
 	itemsByScore: Map<number, Set<QueryId>> = new Map();
 	baseLocalMax: number = Number.NEGATIVE_INFINITY; // max of localScores (base, no add)
 	subtreeMax: number; // add + max(baseLocalMax, left.subtreeMax, right.subtreeMax)
+	// Track per-node and per-subtree maximum of query.max (upper bound on value coverage)
+	localMaxCap: number = Number.NEGATIVE_INFINITY;
+	subtreeMaxCap: number; // max(localMaxCap, left.subtreeMaxCap, right.subtreeMaxCap)
+	// frequency map to maintain localMaxCap efficiently
+	localMaxFreq: Map<number, number> = new Map();
 	l: Nullable<QueriesNode> = null;
 	r: Nullable<QueriesNode> = null;
 	constructor(key: number) {
@@ -124,6 +129,7 @@ class QueriesNode {
 		this.prio = Math.random();
 		this.add = 0;
 		this.subtreeMax = Number.NEGATIVE_INFINITY;
+		this.subtreeMaxCap = Number.NEGATIVE_INFINITY;
 	}
 }
 
@@ -133,14 +139,19 @@ class QueriesTreap {
 	private static negInf = Number.NEGATIVE_INFINITY;
 
 	private static getSubMax(n: Nullable<QueriesNode>): number { return n ? n.subtreeMax : QueriesTreap.negInf; }
+		private static getSubCap(n: Nullable<QueriesNode>): number { return n ? n.subtreeMaxCap : QueriesTreap.negInf; }
 
-	private static pull(n: QueriesNode): void {
+		private static pull(n: QueriesNode): void {
 		// subtreeMax is node.add + max(localBaseMax, left.subtreeMax, right.subtreeMax)
 		const leftMax = QueriesTreap.getSubMax(n.l);
 		const rightMax = QueriesTreap.getSubMax(n.r);
 		const local = n.baseLocalMax;
 		const mx = Math.max(local, Math.max(leftMax, rightMax));
 		n.subtreeMax = (mx === QueriesTreap.negInf) ? QueriesTreap.negInf : n.add + mx;
+			// subtreeMaxCap aggregates max cap across subtree
+			const leftCap = QueriesTreap.getSubCap(n.l);
+			const rightCap = QueriesTreap.getSubCap(n.r);
+			n.subtreeMaxCap = Math.max(n.localMaxCap, Math.max(leftCap, rightCap));
 	}
 
 	private rotateRight(p: QueriesNode): QueriesNode {
@@ -170,16 +181,19 @@ class QueriesTreap {
 		return lo;
 	}
 
-	private insertIntoLocal(n: QueriesNode, id: QueryId, baseScore: number): void {
+		private insertIntoLocal(n: QueriesNode, id: QueryId, baseScore: number, maxCap: number): void {
 		const idx = this.upperBound(n.localScores, baseScore - 1e-12); // stable for floats
 		n.localScores.splice(idx, 0, baseScore);
 		let set = n.itemsByScore.get(baseScore);
 		if (!set) { set = new Set(); n.itemsByScore.set(baseScore, set); }
 		set.add(id);
 		n.baseLocalMax = n.localScores.length ? n.localScores[n.localScores.length - 1] : QueriesTreap.negInf;
+			// update max cap freq
+			n.localMaxFreq.set(maxCap, (n.localMaxFreq.get(maxCap) ?? 0) + 1);
+			if (maxCap > n.localMaxCap) n.localMaxCap = maxCap;
 	}
 
-	private removeFromLocal(n: QueriesNode, id: QueryId, baseScore: number): boolean {
+		private removeFromLocal(n: QueriesNode, id: QueryId, baseScore: number, maxCap: number): boolean {
 		const set = n.itemsByScore.get(baseScore);
 		if (!set || !set.delete(id)) return false;
 		if (set.size === 0) n.itemsByScore.delete(baseScore);
@@ -187,6 +201,19 @@ class QueriesTreap {
 		const idx = this.findOneIndex(n.localScores, baseScore);
 		if (idx >= 0) n.localScores.splice(idx, 1);
 		n.baseLocalMax = n.localScores.length ? n.localScores[n.localScores.length - 1] : QueriesTreap.negInf;
+			// update max cap freq
+			const prev = n.localMaxFreq.get(maxCap) ?? 0;
+			if (prev <= 1) {
+				n.localMaxFreq.delete(maxCap);
+				if (n.localMaxCap === maxCap) {
+					// recompute current localMaxCap
+					let m = QueriesTreap.negInf;
+					for (const cap of n.localMaxFreq.keys()) if (cap > m) m = cap;
+					n.localMaxCap = m;
+				}
+			} else {
+				n.localMaxFreq.set(maxCap, prev - 1);
+			}
 		return true;
 	}
 
@@ -201,7 +228,7 @@ class QueriesTreap {
 		return -1;
 	}
 
-	// Range add Δ to all nodes with key > t: implemented via split and applyAdd at the right root
+		// Range add Δ to all nodes with key > t: implemented via split and applyAdd at the right root
 	rangeAddKeysGreaterThan(t: number, delta: number): void {
 		const [L, R] = this.splitByKey(this.root, t);
 		if (R) {
@@ -211,50 +238,50 @@ class QueriesTreap {
 		this.root = this.merge(L, R);
 	}
 
-	// Insert a query at key=a with effectiveScore = P(a-1)+k; returns the node where inserted to compute baseScore
-	insert(a: number, id: QueryId, effectiveScore: number): void {
-		this.root = this._insert(this.root, a, id, effectiveScore, 0);
+		// Insert a query at key=a with effectiveScore = P(a-1)+k and max cap
+		insert(a: number, id: QueryId, effectiveScore: number, maxCap: number): void {
+			this.root = this._insert(this.root, a, id, effectiveScore, maxCap, 0);
 	}
 
-	private _insert(n: Nullable<QueriesNode>, a: number, id: QueryId, effectiveScore: number, accAdd: number): QueriesNode {
+		private _insert(n: Nullable<QueriesNode>, a: number, id: QueryId, effectiveScore: number, maxCap: number, accAdd: number): QueriesNode {
 		if (!n) {
 			const node = new QueriesNode(a);
-			const baseScore = effectiveScore - accAdd - node.add; // node.add is 0 here
-			this.insertIntoLocal(node, id, baseScore);
+				const baseScore = effectiveScore - accAdd - node.add; // node.add is 0 here
+				this.insertIntoLocal(node, id, baseScore, maxCap);
 			QueriesTreap.pull(node);
 			return node;
 		}
 		if (a === n.key) {
 			const baseScore = effectiveScore - accAdd - n.add;
-			this.insertIntoLocal(n, id, baseScore);
+				this.insertIntoLocal(n, id, baseScore, maxCap);
 			QueriesTreap.pull(n);
 			return n;
 		}
 		if (a < n.key) {
-			n.l = this._insert(n.l, a, id, effectiveScore, accAdd + n.add);
+				n.l = this._insert(n.l, a, id, effectiveScore, maxCap, accAdd + n.add);
 			if (n.l && n.l.prio > n.prio) n = this.rotateRight(n);
 		} else {
-			n.r = this._insert(n.r, a, id, effectiveScore, accAdd + n.add);
+				n.r = this._insert(n.r, a, id, effectiveScore, maxCap, accAdd + n.add);
 			if (n.r && n.r.prio > n.prio) n = this.rotateLeft(n);
 		}
 		QueriesTreap.pull(n);
 		return n;
 	}
 
-	// Remove a query by (a, id, baseScore)
-	remove(a: number, id: QueryId, baseScore: number): void {
-		this.root = this._remove(this.root, a, id, baseScore);
+		// Remove a query by (a, id, baseScore, maxCap)
+		remove(a: number, id: QueryId, baseScore: number, maxCap: number): void {
+			this.root = this._remove(this.root, a, id, baseScore, maxCap);
 	}
 
-	private _remove(n: Nullable<QueriesNode>, a: number, id: QueryId, baseScore: number): Nullable<QueriesNode> {
+		private _remove(n: Nullable<QueriesNode>, a: number, id: QueryId, baseScore: number, maxCap: number): Nullable<QueriesNode> {
 		if (!n) return null;
 		if (a === n.key) {
 			// remove from local; if local empty and one child exists, rotate to remove node
-			this.removeFromLocal(n, id, baseScore);
+				this.removeFromLocal(n, id, baseScore, maxCap);
 		} else if (a < n.key) {
-			n.l = this._remove(n.l, a, id, baseScore);
+				n.l = this._remove(n.l, a, id, baseScore, maxCap);
 		} else {
-			n.r = this._remove(n.r, a, id, baseScore);
+				n.r = this._remove(n.r, a, id, baseScore, maxCap);
 		}
 		// If current node has no local items and one child missing, collapse via rotation/merge
 		if (n.baseLocalMax === QueriesTreap.negInf && !n.l && !n.r) {
@@ -265,16 +292,18 @@ class QueriesTreap {
 		return n;
 	}
 
-	// Collect queries with key <= v and effective score > cutoff
-	collectForValue(v: number, cutoff: number, visit: (id: QueryId) => void): void {
+		// Collect queries with key <= v and effective score > cutoff, and predicate over id (e.g., max >= v)
+		collectForValue(v: number, cutoff: number, isAllowed: (id: QueryId) => boolean, visit: (id: QueryId) => void): void {
 		// Split by key to isolate ≤ v
 		const [L, R] = this.splitByKey(this.root, v);
-		this._collect(L, 0, cutoff, visit);
+			this._collect(L, 0, cutoff, v, isAllowed, visit);
 		this.root = this.merge(L, R);
 	}
 
-	private _collect(n: Nullable<QueriesNode>, accAdd: number, cutoff: number, visit: (id: QueryId) => void): void {
+		private _collect(n: Nullable<QueriesNode>, accAdd: number, cutoff: number, v: number, isAllowed: (id: QueryId) => boolean, visit: (id: QueryId) => void): void {
 		if (!n) return;
+			// prune by max-cap first
+			if (n.subtreeMaxCap < v) return;
 		const effSubMax = (n.subtreeMax === QueriesTreap.negInf) ? QueriesTreap.negInf : n.subtreeMax + accAdd;
 		if (effSubMax <= cutoff) return;
 		const accHere = accAdd + n.add;
@@ -286,12 +315,12 @@ class QueriesTreap {
 				const base = n.localScores[i];
 				const set = n.itemsByScore.get(base);
 				if (!set) continue;
-				for (const id of set) visit(id);
+					for (const id of set) if (isAllowed(id)) visit(id);
 			}
 		}
 		// Recurse
-		this._collect(n.l, accHere, cutoff, visit);
-		this._collect(n.r, accHere, cutoff, visit);
+			this._collect(n.l, accHere, cutoff, v, isAllowed, visit);
+			this._collect(n.r, accHere, cutoff, v, isAllowed, visit);
 	}
 
 	// Treap split by key: returns [<= key, > key]
@@ -342,17 +371,17 @@ export class DynamicRangeQueries {
 		this.queries.rangeAddKeysGreaterThan(value, delta);
 	}
 
-	// Add a query (a=minValue, k=numDocs). Returns query id.
-	addQuery(a: number, k: number): QueryId {
+		// Add a query (a=minValue, k=numDocs, max=upper bound on value). Returns query id.
+		addQuery(a: number, k: number, max: number): QueryId {
 		const id = this.nextId++;
 		const effectiveScore = this.docs.prefixSum(a - 1) + k;
-		this.queries.insert(a, id, effectiveScore);
+			this.queries.insert(a, id, effectiveScore, max);
 		// We need to store baseScore used at the node for deletion. Compute it by re-deriving via a targeted lookup.
 		// Easiest: store as effectiveScore minus current accumulated add at position a.
 		// We can compute accumulated add at position a by walking the treap without modifying it.
 		const baseScore = this.getBaseScoreAtKeyForValue(a, effectiveScore);
 		this.idToBaseScore.set(id, baseScore);
-		this.idToQuery.set(id, { id, a, k });
+			this.idToQuery.set(id, { id, a, k, max });
 		return id;
 	}
 
@@ -377,7 +406,7 @@ export class DynamicRangeQueries {
 		if (!info) return false;
 		const baseScore = this.idToBaseScore.get(id);
 		if (baseScore === undefined) return false;
-		this.queries.remove(info.a, id, baseScore);
+			this.queries.remove(info.a, id, baseScore, info.max);
 		this.idToBaseScore.delete(id);
 		this.idToQuery.delete(id);
 		return true;
@@ -388,7 +417,15 @@ export class DynamicRangeQueries {
 	getQueriesCovering(v: number): QueryId[] {
 		const cutoff = this.docs.prefixSum(v - 1);
 		const out: QueryId[] = [];
-		this.queries.collectForValue(v, cutoff, (id) => out.push(id));
+			this.queries.collectForValue(
+				v,
+				cutoff,
+				(id) => {
+					const qi = this.idToQuery.get(id);
+					return !!qi && qi.max >= v;
+				},
+				(id) => out.push(id)
+			);
 		return out;
 	}
 
