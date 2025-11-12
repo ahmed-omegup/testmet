@@ -53,6 +53,12 @@ export async function seedBTree() {
     `);
     console.log("Publication created");
 
+    // Set REPLICA IDENTITY FULL to ensure all columns (including timestamp) are sent in replication
+    await client.query(`
+      ALTER TABLE docs REPLICA IDENTITY FULL;
+    `);
+    console.log("REPLICA IDENTITY FULL set");
+
     console.log(`Seeding ${N} documents...`);
     
     const batchSize = 10000;

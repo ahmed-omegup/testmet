@@ -204,7 +204,7 @@ fn extract_id_score_ts(tuple: &[decoderbufs::DatumMessage]) -> Option<(String, O
                     score = Some(s as i32);
                 }
             }
-            "timestamp" => {
+            "timestamp" | "\"timestamp\"" => {
                 if let Some(decoderbufs::datum_message::Datum::DatumInt32(t)) = datum.datum {
                     timestamp = Some(t);
                 } else if let Some(decoderbufs::datum_message::Datum::DatumInt64(t)) = datum.datum {
