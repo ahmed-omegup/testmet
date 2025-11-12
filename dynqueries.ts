@@ -86,7 +86,7 @@ class DocsTreap {
 		return n;
 	}
 
-	// prefix sum of keys < key
+	// prefix sum of keys strictly less than key
 	prefixSum(key: number): bigint {
 		let cur = this.root;
 		let res = 0n;
@@ -441,28 +441,36 @@ export class DynamicRangeQueries {
 // -------------------- Minimal sanity check (optional) --------------------
 
 // Execute quick self-test when run directly (node -r ts-node/register dynqueries.ts)
-if (typeof require !== 'undefined' && typeof module !== 'undefined' && (require as any).main === module) {
-	const dyn = new DynamicRangeQueries();
+const dyn = new DynamicRangeQueries();
 
-	// docs: values 1..10 with counts
-	dyn.addDocument(1, 2n); // P(1)=2
-	dyn.addDocument(3, 1n); // P(3)=3
-	dyn.addDocument(5, 4n); // P(5)=7
+// docs: values 1..10 with counts
+dyn.addDocument(1, 2n); // P(1)=2
+dyn.addDocument(3, 1n); // P(3)=3
+dyn.addDocument(5, 4n); // P(5)=7
 
-	// queries
-	const q1 = dyn.addQuery(1, 1n); // starts at 1, needs 1 doc => covers value 1
-	const q2 = dyn.addQuery(1, 3n); // needs 3 docs => accum across 1,3 => covers up to value 3
-	const q3 = dyn.addQuery(2, 4n); // from 2, needs 4 docs => docs at 3(1)+5(4)=5 => covers to 5
-	const q4 = dyn.addQuery(6, 1n); // from 6, needs 1 doc => covers 6 only if docs at 6+
+// queries
+const q1 = dyn.addQuery(1, 1n); // starts at 1, needs 1 doc => covers value 1
+const q2 = dyn.addQuery(1, 3n); // needs 3 docs => accum across 1,3 => covers up to value 3
+const q3 = dyn.addQuery(2, 4n); // from 2, needs 4 docs => docs at 3(1)+5(4)=5 => covers to 5
+const q4 = dyn.addQuery(6, 1n); // from 6, needs 1 doc => covers 6 only if docs at 6+
 
-	console.log('Covering 1:', dyn.getQueriesCovering(1).map(id => dyn.getQueryInfo(id)));
-	console.log('Covering 3:', dyn.getQueriesCovering(3).map(id => dyn.getQueryInfo(id)));
-	console.log('Covering 5:', dyn.getQueriesCovering(5).map(id => dyn.getQueryInfo(id)));
+console.log('Covering 1:', dyn.getQueriesCovering(1).map(id => dyn.getQueryInfo(id)));
+console.log('Covering 3:', dyn.getQueriesCovering(3).map(id => dyn.getQueryInfo(id)));
+console.log('Covering 5:', dyn.getQueriesCovering(5).map(id => dyn.getQueryInfo(id)));
 
-	// Update docs to affect suffix queries
-	dyn.addDocument(2, 1n); // increases P(a-1) for a>2 by +1
+// Update docs to affect suffix queries
+dyn.addDocument(2, 1n); // increases P(a-1) for a>2 by +1
 
-	console.log('After doc at 2, covering 2:', dyn.getQueriesCovering(2).map(id => dyn.getQueryInfo(id)));
-	console.log('After doc at 2, covering 6:', dyn.getQueriesCovering(6).map(id => dyn.getQueryInfo(id)));
+console.log('After doc at 2, covering 2:', dyn.getQueriesCovering(2).map(id => dyn.getQueryInfo(id)));
+console.log('After doc at 2, covering 6:', dyn.getQueriesCovering(6).map(id => dyn.getQueryInfo(id)));
+
+console.log(new Date)
+dyn.addQuery(1000000, 1n)
+for(let i = 0; i < 300000; i++) {
+	dyn.addQuery(10000000+i, 1n)
 }
+console.log(new Date)
+console.log(dyn.getQueriesCovering(20000000));
+console.log(new Date)
+
 
