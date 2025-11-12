@@ -26,7 +26,7 @@ declare const require: any;
 declare const module: any;
 
 // -------------------- Docs treap (dynamic prefix sums) --------------------
-
+let count = 0;
 class DocsNode {
 	key: number; // value
 	cnt: bigint; // docs at key
@@ -307,16 +307,19 @@ class QueriesTreap {
 	}
 
 	private _collect(n: Nullable<QueriesNode>, accAdd: bigint, cutoff: bigint, v: number, isAllowed: (id: QueryId) => boolean, visit: (id: QueryId) => void): void {
+		count ++
 		if (!n) return;
 		// prune by max-cap first
 		if (n.subtreeMaxCap < v) return;
 		const effSubMax = (n.subtreeMax === null) ? null : n.subtreeMax + accAdd;
 		if (effSubMax === null || effSubMax <= cutoff) return;
 		const accHere = accAdd + n.add;
-		// Visit local items: need baseScore > cutoff - accHere
+		// Visit local items: need baseScore > cutoff - accHere (strict inequality)
 		const thresholdBase = cutoff - accHere;
 		if (n.localScores.length) {
-			const idx = this.upperBound(n.localScores, thresholdBase);
+			// upperBound gives first >= thresholdBase, but we need strictly > cutoff
+			// So use thresholdBase + 1 to get first > thresholdBase
+			const idx = this.upperBound(n.localScores, thresholdBase + 1n);
 			for (let i = idx; i < n.localScores.length; i++) {
 				const base = n.localScores[i];
 				const set = n.itemsByScore.get(base);
@@ -370,7 +373,7 @@ export class DynamicRangeQueries {
 	private idToBaseScore: Map<QueryId, bigint> = new Map();
 
 	// Update document count at a specific value by delta (can be negative)
-	addDocument(value: number, delta: bigint): void {
+	addDocument(value: number, delta = 1n): void {
 		if (delta === 0n) return;
 		this.docs.update(value, delta);
 		// All queries with a > value increase their score by delta
@@ -465,12 +468,17 @@ console.log('After doc at 2, covering 2:', dyn.getQueriesCovering(2).map(id => d
 console.log('After doc at 2, covering 6:', dyn.getQueriesCovering(6).map(id => dyn.getQueryInfo(id)));
 
 console.log(new Date)
-dyn.addQuery(1000000, 1n)
+dyn.addQuery(1000000, 20000000n)
 for(let i = 0; i < 300000; i++) {
 	dyn.addQuery(10000000+i, 1n)
 }
+
+count = 0;
+dyn.addDocument(15000000);
+
 console.log(new Date)
 console.log(dyn.getQueriesCovering(20000000));
 console.log(new Date)
 
 
+console.log('Node visits during last query:', count);
