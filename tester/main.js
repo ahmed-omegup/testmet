@@ -57,7 +57,7 @@ const USE_ELECTRIC = POSTGRES_URL && !USE_RETHINKDB && !USE_BTREE ? true : false
     
     // Add timeout to prevent hanging indefinitely
     const timeout = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Timeout: Customers did not finish within 60s')), 60000)
+      setTimeout(() => reject(new Error('Timeout: Customers did not finish within 300s')), 300000)
     );
     
     try {

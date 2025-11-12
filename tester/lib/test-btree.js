@@ -99,6 +99,7 @@ export async function spawnCustomersBTree(count, initTime) {
     const customerPromise = (async () => {
       let n = 0;
       let logClosed = false;
+      let done = false;
       
       return new Promise((resolve, reject) => {
         const ws = new WebSocket(BTREE_URL);
@@ -109,6 +110,24 @@ export async function spawnCustomersBTree(count, initTime) {
             fs.closeSync(ww);
             logClosed = true;
           }
+        };
+
+        const finish = () => {
+          if (done) return;
+          done = true;
+          try { closeLog(); } catch {}
+          try {
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+              console.log('bye')
+              ws.terminate(); // force-close to avoid lingering sockets
+            } else {
+            console.log('error2')
+
+            }
+          } catch {
+            console.log('error')
+          }
+          resolve(i);
         };
         
         ws.on('open', () => {
@@ -142,17 +161,13 @@ export async function spawnCustomersBTree(count, initTime) {
                 // Cleanup started
                 n--;
                 if (n <= 0) {
-                  closeLog();
-                  ws.close();
-                  resolve(i);
+                  finish();
                 }
               }
             } else if (msg.type === 'removed') {
               n--;
               if (n <= 0) {
-                closeLog();
-                ws.close();
-                resolve(i);
+                finish();
               }
             }
           } catch (err) {
@@ -161,15 +176,16 @@ export async function spawnCustomersBTree(count, initTime) {
         });
         
         ws.on('error', (err) => {
-          fatal(`WebSocket error for customer ${i}`, err);
+          if (!done) {
+            fatal(`WebSocket error for customer ${i}`, err);
+          }
         });
         
         ws.on('close', () => {
-          if (n > 0) {
+          if (!done && n > 0) {
             fatal(`WebSocket closed unexpectedly for customer ${i}, still holding ${n} documents`);
           }
-          closeLog();
-          resolve(i);
+          finish();
         });
       });
     })();
