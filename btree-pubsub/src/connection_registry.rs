@@ -11,12 +11,14 @@ pub enum Notification {
         query_id: String,
         id: String,
         score: i32,
+        timestamp: i32,
     },
     #[serde(rename = "updated")]
     Updated {
         query_id: String,
         id: String,
         score: i32,
+        timestamp: i32,
     },
     #[serde(rename = "removed")]
     Removed { query_id: String, id: String },

@@ -214,6 +214,14 @@ impl RangeQueryIndex {
             .unwrap_or_default()
     }
 
+    /// Get current queries tracking a document (without mutating state)
+    pub fn get_tracked_queries_for_document(&self, doc_id: &str) -> Vec<String> {
+        self.document_queries
+            .get(doc_id)
+            .map(|qs| qs.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     /// Get all queries for a connection
     pub fn get_queries_for_connection(&self, connection_id: &str) -> Vec<String> {
         self.query_connections

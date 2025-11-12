@@ -133,29 +133,44 @@ async fn process_decoderbufs_message(
     
     match op {
         decoderbufs::Op::Insert => {
-            if let Some((id, score)) = extract_id_and_score(&row_msg.new_tuple) {
-                handle_insert(id, score, range_index, storage, registry).await;
+            if let Some((id, score_opt, ts_opt)) = extract_id_score_ts(&row_msg.new_tuple) {
+                if let Some(score) = score_opt {
+                    handle_insert(id, score, ts_opt.unwrap_or(0), range_index, storage, registry).await;
+                }
             }
         }
         decoderbufs::Op::Update => {
-            let old = extract_id_and_score(&row_msg.old_tuple);
-            let newv = extract_id_and_score(&row_msg.new_tuple);
+            let old = extract_id_score_ts(&row_msg.old_tuple);
+            let newv = extract_id_score_ts(&row_msg.new_tuple);
             match (newv, old) {
-                (Some((id_new, new_score)), Some((_id_old, old_score))) => {
-                    // Prefer id from new tuple
-                    handle_update(id_new, Some(old_score), new_score, range_index, storage, registry).await;
+                (Some((id_new, new_score_opt, new_ts_opt)), Some((_id_old, old_score_opt, _))) => {
+                    if let Some(new_score) = new_score_opt {
+                        handle_update(id_new.clone(), old_score_opt, new_score, range_index, storage, registry).await;
+                    }
+                    if let Some(ts) = new_ts_opt { 
+                        if ts == -1 { 
+                            info!("Broadcasting timestamp update for doc: {}, ts={}", id_new, ts);
+                            broadcast_timestamp_update(&id_new, ts, range_index, registry).await; 
+                        } 
+                    }
                 }
-                (Some((id, new_score)), None) => {
-                    handle_update(id, None, new_score, range_index, storage, registry).await;
+                (Some((id, new_score_opt, new_ts_opt)), None) => {
+                    if let Some(new_score) = new_score_opt {
+                        handle_update(id.clone(), None, new_score, range_index, storage, registry).await;
+                    }
+                    if let Some(ts) = new_ts_opt { if ts == -1 { broadcast_timestamp_update(&id, ts, range_index, registry).await; } }
                 }
                 _ => {}
             }
         }
         decoderbufs::Op::Delete => {
-            if let Some((id, old_score)) = extract_id_and_score(&row_msg.old_tuple) {
-                handle_delete(id, old_score, range_index, storage, registry).await;
+            if let Some((id, old_score_opt, _)) = extract_id_score_ts(&row_msg.old_tuple) {
+                if let Some(old_score) = old_score_opt {
+                    handle_delete(id, old_score, range_index, storage, registry).await;
+                } else if let Some(id2) = extract_id(&row_msg.old_tuple) {
+                    handle_delete_no_value(id2, range_index, storage, registry).await;
+                }
             } else if let Some(id) = extract_id(&row_msg.old_tuple) {
-                // If score missing, we can't adjust counts correctly; skip index update but notify removals based on tracking
                 handle_delete_no_value(id, range_index, storage, registry).await;
             }
         }
@@ -168,9 +183,10 @@ async fn process_decoderbufs_message(
     }
 }
 
-fn extract_id_and_score(tuple: &[decoderbufs::DatumMessage]) -> Option<(String, i32)> {
+fn extract_id_score_ts(tuple: &[decoderbufs::DatumMessage]) -> Option<(String, Option<i32>, Option<i32>)> {
     let mut id: Option<String> = None;
     let mut score: Option<i32> = None;
+    let mut timestamp: Option<i32> = None;
 
     for datum in tuple {
         let col_name = datum.column_name.as_ref()?;
@@ -188,16 +204,21 @@ fn extract_id_and_score(tuple: &[decoderbufs::DatumMessage]) -> Option<(String, 
                     score = Some(s as i32);
                 }
             }
+            "timestamp" => {
+                if let Some(decoderbufs::datum_message::Datum::DatumInt32(t)) = datum.datum {
+                    timestamp = Some(t);
+                } else if let Some(decoderbufs::datum_message::Datum::DatumInt64(t)) = datum.datum {
+                    timestamp = Some(t as i32);
+                }
+            }
             _ => {}
         }
     }
-
-    if let (Some(id), Some(score)) = (id, score) {
-        info!("Extracted: id={}, score={}", id, score);
-        Some((id, score))
-    } else {
-        None
+    let result = id.map(|idv| (idv, score, timestamp));
+    if let Some((ref id_val, ref score_val, ref ts_val)) = result {
+        info!("Extracted: id={}, score={:?}, timestamp={:?}", id_val, score_val, ts_val);
     }
+    result
 }
 
 fn extract_id(tuple: &[decoderbufs::DatumMessage]) -> Option<String> {
@@ -217,6 +238,7 @@ fn extract_id(tuple: &[decoderbufs::DatumMessage]) -> Option<String> {
 async fn handle_insert(
     id: String,
     score: i32,
+    timestamp: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     _storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
@@ -235,11 +257,7 @@ async fn handle_insert(
         };
         for conn_id in conns {
             info!("Notifying connection {} (query {}) about INSERT: {}", conn_id, query_id, id);
-            let notification = Notification::Added {
-                query_id: query_id.clone(),
-                id: id.clone(),
-                score,
-            };
+            let notification = Notification::Added { query_id: query_id.clone(), id: id.clone(), score, timestamp };
             registry.notify(&conn_id, notification).await;
         }
     }
@@ -267,11 +285,7 @@ async fn handle_update(
         };
         for conn_id in conns {
             info!("Notifying connection {} (query {}) about ADD (update): {}", conn_id, query_id, id);
-            let notification = Notification::Added {
-                query_id: query_id.clone(),
-                id: id.clone(),
-                score: new_score,
-            };
+            let notification = Notification::Added { query_id: query_id.clone(), id: id.clone(), score: new_score, timestamp: 0 };
             registry.notify(&conn_id, notification).await;
         }
     }
@@ -328,11 +342,9 @@ async fn handle_delete_no_value(
     _storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
 ) {
-    // We can't adjust counts. Only notify based on tracked memberships.
     let query_ids = {
         let index = range_index.read().await;
-        // No direct API to fetch doc's queries; using remove with dummy doesn't work. Skip.
-        Vec::<String>::new()
+        index.get_tracked_queries_for_document(&id)
     };
     for query_id in query_ids {
         let conns = {
@@ -341,6 +353,28 @@ async fn handle_delete_no_value(
         };
         for conn_id in conns {
             let notification = Notification::Removed { query_id: query_id.clone(), id: id.clone() };
+            registry.notify(&conn_id, notification).await;
+        }
+    }
+}
+
+async fn broadcast_timestamp_update(
+    id: &str,
+    timestamp: i32,
+    range_index: &Arc<RwLock<RangeQueryIndex>>,
+    registry: &Arc<ConnectionRegistry>,
+) {
+    let query_ids = {
+        let index = range_index.read().await;
+        index.get_tracked_queries_for_document(id)
+    };
+    for query_id in query_ids {
+        let conns = {
+            let index = range_index.read().await;
+            index.get_connections_for_query(&query_id)
+        };
+        for conn_id in conns {
+            let notification = Notification::Updated { query_id: query_id.clone(), id: id.to_string(), score: 0, timestamp };
             registry.notify(&conn_id, notification).await;
         }
     }

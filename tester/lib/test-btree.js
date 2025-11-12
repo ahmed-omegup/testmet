@@ -92,10 +92,18 @@ export async function spawnCustomersBTree(count, initTime) {
     // Create WebSocket connection
     const customerPromise = (async () => {
       let n = 0;
+      let logClosed = false;
       
       return new Promise((resolve, reject) => {
         const ws = new WebSocket(BTREE_URL);
         let connectionId = null;
+        
+        const closeLog = () => {
+          if (ww && !logClosed) {
+            fs.closeSync(ww);
+            logClosed = true;
+          }
+        };
         
         ws.on('open', () => {
           // Wait for connection ID first
@@ -128,7 +136,7 @@ export async function spawnCustomersBTree(count, initTime) {
                 // Cleanup started
                 n--;
                 if (n <= 0) {
-                  ww && fs.closeSync(ww);
+                  closeLog();
                   ws.close();
                   resolve(i);
                 }
@@ -136,7 +144,7 @@ export async function spawnCustomersBTree(count, initTime) {
             } else if (msg.type === 'removed') {
               n--;
               if (n <= 0) {
-                ww && fs.closeSync(ww);
+                closeLog();
                 ws.close();
                 resolve(i);
               }
@@ -154,7 +162,7 @@ export async function spawnCustomersBTree(count, initTime) {
           if (n > 0) {
             fatal(`WebSocket closed unexpectedly for customer ${i}, still holding ${n} documents`);
           }
-          ww && fs.closeSync(ww);
+          closeLog();
           resolve(i);
         });
       });
