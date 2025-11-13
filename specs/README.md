@@ -29,3 +29,29 @@ This directory captures specification-oriented development artifacts for the rea
 
 ## Versioning
 Specs tracked in Git; each significant implementation PR should reference spec file + section headers.
+
+## Current Status Snapshot (2025-11-13)
+
+- Agreed concepts captured in specs (D001–D012). Key points:
+	- Change events carry full Documents; addedTo/removedFrom exclude intersection.
+	- Hole-filling only for top-K (no ranking replacement yet).
+	- DemandBuffer stores candidate ids + refcount; promotion decrements and cleans immediately (no zero-count-in-buffer after promotion).
+	- iterate_range API planned for deterministic pagination.
+
+- Completed (code):
+	- Rust index modularization; small-scale end-to-end flow verified.
+	- Timestamp extraction fixes in replication; tester exit reliability improvements.
+
+- Next up (code):
+	- Implement ChangeEvent emission (Document struct + diff to queries).
+	- Add iterate_range and QueryState + DemandBuffer per top-k-selection.md.
+	- Basic metrics counters for refill and buffer sizes.
+
+## How to Continue (for future sessions)
+
+1. Implement Phase 1 in `replication.rs` and `connection_registry.rs` per `implementation-roadmap.md`.
+2. Implement `iterate_range` and `QueryState` with local buffer/deficit mechanics per `top-k-selection.md`.
+3. Introduce DemandBuffer with refcount and enforce invariants (Section 6), then add optional sharding and delta batching (Sections 13–16) if contention appears.
+4. Instrument metrics listed in Sections 16 and memory counters in `memory-and-scaling.md`.
+
+Refer to `implementation-roadmap.md` for acceptance criteria and success metrics.

@@ -41,8 +41,8 @@
 - Periodic sweep MAY (future) to handle pathological leftover entries.
 
 ## 7. Concurrency Model
-- Single-threaded mutation under async mutex for RangeQueryIndex and DemandBuffer (MUST to avoid race complexity initially).
-- Reads (iterate_range) may take immutable lock.
+- Initial: Single-threaded mutation under async mutex for RangeQueryIndex and DemandBuffer (MUST to avoid race complexity initially). Reads (iterate_range) may take immutable lock.
+- Scaling path (SHOULD when needed): Shard DemandBuffer (see top-k-selection.md §13). Use per-stripe delta queues to batch refcount updates and minimize atomic contention. Promote under the promoting query's context; enforce invariants that promotion triggers immediate cleanup.
 
 ## 8. Backpressure & Throughput
 - Large removal bursts cause refill spikes; batch_size adaptation prevents thundering herd.
@@ -55,6 +55,7 @@ Metrics (counter/gauge):
 - demandbuffer_candidates
 - refill_jobs_started, refill_jobs_failed
 - avg_deficit_fill_ms
+ - stripe_contention_time_ms, delta_queue_backlog
 
 ## 10. Risks
 | Risk | Mitigation |

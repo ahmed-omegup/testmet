@@ -66,7 +66,8 @@ struct DemandBuffer {
 ## 6. Invariants (MUST)
 - refcount == sum over queries whose local buffer contains the doc and which have not promoted it.
 - Selected ∩ Query Buffer = Ø per query.
-- refcount == 0 → candidate removed from DemandBuffer.
+- refcount == 0 → candidate removed from DemandBuffer immediately.
+- Promotion cleans up immediately: when a query promotes a candidate, it is removed from that query’s local buffer and waiting set, the DemandBuffer refcount is decremented, and if the new refcount is 0 the candidate is removed from DemandBuffer at once. Therefore the state "promoted but still present with refcount=0" cannot occur.
 
 ## 7. Complexity
 - Hole fill: O(b + p) where b = batch size fetched, p = number of promotions (<= deficit).
@@ -99,3 +100,38 @@ struct DemandBuffer {
 ## 12. References
 - decisions.md: D004, D005, D006, D007
 - change-events.md for integration points
+
+## 13. Buffer Generations & Sharding (SHOULD)
+
+To smooth load and reduce contention, we process candidates in generations and shard the DemandBuffer:
+
+- Generations: Refill work uses the current snapshot of demand; new demand builds the next snapshot. When advancing the generation, each query clears its local waiting set tied to the prior generation. Candidates with refcount>0 persist; candidates that reached refcount==0 are already removed (see invariants).
+
+- Sharding: Partition DemandBuffer by docId hash into N stripes (e.g., 64). Each stripe maintains its own candidate map and a queue of refcount deltas. Structural changes occur under the stripe’s lightweight lock, reducing global contention when many queries reference the same candidates.
+
+## 14. Concurrency & Decrement Strategy (SHOULD)
+
+- Per-candidate state: { score, refcount: AtomicU32 } with a small enum for lifecycle in implementations that adopt sharding.
+- Queries enqueue refcount deltas (+1/-1) to their stripe rather than performing synchronous atomics on every event. A periodic flusher applies batched deltas, preserving refcount ≥ 0.
+- Change events for a given docId are coalesced over a short tick (e.g., 5–10 ms) so waiting sets and refcounts reflect the net effect of bursty changes.
+- Promotion path is atomic with respect to the promoting query: remove from local buffer → decrement refcount → if zero, remove candidate from DemandBuffer.
+
+## 15. Aging, Eviction, and Bounds (SHOULD)
+
+- Each candidate tracks lastTouchedTick; evict the oldest zero-refcount candidates first.
+- Enforce hard bounds:
+  - Per-query local buffer ≤ 4 × limit (soft cap, drop tail if exceeded).
+  - Global candidate count cap; when exceeded, evict zero-count first, then lowest-interest stripes.
+- During generation advance, optionally allow a short spillover grace window for still-interesting candidates; otherwise drop them. Promotion already cleans related local entries.
+
+## 16. Metrics & Observability (SHOULD)
+
+Expose counters/gauges/timers to validate behavior and guide tuning:
+- total_holes, open_holes
+- refill_jobs_started, refill_jobs_failed
+- filled_holes_rate/s
+- demandbuffer_candidates_total (by stripe)
+- avg_waiting_set_size, max_waiting_set_size
+- stripe_contention_time_ms
+- promotion_latency_ms (first seen → promoted)
+- wasted_candidates_per_generation (fetched but never promoted)

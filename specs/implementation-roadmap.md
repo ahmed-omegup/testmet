@@ -27,6 +27,8 @@ MUST:
 SHOULD:
 - Metrics counters (refill_jobs_started, deficits_filled)
 - Debug dump endpoint (e.g., /debug/query/{id})
+ - Optional: Coalesce change events per docId over a short tick
+ - Optional: Shard DemandBuffer into stripes and batch deltas if contention observed
 
 ## Phase 3: Robustness & Observability
 MUST:
@@ -37,6 +39,7 @@ MUST:
 SHOULD:
 - Histogram of refill duration
 - WAL position tagging (meta.lsn)
+ - Stripe contention metrics and delta-queue backlog gauges
 
 ## Phase 4: Ranking Improvement (Optional)
 MAY:
@@ -73,7 +76,14 @@ MAY:
 - Cross-query candidate sharing beyond refcount (e.g., query groups)
 
 ## References
-- decisions.md D001–D007
+- decisions.md D001–D012
 - change-events.md
 - top-k-selection.md
 - memory-and-scaling.md
+
+## Progress Snapshot (2025-11-13)
+
+- Phase 0: Baseline ingestion + notifications — in place (verified small-scale).
+- Spec groundwork: decisions, change events, top-K design — complete.
+- Phase 1: Pending (next to implement).
+- Phase 2: Pending design-ready. Sharding/delta batching marked as optional, to be enabled upon contention.
