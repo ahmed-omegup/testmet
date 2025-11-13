@@ -271,6 +271,81 @@ async fn handle_insert(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::connection_registry::ConnectionRegistry;
+    use crate::storage::SubscriptionStore;
+    use uuid::Uuid;
+    use std::fs;
+    use std::path::PathBuf;
+    use tokio::time::{timeout, Duration};
+
+    // Helper to drain a notification receiver by registering a test connection.
+    #[tokio::test]
+    async fn change_event_insert_update_delete() {
+        let registry = ConnectionRegistry::new();
+        let range_index = Arc::new(RwLock::new(RangeQueryIndex::new(0, 1000)));
+    let temp_path: PathBuf = std::env::temp_dir().join(format!("store_test_{}", Uuid::new_v4()));
+    fs::create_dir_all(&temp_path).unwrap();
+    let store = Arc::new(SubscriptionStore::new(&temp_path).unwrap());
+
+        // Register test connection
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn_id = "conn-test".to_string();
+        registry.register(conn_id.clone(), tx).await;
+
+        // Add a query covering score range 40..80 with a small doc quota so logic remains simple
+        // (num_docs influences effective score; small value avoids overflow edge cases)
+        let qid = {
+            let mut idx = range_index.write().await;
+            let qid = idx.add_query(40.0, 5, 80.0);
+            idx.subscribe_connection(conn_id.clone(), qid);
+            qid
+        };
+
+        // INSERT: score 50 lies within (40..80)
+        handle_insert("doc1".to_string(), 50, 0, &range_index, &store, &registry).await;
+        // Ensure document now tracked by at least one query before awaiting notification
+        {
+            let idx = range_index.read().await;
+            let tracked = idx.get_tracked_queries_for_document("doc1");
+            assert!(tracked.contains(&qid), "expected query to track doc after insert");
+        }
+        let first = timeout(Duration::from_millis(500), rx.recv())
+            .await
+            .expect("timed out waiting for insert change event")
+            .expect("channel closed unexpectedly");
+        if let Notification::ChangeEvent { id, added_to, removed_from, .. } = first {
+            assert_eq!(id, "doc1");
+            assert!(!added_to.is_empty(), "expected at least one added_to query id");
+            assert!(removed_from.is_empty());
+        } else { panic!("Unexpected notification variant for insert"); }
+
+        // UPDATE moving out of range (score becomes 500 which exceeds max_value 80)
+        handle_update("doc1".to_string(), Some(50), 500, &range_index, &store, &registry).await;
+        let second = timeout(Duration::from_millis(500), rx.recv())
+            .await
+            .expect("timed out waiting for update change event")
+            .expect("channel closed unexpectedly");
+        if let Notification::ChangeEvent { added_to, removed_from, .. } = second {
+            assert!(added_to.is_empty(), "update should not add queries when moving out of range");
+            assert!(!removed_from.is_empty(), "update should remove from previous range queries");
+        } else { panic!("Unexpected notification variant for update"); }
+
+        // DELETE: For current implementation we only emit a ChangeEvent if connections exist for queries
+        // that still track the document at delete time. After update moved doc out of range, tracking was cleared,
+        // so no notification is expected. Assert absence rather than waiting.
+        handle_delete("doc1".to_string(), 500, &range_index, &store, &registry).await;
+        // Confirm document no longer tracked by any query
+        {
+            let idx = range_index.read().await;
+            let tracked = idx.get_tracked_queries_for_document("doc1");
+            assert!(tracked.is_empty(), "expected no tracked queries post-delete after out-of-range update");
+        }
+    }
+}
+
 async fn handle_update(
     id: String,
     old_score: Option<i32>,

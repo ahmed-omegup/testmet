@@ -198,6 +198,29 @@ impl RangeQueryIndex {
         let key = (min_value as i64, max_value as i64, num_docs);
         self.range_key_to_internal.get(&key).copied()
     }
+
+    /// Return approximate memory-related counts for observability.
+    /// docs_nodes: number of distinct value nodes stored
+    /// queries_nodes: number of treap nodes for queries
+    /// tracked_docs: number of documents currently tracked with at least one matching query
+    pub fn get_memory_counts(&self) -> (u32, u32, u32) {
+        fn count_docs(node: &Option<Box<super::docs_treap::DocsNode>>) -> u32 {
+            match node {
+                None => 0,
+                Some(n) => 1 + count_docs(&n.left) + count_docs(&n.right),
+            }
+        }
+        fn count_queries(node: &Option<Box<super::queries_treap::QueriesNode>>) -> u32 {
+            match node {
+                None => 0,
+                Some(n) => 1 + count_queries(&n.left) + count_queries(&n.right),
+            }
+        }
+        let docs_nodes = count_docs(&self.docs.root);
+        let queries_nodes = count_queries(&self.queries.root);
+        let tracked_docs = self.document_queries.len() as u32;
+        (docs_nodes, queries_nodes, tracked_docs)
+    }
 }
 
 #[cfg(test)]
