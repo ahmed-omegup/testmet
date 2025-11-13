@@ -4,7 +4,8 @@ use tokio::sync::RwLock;
 use tracing::{info, error, warn};
 use crate::btree_index::RangeQueryIndex;
 use crate::storage::SubscriptionStore;
-use crate::connection_registry::{ConnectionRegistry, Notification};
+use crate::connection_registry::{ConnectionRegistry, Notification, Document, ChangeMeta};
+use std::collections::HashSet;
 use prost::Message;
 
 // Include the generated protobuf code
@@ -248,18 +249,25 @@ async fn handle_insert(
         let mut index = range_index.write().await;
         index.get_queries_for_change(&id, None, score as f64, 1)
     };
+    // Collect unique connections across all affected queries and emit a single ChangeEvent
+    let mut conn_set: HashSet<String> = HashSet::new();
+    for query_id in &matches.added_to {
+        let conns = { let index = range_index.read().await; index.get_connections_for_query(*query_id) };
+        for c in conns { conn_set.insert(c); }
+    }
 
-    // Notify all subscribed connections for each query
-    for query_id in matches.added_to {
-        let conns = {
-            let index = range_index.read().await;
-            index.get_connections_for_query(&query_id)
+    if !conn_set.is_empty() {
+        let conns_vec: Vec<String> = conn_set.into_iter().collect();
+        let new_doc = Document { id: id.clone(), score: Some(score), timestamp: Some(timestamp), name: None };
+        let notification = Notification::ChangeEvent {
+            id: id.clone(),
+            old: None,
+            new: Some(new_doc),
+            added_to: matches.added_to.clone(),
+            removed_from: vec![],
+            meta: Some(ChangeMeta { op: "INSERT".to_string(), lsn: None }),
         };
-        for conn_id in conns {
-            info!("Notifying connection {} (query {}) about INSERT: {}", conn_id, query_id, id);
-            let notification = Notification::Added { query_id: query_id.clone(), id: id.clone(), score, timestamp };
-            registry.notify(&conn_id, notification).await;
-        }
+        registry.notify_many(&conns_vec, notification).await;
     }
 }
 
@@ -276,34 +284,30 @@ async fn handle_update(
         let mut index = range_index.write().await;
         index.get_queries_for_change(&id, old_score.map(|s| s as f64), new_score as f64, 1)
     };
-
-    // Notify about additions
-    for query_id in matches.added_to {
-        let conns = {
-            let index = range_index.read().await;
-            index.get_connections_for_query(&query_id)
-        };
-        for conn_id in conns {
-            info!("Notifying connection {} (query {}) about ADD (update): {}", conn_id, query_id, id);
-            let notification = Notification::Added { query_id: query_id.clone(), id: id.clone(), score: new_score, timestamp: 0 };
-            registry.notify(&conn_id, notification).await;
-        }
+    // Collect unique connections across added_to + removed_from
+    let mut conn_set: HashSet<String> = HashSet::new();
+    for query_id in &matches.added_to {
+        let conns = { let index = range_index.read().await; index.get_connections_for_query(*query_id) };
+        for c in conns { conn_set.insert(c); }
+    }
+    for query_id in &matches.removed_from {
+        let conns = { let index = range_index.read().await; index.get_connections_for_query(*query_id) };
+        for c in conns { conn_set.insert(c); }
     }
 
-    // Notify about removals
-    for query_id in matches.removed_from {
-        let conns = {
-            let index = range_index.read().await;
-            index.get_connections_for_query(&query_id)
+    if !conn_set.is_empty() {
+        let conns_vec: Vec<String> = conn_set.into_iter().collect();
+        let old_doc = old_score.map(|s| Document { id: id.clone(), score: Some(s), timestamp: None, name: None });
+        let new_doc = Some(Document { id: id.clone(), score: Some(new_score), timestamp: None, name: None });
+        let notification = Notification::ChangeEvent {
+            id: id.clone(),
+            old: old_doc,
+            new: new_doc,
+            added_to: matches.added_to.clone(),
+            removed_from: matches.removed_from.clone(),
+            meta: Some(ChangeMeta { op: "UPDATE".to_string(), lsn: None }),
         };
-        for conn_id in conns {
-            info!("Notifying connection {} (query {}) about REMOVE (update): {}", conn_id, query_id, id);
-            let notification = Notification::Removed {
-                query_id: query_id.clone(),
-                id: id.clone(),
-            };
-            registry.notify(&conn_id, notification).await;
-        }
+        registry.notify_many(&conns_vec, notification).await;
     }
 }
 
@@ -319,20 +323,25 @@ async fn handle_delete(
         let mut index = range_index.write().await;
         index.remove_document(&id, old_score as f64, 1)
     };
+    // Collect unique connections across affected queries and emit a ChangeEvent
+    let mut conn_set: HashSet<String> = HashSet::new();
+    for query_id in &query_ids {
+        let conns = { let index = range_index.read().await; index.get_connections_for_query(*query_id) };
+        for c in conns { conn_set.insert(c); }
+    }
 
-    for query_id in query_ids {
-        let conns = {
-            let index = range_index.read().await;
-            index.get_connections_for_query(&query_id)
+    if !conn_set.is_empty() {
+        let conns_vec: Vec<String> = conn_set.into_iter().collect();
+        let old_doc = Some(Document { id: id.clone(), score: Some(old_score), timestamp: None, name: None });
+        let notification = Notification::ChangeEvent {
+            id: id.clone(),
+            old: old_doc,
+            new: None,
+            added_to: vec![],
+            removed_from: query_ids.clone(),
+            meta: Some(ChangeMeta { op: "DELETE".to_string(), lsn: None }),
         };
-        for conn_id in conns {
-            info!("Notifying connection {} (query {}) about DELETE: {}", conn_id, query_id, id);
-            let notification = Notification::Removed {
-                query_id: query_id.clone(),
-                id: id.clone(),
-            };
-            registry.notify(&conn_id, notification).await;
-        }
+        registry.notify_many(&conns_vec, notification).await;
     }
 }
 
@@ -346,15 +355,23 @@ async fn handle_delete_no_value(
         let index = range_index.read().await;
         index.get_tracked_queries_for_document(&id)
     };
-    for query_id in query_ids {
-        let conns = {
-            let index = range_index.read().await;
-            index.get_connections_for_query(&query_id)
+    let mut conn_set: HashSet<String> = HashSet::new();
+    for query_id in &query_ids {
+        let conns = { let index = range_index.read().await; index.get_connections_for_query(*query_id) };
+        for c in conns { conn_set.insert(c); }
+    }
+    if !conn_set.is_empty() {
+        let conns_vec: Vec<String> = conn_set.into_iter().collect();
+        let old_doc = Some(Document { id: id.clone(), score: None, timestamp: None, name: None });
+        let notification = Notification::ChangeEvent {
+            id: id.clone(),
+            old: old_doc,
+            new: None,
+            added_to: vec![],
+            removed_from: query_ids.clone(),
+            meta: Some(ChangeMeta { op: "DELETE".to_string(), lsn: None }),
         };
-        for conn_id in conns {
-            let notification = Notification::Removed { query_id: query_id.clone(), id: id.clone() };
-            registry.notify(&conn_id, notification).await;
-        }
+        registry.notify_many(&conns_vec, notification).await;
     }
 }
 

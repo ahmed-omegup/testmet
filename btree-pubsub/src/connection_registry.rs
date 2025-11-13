@@ -1,30 +1,60 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
-use serde::Serialize;
+use serde::{Serialize};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
 pub enum Notification {
     #[serde(rename = "added")]
     Added {
-        query_id: String,
+        query_id: u32,
         id: String,
         score: i32,
         timestamp: i32,
     },
     #[serde(rename = "updated")]
     Updated {
-        query_id: String,
+        query_id: u32,
         id: String,
         score: i32,
         timestamp: i32,
     },
     #[serde(rename = "removed")]
-    Removed { query_id: String, id: String },
+    Removed { query_id: u32, id: String },
+    #[serde(rename = "changeEvent")]
+    ChangeEvent {
+        id: String,
+        old: Option<Document>,
+        new: Option<Document>,
+        #[serde(rename = "addedToQueries")]
+        added_to: Vec<u32>,
+        #[serde(rename = "removedFromQueries")]
+        removed_from: Vec<u32>,
+        meta: Option<ChangeMeta>,
+    },
 }
 
 pub type NotificationSender = mpsc::UnboundedSender<Notification>;
+
+/// Lightweight document shape used for ChangeEvent payloads
+#[derive(Debug, Clone, Serialize)]
+pub struct Document {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChangeMeta {
+    pub op: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lsn: Option<String>,
+}
 
 /// Registry of active WebSocket connections
 pub struct ConnectionRegistry {

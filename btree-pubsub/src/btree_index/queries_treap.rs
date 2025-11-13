@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use rand::Rng;
 
-pub type QueryId = usize;
+// Public numeric query identifier type (u32 sufficient per requirement)
+pub type QueryId = u32;
 
 pub struct QueriesNode {
     pub key: f64,           // minValue (a)

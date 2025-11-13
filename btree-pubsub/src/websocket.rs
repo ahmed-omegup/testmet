@@ -33,23 +33,23 @@ enum ServerMessage {
     Connected { connection_id: String },
     #[serde(rename = "subscribed")]
     Subscribed {
-        query_id: String,
-        initial_count: usize,
+        query_id: u32,
+        initial_count: u32,
     },
     #[serde(rename = "added")]
     Added {
-        query_id: String,
+        query_id: u32,
         id: String,
         score: i32,
     },
     #[serde(rename = "updated")]
     Updated {
-        query_id: String,
+        query_id: u32,
         id: String,
         score: i32,
     },
     #[serde(rename = "removed")]
-    Removed { query_id: String, id: String },
+    Removed { query_id: u32, id: String },
 }
 
 pub async fn start_websocket_server(
@@ -202,24 +202,15 @@ async fn handle_subscribe(
     sender: &mpsc::UnboundedSender<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Generate query_id from range
-    let query_id = format!("{}:{}", min_score, max_score);
-    
-    info!(
-        "Subscribe: conn={} query={} range=[{}, {}]",
-        connection_id, query_id, min_score, max_score
-    );
+    info!("Subscribe: conn={} range=[{}, {}]", connection_id, min_score, max_score);
 
     // Add to index and subscribe connection
-    {
+    let qid = {
         let mut index = range_index.write().await;
-        index.add_query(
-            query_id.clone(),         // external query id (shared across connections)
-            min_score as f64,         // min_value
-            i64::MAX,                 // num_docs: treat as effectively infinite to emulate static range
-            max_score as f64,         // max_value
-        );
-        index.subscribe_connection(connection_id.to_string(), query_id.clone());
-    }
+        let internal = index.add_query(min_score as f64, i64::MAX, max_score as f64);
+        index.subscribe_connection(connection_id.to_string(), internal);
+        internal
+    };
 
     // Get a connection from the pool
     let client = match pool.get().await {
@@ -250,10 +241,7 @@ async fn handle_subscribe(
     }
 
     // Send subscription acknowledgment with initial count
-    let response = ServerMessage::Subscribed {
-        query_id,
-        initial_count,
-    };
+    let response = ServerMessage::Subscribed { query_id: qid, initial_count: initial_count as u32 };
 
     sender.send(serde_json::to_string(&response)?)?;
 
@@ -266,15 +254,16 @@ async fn handle_unsubscribe(
     max_score: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Generate query_id from range
-    let query_id = format!("{}:{}", min_score, max_score);
-    
-    info!("Unsubscribe: conn={} query={}", connection_id, query_id);
-
+    info!("Unsubscribe: conn={} range=[{}, {}]", connection_id, min_score, max_score);
     let mut index = range_index.write().await;
-    index.unsubscribe_connection(connection_id, &query_id);
-    if index.get_connections_for_query(&query_id).is_empty() {
-        index.remove_query(&query_id);
+    // We need to find existing query id for this range. Reconstruct key used in RangeQueryIndex.
+    // Since RangeQueryIndex stores queries by (min_value,max_value,num_docs) and num_docs was i64::MAX for subscriptions, attempt lookup.
+    let key = (min_score as i64, max_score as i64, i64::MAX);
+    if let Some(&qid) = index.range_key_to_internal.get(&key) {
+        index.unsubscribe_connection(connection_id, qid);
+        if index.get_connections_for_query(qid).is_empty() {
+            index.remove_query(qid);
+        }
     }
 
     Ok(())
