@@ -8,6 +8,7 @@ This directory captures specification-oriented development artifacts for the rea
 - top-k-selection.md – Limit (top-K) maintenance & demand-aware buffer design
 - memory-and-scaling.md – Memory model, sizing estimates, optimization levers
 - implementation-roadmap.md – Phased plan to evolve toward full change-aware top-K subscriptions
+- glossary-and-status.md – Central glossary, acceptance criteria, risks, and progress snapshot for future sessions
 
 ## Goals
 1. Persist architectural intent and rationale.
@@ -55,3 +56,9 @@ Specs tracked in Git; each significant implementation PR should reference spec f
 4. Instrument metrics listed in Sections 16 and memory counters in `memory-and-scaling.md`.
 
 Refer to `implementation-roadmap.md` for acceptance criteria and success metrics.
+
+## Glossary & Acceptance Criteria
+See `glossary-and-status.md` for:
+- Definitions (Document, QueryState, DemandBuffer, Promotion, Generation, Stripe, etc.)
+- Phase acceptance criteria & test plan
+- Risks & mitigations, next steps guidance

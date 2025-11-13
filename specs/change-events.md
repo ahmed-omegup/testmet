@@ -72,3 +72,49 @@ Intersection is explicitly excluded.
 
 ## 11. References
 - decisions.md: D002 (full Document), D003 (exclude intersection)
+
+## 12. WebSocket Envelope Example (Informative)
+
+Server may wrap the ChangeEvent inside a notification message when multiplexing different event types:
+
+```jsonc
+{
+  "type": "changeEvent",          // existing types: connected, subscribed, added, updated, removed
+  "version": 1,                    // ChangeEvent spec version (implicit if omitted)
+  "event": {
+    "id": "doc_123",
+    "old": null,
+    "new": { "id": "doc_123", "score": 47, "timestamp": 18 },
+    "addedToQueries": ["qA"],
+    "removedFromQueries": [],
+    "meta": { "op": "INSERT" }
+  }
+}
+```
+
+Clients SHOULD handle unknown top-level `type` values gracefully and MAY ignore fields not recognized.
+
+## 13. Planned Rust Structures (Phase 1)
+
+```rust
+pub struct Document {
+    pub id: String,        // normalized id
+    pub score: f64,        // index field
+    pub timestamp: i32,    // logical ordering / recency
+    pub name: Option<String>, // optional extra field(s)
+}
+
+pub struct ChangeEvent {
+    pub id: String,                // convenience copy of new.id/old.id
+    pub old: Option<Document>,
+    pub new: Option<Document>,
+    pub added_to_queries: Vec<String>,
+    pub removed_from_queries: Vec<String>,
+    pub op: OpKind,                // INSERT | UPDATE | DELETE
+    pub lsn: Option<String>,       // WAL position (future)
+}
+
+pub enum OpKind { Insert, Update, Delete }
+```
+
+MUST: Emission path computes matches(old) and matches(new) once and then diffs sets to populate added_to_queries / removed_from_queries.
