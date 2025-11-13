@@ -86,15 +86,15 @@ class DocsTreap {
 		return n;
 	}
 
-	// prefix sum of keys <= key
+	// prefix sum of keys < key
 	prefixSum(key: number): number {
 		let cur = this.root;
 		let res = 0;
 		while (cur) {
-			if (key < cur.key) {
+			if (key <= cur.key) {
 				cur = cur.l;
 			} else {
-				res += (cur.l ? cur.l.sum : 0) + cur.cnt;
+				res += DocsTreap.sum(cur.l) + cur.cnt;
 				cur = cur.r;
 			}
 		}
@@ -371,17 +371,17 @@ export class DynamicRangeQueries {
 		this.queries.rangeAddKeysGreaterThan(value, delta);
 	}
 
-		// Add a query (a=minValue, k=numDocs, max=upper bound on value). Returns query id.
-		addQuery(a: number, k: number, max: number): QueryId {
+	// Add a query (a=minValue, k=numDocs, max=upper bound on value). Returns query id.
+	addQuery(a: number, k: number, max: number): QueryId {
 		const id = this.nextId++;
-		const effectiveScore = this.docs.prefixSum(a - 1) + k;
-			this.queries.insert(a, id, effectiveScore, max);
+		const effectiveScore = this.docs.prefixSum(a) + k;
+		this.queries.insert(a, id, effectiveScore, max);
 		// We need to store baseScore used at the node for deletion. Compute it by re-deriving via a targeted lookup.
 		// Easiest: store as effectiveScore minus current accumulated add at position a.
 		// We can compute accumulated add at position a by walking the treap without modifying it.
 		const baseScore = this.getBaseScoreAtKeyForValue(a, effectiveScore);
 		this.idToBaseScore.set(id, baseScore);
-			this.idToQuery.set(id, { id, a, k, max });
+		this.idToQuery.set(id, { id, a, k, max });
 		return id;
 	}
 
@@ -406,7 +406,7 @@ export class DynamicRangeQueries {
 		if (!info) return false;
 		const baseScore = this.idToBaseScore.get(id);
 		if (baseScore === undefined) return false;
-			this.queries.remove(info.a, id, baseScore, info.max);
+		this.queries.remove(info.a, id, baseScore, info.max);
 		this.idToBaseScore.delete(id);
 		this.idToQuery.delete(id);
 		return true;
@@ -415,7 +415,7 @@ export class DynamicRangeQueries {
 	// Retrieve all queries (ids) that currently cover value v.
 	// If you want full (a,k), map over ids via getQueryInfo.
 	getQueriesCovering(v: number): QueryId[] {
-		const cutoff = this.docs.prefixSum(v - 1);
+		const cutoff = this.docs.prefixSum(v);
 		const out: QueryId[] = [];
 			this.queries.collectForValue(
 				v,
@@ -444,7 +444,7 @@ if (typeof require !== 'undefined' && typeof module !== 'undefined' && (require 
 	dyn.addDocument(5, 4); // P(5)=7
 
 	// queries
-	const q1 = dyn.addQuery(1, 1); // starts at 1, needs 1 doc => covers value 1
+	const q1 = dyn.addQuery(1, 1, 1); // starts at 1, needs 1 doc => covers value 1
 	const q2 = dyn.addQuery(1, 3); // needs 3 docs => accum across 1,3 => covers up to value 3
 	const q3 = dyn.addQuery(2, 4); // from 2, needs 4 docs => docs at 3(1)+5(4)=5 => covers to 5
 	const q4 = dyn.addQuery(6, 1); // from 6, needs 1 doc => covers 6 only if docs at 6+
