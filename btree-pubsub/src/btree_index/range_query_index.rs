@@ -192,6 +192,12 @@ impl RangeQueryIndex {
         let tracked_docs = self.document_queries.len() as u32;
         (total_queries, tracked_docs)
     }
+
+    /// Lookup an existing query id by its defining triple (min_value, num_docs, max_value)
+    pub fn lookup_range_query_id(&self, min_value: f64, num_docs: i64, max_value: f64) -> Option<QueryId> {
+        let key = (min_value as i64, max_value as i64, num_docs);
+        self.range_key_to_internal.get(&key).copied()
+    }
 }
 
 #[cfg(test)]

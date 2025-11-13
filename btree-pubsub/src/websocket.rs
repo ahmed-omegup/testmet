@@ -177,9 +177,9 @@ async fn handle_connection(
         let mut index = range_index.write().await;
         let queries = index.get_queries_for_connection(&connection_id);
         for query_id in queries {
-            index.unsubscribe_connection(&connection_id, &query_id);
-            if index.get_connections_for_query(&query_id).is_empty() {
-                index.remove_query(&query_id);
+            index.unsubscribe_connection(&connection_id, query_id);
+            if index.get_connections_for_query(query_id).is_empty() {
+                index.remove_query(query_id);
             }
         }
     }
@@ -235,9 +235,10 @@ async fn handle_subscribe(
     let initial_count = rows.len();
     
     // Apply DB results with state machine
+    let query_id_str = qid.to_string();
     for row in rows {
         let doc_id: String = row.get(0);
-        storage.apply_db_result(connection_id, &query_id, &doc_id)?;
+        storage.apply_db_result(connection_id, &query_id_str, &doc_id)?;
     }
 
     // Send subscription acknowledgment with initial count
@@ -256,10 +257,7 @@ async fn handle_unsubscribe(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Unsubscribe: conn={} range=[{}, {}]", connection_id, min_score, max_score);
     let mut index = range_index.write().await;
-    // We need to find existing query id for this range. Reconstruct key used in RangeQueryIndex.
-    // Since RangeQueryIndex stores queries by (min_value,max_value,num_docs) and num_docs was i64::MAX for subscriptions, attempt lookup.
-    let key = (min_score as i64, max_score as i64, i64::MAX);
-    if let Some(&qid) = index.range_key_to_internal.get(&key) {
+    if let Some(qid) = index.lookup_range_query_id(min_score as f64, i64::MAX, max_score as f64) {
         index.unsubscribe_connection(connection_id, qid);
         if index.get_connections_for_query(qid).is_empty() {
             index.remove_query(qid);

@@ -386,12 +386,9 @@ async fn broadcast_timestamp_update(
         index.get_tracked_queries_for_document(id)
     };
     for query_id in query_ids {
-        let conns = {
-            let index = range_index.read().await;
-            index.get_connections_for_query(&query_id)
-        };
+        let conns = { let index = range_index.read().await; index.get_connections_for_query(query_id) };
         for conn_id in conns {
-            let notification = Notification::Updated { query_id: query_id.clone(), id: id.to_string(), score: 0, timestamp };
+            let notification = Notification::Updated { query_id, id: id.to_string(), score: 0, timestamp };
             registry.notify(&conn_id, notification).await;
         }
     }
