@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::btree_index::RangeQueryIndex;
 use crate::storage::SubscriptionStore;
 use crate::connection_registry::{ConnectionRegistry, Notification};
+use crate::retrieval_job::RetrievalJobIndex;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
@@ -23,6 +24,11 @@ enum ClientMessage {
     Unsubscribe {
         min_score: i32,
         max_score: i32,
+    },
+    #[serde(rename = "waitForDoc")]
+    WaitForDoc {
+        doc_id: i64,
+        query_id: u32,
     },
 }
 
@@ -50,6 +56,8 @@ enum ServerMessage {
     },
     #[serde(rename = "removed")]
     Removed { query_id: u32, id: String },
+    #[serde(rename = "waitRegistered")]
+    WaitRegistered { doc_id: i64, query_id: u32, batch: String },
 }
 
 pub async fn start_websocket_server(
@@ -58,6 +66,7 @@ pub async fn start_websocket_server(
     storage: Arc<SubscriptionStore>,
     pool: Arc<deadpool_postgres::Pool>,
     registry: Arc<ConnectionRegistry>,
+    retrieval_jobs: Arc<RetrievalJobIndex>,
 ) {
     let listener = TcpListener::bind(addr).await.expect("Failed to bind");
     info!("WebSocket server listening on {}", addr);
@@ -67,10 +76,11 @@ pub async fn start_websocket_server(
         let range_index = range_index.clone();
         let storage = storage.clone();
         let pool = pool.clone();
-        let registry = registry.clone();
+    let registry = registry.clone();
+    let retrieval_jobs = retrieval_jobs.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, range_index, storage, pool, registry).await {
+            if let Err(e) = handle_connection(stream, range_index, storage, pool, registry, retrieval_jobs).await {
                 error!("Error handling connection: {}", e);
             }
         });
@@ -83,6 +93,7 @@ async fn handle_connection(
     storage: Arc<SubscriptionStore>,
     pool: Arc<deadpool_postgres::Pool>,
     registry: Arc<ConnectionRegistry>,
+    retrieval_jobs: Arc<RetrievalJobIndex>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ws_stream = accept_async(stream).await?;
     let (ws_sender, mut ws_receiver) = ws_stream.split();
@@ -153,6 +164,11 @@ async fn handle_connection(
                         }
                         ClientMessage::Unsubscribe { min_score, max_score } => {
                             handle_unsubscribe(&connection_id, min_score, max_score, &range_index).await?;
+                        }
+                        ClientMessage::WaitForDoc { doc_id, query_id } => {
+                            retrieval_jobs.register(doc_id, query_id).await;
+                            let response = ServerMessage::WaitRegistered { doc_id, query_id, batch: "registration".to_string() };
+                            tx.send(serde_json::to_string(&response)?)?;
                         }
                     }
                 } else {

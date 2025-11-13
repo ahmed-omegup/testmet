@@ -5,10 +5,10 @@ use tracing::{info, error, warn};
 use crate::btree_index::RangeQueryIndex;
 use crate::storage::SubscriptionStore;
 use crate::connection_registry::{ConnectionRegistry, Notification, Document, ChangeMeta};
+use crate::retrieval_job::RetrievalJobIndex;
 use std::collections::HashSet;
 use prost::Message;
 
-// Include the generated protobuf code
 mod decoderbufs {
     include!(concat!(env!("OUT_DIR"), "/decoderbufs.rs"));
 }
@@ -19,9 +19,9 @@ pub async fn start_replication(
     range_index: Arc<RwLock<RangeQueryIndex>>,
     storage: Arc<SubscriptionStore>,
     registry: Arc<ConnectionRegistry>,
+    retrieval_jobs: Arc<RetrievalJobIndex>,
 ) {
-    // Run replication - any error is fatal
-    if let Err(e) = run_replication(&pg_url, range_index, storage, registry).await {
+    if let Err(e) = run_replication(&pg_url, range_index, storage, registry, retrieval_jobs).await {
         error!("Fatal replication error: {}", e);
         std::process::exit(1);
     }
@@ -32,11 +32,9 @@ async fn run_replication(
     range_index: Arc<RwLock<RangeQueryIndex>>,
     storage: Arc<SubscriptionStore>,
     registry: Arc<ConnectionRegistry>,
+    retrieval_jobs: Arc<RetrievalJobIndex>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Connect to PostgreSQL
     let (client, connection) = tokio_postgres::connect(pg_url, NoTls).await?;
-
-    // Spawn connection task
     tokio::spawn(async move {
         if let Err(e) = connection.await {
             error!("PostgreSQL connection error: {}", e);
@@ -44,25 +42,18 @@ async fn run_replication(
     });
 
     info!("Connected to PostgreSQL for replication");
-
-    // Create replication slot if not exists
     setup_replication_slot(&client).await?;
-
-    // Start consuming changes
-    consume_changes(client, range_index, storage, registry).await?;
-
+    consume_changes(client, range_index, storage, registry, retrieval_jobs).await?;
     Ok(())
 }
 
 async fn setup_replication_slot(client: &Client) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Check if slot exists
     let rows = client
         .query(
             "SELECT * FROM pg_replication_slots WHERE slot_name = 'btree_pubsub_slot'",
             &[],
         )
         .await?;
-
     if rows.is_empty() {
         info!("Creating replication slot...");
         client
@@ -72,7 +63,6 @@ async fn setup_replication_slot(client: &Client) -> Result<(), Box<dyn std::erro
     } else {
         info!("Replication slot already exists");
     }
-
     Ok(())
 }
 
@@ -81,40 +71,36 @@ async fn consume_changes(
     range_index: Arc<RwLock<RangeQueryIndex>>,
     storage: Arc<SubscriptionStore>,
     registry: Arc<ConnectionRegistry>,
+    retrieval_jobs: Arc<RetrievalJobIndex>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Starting to consume logical replication stream...");
-
     let query = "SELECT lsn, xid, data FROM pg_logical_slot_get_binary_changes('btree_pubsub_slot', NULL, NULL)";
-
     loop {
         match client.query(query, &[]).await {
             Ok(rows) => {
-                if rows.len() > 0 {
-                    info!("Received {} replication messages", rows.len());
-                }
+                if rows.len() > 0 { info!("Received {} replication messages", rows.len()); }
                 for row in rows {
                     if let Ok(data) = row.try_get::<_, Vec<u8>>(2) {
-                        info!("Processing message of {} bytes", data.len());
-                        process_decoderbufs_message(&data, &range_index, &storage, &registry).await;
+                        process_decoderbufs_message(&data, &range_index, &storage, &registry, &retrieval_jobs).await;
                     }
                 }
+                // Chain retrieval job rotation: promote registration batch only if it has entries
+                retrieval_jobs.promote_if_needed().await;
             }
             Err(e) => {
                 error!("Fatal error reading changes: {:?}", e);
                 return Err(e.into());
             }
         }
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 }
 
-// Process decoderbufs protobuf message
 async fn process_decoderbufs_message(
     data: &[u8],
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
+    retrieval_jobs: &Arc<RetrievalJobIndex>,
 ) {
     if data.is_empty() {
         return;
@@ -136,7 +122,7 @@ async fn process_decoderbufs_message(
         decoderbufs::Op::Insert => {
             if let Some((id, score_opt, ts_opt)) = extract_id_score_ts(&row_msg.new_tuple) {
                 if let Some(score) = score_opt {
-                    handle_insert(id, score, ts_opt.unwrap_or(0), range_index, storage, registry).await;
+                    handle_insert(id, score, ts_opt.unwrap_or(0), range_index, storage, registry, retrieval_jobs).await;
                 }
             }
         }
@@ -146,7 +132,7 @@ async fn process_decoderbufs_message(
             match (newv, old) {
                 (Some((id_new, new_score_opt, new_ts_opt)), Some((_id_old, old_score_opt, _))) => {
                     if let Some(new_score) = new_score_opt {
-                        handle_update(id_new.clone(), old_score_opt, new_score, range_index, storage, registry).await;
+                        handle_update(id_new.clone(), old_score_opt, new_score, range_index, storage, registry, retrieval_jobs).await;
                     }
                     if let Some(ts) = new_ts_opt { 
                         if ts == -1 { 
@@ -157,7 +143,7 @@ async fn process_decoderbufs_message(
                 }
                 (Some((id, new_score_opt, new_ts_opt)), None) => {
                     if let Some(new_score) = new_score_opt {
-                        handle_update(id.clone(), None, new_score, range_index, storage, registry).await;
+                        handle_update(id.clone(), None, new_score, range_index, storage, registry, retrieval_jobs).await;
                     }
                     if let Some(ts) = new_ts_opt { if ts == -1 { broadcast_timestamp_update(&id, ts, range_index, registry).await; } }
                 }
@@ -167,12 +153,12 @@ async fn process_decoderbufs_message(
         decoderbufs::Op::Delete => {
             if let Some((id, old_score_opt, _)) = extract_id_score_ts(&row_msg.old_tuple) {
                 if let Some(old_score) = old_score_opt {
-                    handle_delete(id, old_score, range_index, storage, registry).await;
+                    handle_delete(id, old_score, range_index, storage, registry, retrieval_jobs).await;
                 } else if let Some(id2) = extract_id(&row_msg.old_tuple) {
-                    handle_delete_no_value(id2, range_index, storage, registry).await;
+                    handle_delete_no_value(id2, range_index, storage, registry, retrieval_jobs).await;
                 }
             } else if let Some(id) = extract_id(&row_msg.old_tuple) {
-                handle_delete_no_value(id, range_index, storage, registry).await;
+                handle_delete_no_value(id, range_index, storage, registry, retrieval_jobs).await;
             }
         }
         decoderbufs::Op::Begin | decoderbufs::Op::Commit => {
@@ -243,6 +229,7 @@ async fn handle_insert(
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     _storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
+    retrieval_jobs: &Arc<RetrievalJobIndex>,
 ) {
     // Get queries this document matches
     let matches = {
@@ -269,6 +256,33 @@ async fn handle_insert(
         };
         registry.notify_many(&conns_vec, notification).await;
     }
+
+    // Also handle retrieval job waiting queries in processing batch
+    if let Ok(doc_num) = id.parse::<i64>() {
+        let waiting_queries = retrieval_jobs.document_arrived(doc_num).await;
+        if !waiting_queries.is_empty() {
+            // Gather connections subscribed to these queries
+            use std::collections::HashSet;
+            let mut conn_set: HashSet<String> = HashSet::new();
+            for qid in &waiting_queries {
+                let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
+                for c in conns { conn_set.insert(c); }
+            }
+            if !conn_set.is_empty() {
+                let conns_vec: Vec<String> = conn_set.into_iter().collect();
+                let new_doc = Document { id: id.clone(), score: Some(score), timestamp: Some(timestamp), name: None };
+                let notification = Notification::ChangeEvent {
+                    id: id.clone(),
+                    old: None,
+                    new: Some(new_doc),
+                    added_to: waiting_queries.clone(),
+                    removed_from: vec![],
+                    meta: Some(ChangeMeta { op: "RETRIEVAL".to_string(), lsn: None }),
+                };
+                registry.notify_many(&conns_vec, notification).await;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -281,22 +295,21 @@ mod tests {
     use std::path::PathBuf;
     use tokio::time::{timeout, Duration};
 
-    // Helper to drain a notification receiver by registering a test connection.
     #[tokio::test]
     async fn change_event_insert_update_delete() {
         let registry = ConnectionRegistry::new();
         let range_index = Arc::new(RwLock::new(RangeQueryIndex::new(0, 1000)));
-    let temp_path: PathBuf = std::env::temp_dir().join(format!("store_test_{}", Uuid::new_v4()));
-    fs::create_dir_all(&temp_path).unwrap();
-    let store = Arc::new(SubscriptionStore::new(&temp_path).unwrap());
+        let retrieval_jobs = Arc::new(RetrievalJobIndex::new());
+        let temp_path: PathBuf = std::env::temp_dir().join(format!("store_test_{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_path).unwrap();
+        let store = Arc::new(SubscriptionStore::new(&temp_path).unwrap());
 
         // Register test connection
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let conn_id = "conn-test".to_string();
         registry.register(conn_id.clone(), tx).await;
 
-        // Add a query covering score range 40..80 with a small doc quota so logic remains simple
-        // (num_docs influences effective score; small value avoids overflow edge cases)
+        // Add a query covering score range 40..80
         let qid = {
             let mut idx = range_index.write().await;
             let qid = idx.add_query(40.0, 5, 80.0);
@@ -304,44 +317,35 @@ mod tests {
             qid
         };
 
-        // INSERT: score 50 lies within (40..80)
-        handle_insert("doc1".to_string(), 50, 0, &range_index, &store, &registry).await;
-        // Ensure document now tracked by at least one query before awaiting notification
+        // Rotate retrieval jobs after registering unrelated wait so processing batch non-empty
+        retrieval_jobs.register(999, qid).await;
+        retrieval_jobs.rotate().await;
+
+        handle_insert("doc1".to_string(), 50, 0, &range_index, &store, &registry, &retrieval_jobs).await;
         {
             let idx = range_index.read().await;
             let tracked = idx.get_tracked_queries_for_document("doc1");
-            assert!(tracked.contains(&qid), "expected query to track doc after insert");
+            assert!(tracked.contains(&qid));
         }
-        let first = timeout(Duration::from_millis(500), rx.recv())
-            .await
-            .expect("timed out waiting for insert change event")
-            .expect("channel closed unexpectedly");
+        let first = timeout(Duration::from_millis(500), rx.recv()).await.expect("insert timeout").expect("channel closed");
         if let Notification::ChangeEvent { id, added_to, removed_from, .. } = first {
             assert_eq!(id, "doc1");
-            assert!(!added_to.is_empty(), "expected at least one added_to query id");
+            assert!(added_to.contains(&qid));
             assert!(removed_from.is_empty());
-        } else { panic!("Unexpected notification variant for insert"); }
+        } else { panic!("Unexpected variant"); }
 
-        // UPDATE moving out of range (score becomes 500 which exceeds max_value 80)
-        handle_update("doc1".to_string(), Some(50), 500, &range_index, &store, &registry).await;
-        let second = timeout(Duration::from_millis(500), rx.recv())
-            .await
-            .expect("timed out waiting for update change event")
-            .expect("channel closed unexpectedly");
+        handle_update("doc1".to_string(), Some(50), 500, &range_index, &store, &registry, &retrieval_jobs).await;
+        let second = timeout(Duration::from_millis(500), rx.recv()).await.expect("update timeout").expect("channel closed");
         if let Notification::ChangeEvent { added_to, removed_from, .. } = second {
-            assert!(added_to.is_empty(), "update should not add queries when moving out of range");
-            assert!(!removed_from.is_empty(), "update should remove from previous range queries");
-        } else { panic!("Unexpected notification variant for update"); }
+            assert!(added_to.is_empty());
+            assert!(!removed_from.is_empty());
+        } else { panic!("Unexpected variant"); }
 
-        // DELETE: For current implementation we only emit a ChangeEvent if connections exist for queries
-        // that still track the document at delete time. After update moved doc out of range, tracking was cleared,
-        // so no notification is expected. Assert absence rather than waiting.
-        handle_delete("doc1".to_string(), 500, &range_index, &store, &registry).await;
-        // Confirm document no longer tracked by any query
+        handle_delete("doc1".to_string(), 500, &range_index, &store, &registry, &retrieval_jobs).await;
         {
             let idx = range_index.read().await;
             let tracked = idx.get_tracked_queries_for_document("doc1");
-            assert!(tracked.is_empty(), "expected no tracked queries post-delete after out-of-range update");
+            assert!(tracked.is_empty());
         }
     }
 }
@@ -353,6 +357,7 @@ async fn handle_update(
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     _storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
+    _retrieval_jobs: &Arc<RetrievalJobIndex>,
 ) {
     // Get queries this document was added to or removed from
     let matches = {
@@ -392,6 +397,7 @@ async fn handle_delete(
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     _storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
+    _retrieval_jobs: &Arc<RetrievalJobIndex>,
 ) {
     // Remove from index and get queries it was part of
     let query_ids = {
@@ -425,6 +431,7 @@ async fn handle_delete_no_value(
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     _storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
+    _retrieval_jobs: &Arc<RetrievalJobIndex>,
 ) {
     let query_ids = {
         let index = range_index.read().await;
