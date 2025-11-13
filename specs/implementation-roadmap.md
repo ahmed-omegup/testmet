@@ -75,6 +75,36 @@ MAY:
 - Block partitioning (superseded by demand buffer approach unless ranking hotspots emerge)
 - Cross-query candidate sharing beyond refcount (e.g., query groups)
 
+## Future Extensions (Not in current phases)
+MAY (Planned after Phase 7, detailed in decisions D013–D019):
+1. LMDB Multiplexing (D013)
+	- Maintain per-user multiplex records so a document's change affecting multiple of the user's queries is serialized once.
+	- Dedup logic: union added_to/removed_from across that user's active queries; send single ChangeEvent envelope with arrays of numeric query ids.
+	- Storage: LMDB column keyed by user:doc_id -> bitset / compressed list of query ids.
+2. Column Families / Selective Field Materialization (D014)
+	- Document fields segmented; subscriptions declare needed families.
+	- Emission path only hydrates requested families → reduces heap allocations & network payload size.
+3. Aggregate Query Layer (D015, D019)
+	- Define AggregateEvent variant with sum/count/min/max fields.
+	- Maintain incremental aggregates in memory, diff on update, emit delta.
+	- Coexist with raw ChangeEvent (client chooses type on subscribe).
+4. Query Shrink/Grow (D016)
+	- In-place mutation of (min_value, max_value, num_docs) without re-querying historical docs.
+	- Recompute only affected suffix/prefix; hole-filling job updated rather than recreated.
+5. Hierarchical Query Anatomy (D017)
+	- Levels: IndexQuery (range definition) → FilteredQuery (additional predicate) → AggregateQuery (aggregation spec) → UserQuery (connection binding & delivery format).
+	- Sharing: Multiple FilteredQuery nodes attach to one IndexQuery; Aggregates attach under filtered leaves.
+6. Parallel Index Partitioning (D018)
+	- Shard RangeQueryIndex (e.g., consistent hash of doc id) into N partitions.
+	- Cross-partition orchestration for queries spanning partitions; each shard maintains local prefix sums.
+	- Lock minimization: queries route updates to shard(s) holding affected value ranges.
+
+Acceptance Criteria (Future):
+- Multiplexing reduces duplicate per-user ChangeEvent count by >50% on multi-query workloads.
+- Aggregate events throughput comparable to raw events (<10% overhead) at 100K updates/min.
+- Query mutation latency < 25ms p95 without full re-fetch.
+- Parallel partitions scale near-linearly up to number of physical cores for update ingestion.
+
 ## References
 - decisions.md D001–D012
 - change-events.md
