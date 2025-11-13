@@ -176,8 +176,11 @@ async fn handle_connection(
     {
         let mut index = range_index.write().await;
         let queries = index.get_queries_for_connection(&connection_id);
-        for query in queries {
-            index.remove_query(&query.query_id);
+        for query_id in queries {
+            index.unsubscribe_connection(&connection_id, &query_id);
+            if index.get_connections_for_query(&query_id).is_empty() {
+                index.remove_query(&query_id);
+            }
         }
     }
 
@@ -206,15 +209,16 @@ async fn handle_subscribe(
         connection_id, query_id, min_score, max_score
     );
 
-    // Add to index
+    // Add to index and subscribe connection
     {
         let mut index = range_index.write().await;
         index.add_query(
-            connection_id.to_string(),
-            query_id.clone(),
-            min_score,
-            max_score,
+            query_id.clone(),         // external query id (shared across connections)
+            min_score as f64,         // min_value
+            i64::MAX,                 // num_docs: treat as effectively infinite to emulate static range
+            max_score as f64,         // max_value
         );
+        index.subscribe_connection(connection_id.to_string(), query_id.clone());
     }
 
     // Get a connection from the pool
@@ -268,7 +272,10 @@ async fn handle_unsubscribe(
     info!("Unsubscribe: conn={} query={}", connection_id, query_id);
 
     let mut index = range_index.write().await;
-    index.remove_query(&query_id);
+    index.unsubscribe_connection(connection_id, &query_id);
+    if index.get_connections_for_query(&query_id).is_empty() {
+        index.remove_query(&query_id);
+    }
 
     Ok(())
 }

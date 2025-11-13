@@ -54,10 +54,26 @@ const USE_ELECTRIC = POSTGRES_URL && !USE_RETHINKDB && !USE_BTREE ? true : false
     const interval = setInterval(() => {
       console.log(`Completed customers: ${n}/${CUSTOMERS}`);
     }, 5000);
-    const res = await Promise.all(customers);
-    clearInterval(interval);
-    console.log("\n=== BENCHMARK COMPLETE ===");
-    console.log(`Successfully completed for ${res.length} customers`);
+    
+    // Add timeout to prevent hanging indefinitely
+    const timeout = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Timeout: Customers did not finish within 300s')), 300000)
+    );
+    
+    try {
+      const res = await Promise.race([Promise.all(customers), timeout]);
+      clearInterval(interval);
+      console.log("\n=== BENCHMARK COMPLETE ===");
+      console.log(`Successfully completed for ${res.length} customers`);
+    } catch (err) {
+      clearInterval(interval);
+      if (err.message.includes('Timeout')) {
+        console.error(`\n!!! ${err.message}`);
+        console.error(`Only ${n}/${CUSTOMERS} customers completed`);
+        process.exit(1);
+      }
+      throw err;
+    }
   } catch (err) {
     fatal("Benchmark failed", err);
   }

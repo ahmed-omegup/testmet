@@ -4,6 +4,24 @@ Compare Meteor/MongoDB vs Custom Server/RethinkDB for real-time WebSocket subscr
 
 ## Architecture
 
+### Specification-Oriented Development
+Formal specifications and decision logs are maintained under `specs/`:
+
+- `specs/README.md` (index & workflow)
+- `specs/decisions.md` (chronological decisions D001+)
+- `specs/change-events.md` (replication change payload contract)
+- `specs/top-k-selection.md` (limit handling & demand-aware buffer design)
+- `specs/memory-and-scaling.md` (footprint estimates & optimization levers)
+- `specs/implementation-roadmap.md` (phased execution plan)
+
+Contribution flow:
+1. Update or extend a spec section.
+2. Reference the spec (file + heading) in commits/PRs.
+3. Append a decision row if architectural direction changes.
+4. Never delete decisions; add amendments/reversals.
+
+This preserves intent and enables incremental optimization of the real-time engine.
+
 ### MongoDB/Meteor Setup
 - **MongoDB**: Replica set with oplog for change streams
 - **Meteor**: DDP server with reactive publications
