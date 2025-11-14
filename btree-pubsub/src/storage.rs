@@ -75,6 +75,53 @@ impl SubscriptionStore {
         })
     }
 
+    /// Remove all entries for a specific (connection, query)
+    /// Decrements per-document connection counts accordingly when state was Exists (1)
+    pub fn remove_query_for_connection(
+        &self,
+        connection_id: &str,
+        query_id: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut wtxn = self.env.write_txn()?;
+
+        let prefix = format!("{}:{}:node:", connection_id, query_id);
+
+        // Collect keys and states to remove first (cannot mutate while iterating)
+        let mut keys: Vec<(String, i8)> = Vec::new();
+        {
+            let rtxn = self.env.read_txn()?;
+            let iter = self.connection_documents.prefix_iter(&rtxn, &prefix)?;
+            for result in iter {
+                let (key, state) = result?;
+                keys.push((key.to_string(), state));
+            }
+        }
+
+        for (key, state) in keys {
+            // key format: connection:query:node:id
+            let parts: Vec<&str> = key.split(':').collect();
+            let doc_id = parts.get(3).copied().unwrap_or("");
+
+            // Remove the connection_documents entry
+            self.connection_documents.delete(&mut wtxn, &key)?;
+
+            // If it was Exists(1), decrement id:connection count
+            if state == DocState::Exists as i8 {
+                let doc_key = format!("{}:{}", doc_id, connection_id);
+                if let Some(count) = self.document_connections.get(&wtxn, &doc_key)? {
+                    if count <= 1 {
+                        self.document_connections.delete(&mut wtxn, &doc_key).ok();
+                    } else {
+                        self.document_connections.put(&mut wtxn, &doc_key, &(count - 1))?;
+                    }
+                }
+            }
+        }
+
+        wtxn.commit()?;
+        Ok(())
+    }
+
     /// Add a document to a connection's subscription (insertion event: any -> 1)
     pub fn add_document_to_connection(
         &self,

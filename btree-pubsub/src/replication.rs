@@ -232,7 +232,7 @@ async fn handle_insert(
     score: i32,
     timestamp: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
-    _storage: &Arc<SubscriptionStore>,
+    storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
     retrieval_jobs: &Arc<RetrievalJobIndex>,
     doc_index: &Arc<RwLock<DocIndex>>,
@@ -250,6 +250,16 @@ async fn handle_insert(
     }
 
     if !conn_set.is_empty() {
+        // Update LMDB per (connection, query, doc)
+        let id_str = id.to_string();
+        for qid in &matches.added_to {
+            let qid_str = qid.to_string();
+            let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
+            for conn_id in conns {
+                let _ = storage.add_document_to_connection(&conn_id, &qid_str, &id_str);
+            }
+        }
+
         let conns_vec: Vec<String> = conn_set.into_iter().collect();
         let new_doc = Document { id, score: Some(score), timestamp: Some(timestamp), name: None };
         let notification = Notification::ChangeEvent {
@@ -363,7 +373,7 @@ async fn handle_update(
     old_score: Option<i32>,
     new_score: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
-    _storage: &Arc<SubscriptionStore>,
+    storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
     _retrieval_jobs: &Arc<RetrievalJobIndex>,
     doc_index: &Arc<RwLock<DocIndex>>,
@@ -385,6 +395,23 @@ async fn handle_update(
     }
 
     if !conn_set.is_empty() {
+        // Update LMDB for added_to: set -> Exists; removed_from: delete or set -1
+        let id_str = id.to_string();
+        for qid in &matches.added_to {
+            let qid_str = qid.to_string();
+            let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
+            for conn_id in conns {
+                let _ = storage.add_document_to_connection(&conn_id, &qid_str, &id_str);
+            }
+        }
+        for qid in &matches.removed_from {
+            let qid_str = qid.to_string();
+            let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
+            for conn_id in conns {
+                let _ = storage.handle_deletion(&conn_id, &qid_str, &id_str);
+            }
+        }
+
         let conns_vec: Vec<String> = conn_set.into_iter().collect();
         let old_doc = old_score.map(|s| Document { id, score: Some(s), timestamp: None, name: None });
         let new_doc = Some(Document { id, score: Some(new_score), timestamp: None, name: None });
@@ -409,7 +436,7 @@ async fn handle_delete(
     id: u32,
     old_score: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
-    _storage: &Arc<SubscriptionStore>,
+    storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
     _retrieval_jobs: &Arc<RetrievalJobIndex>,
     doc_index: &Arc<RwLock<DocIndex>>,
@@ -427,6 +454,16 @@ async fn handle_delete(
     }
 
     if !conn_set.is_empty() {
+        // Update LMDB: mark deletions for all affected (connection, query, doc)
+        let id_str = id.to_string();
+        for qid in &query_ids {
+            let qid_str = qid.to_string();
+            let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
+            for conn_id in conns {
+                let _ = storage.handle_deletion(&conn_id, &qid_str, &id_str);
+            }
+        }
+
         let conns_vec: Vec<String> = conn_set.into_iter().collect();
         let old_doc = Some(Document { id, score: Some(old_score), timestamp: None, name: None });
         let notification = Notification::ChangeEvent {
@@ -447,7 +484,7 @@ async fn handle_delete(
 async fn handle_delete_no_value(
     id: u32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
-    _storage: &Arc<SubscriptionStore>,
+    storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
     _retrieval_jobs: &Arc<RetrievalJobIndex>,
     doc_index: &Arc<RwLock<DocIndex>>,
@@ -462,6 +499,16 @@ async fn handle_delete_no_value(
         for c in conns { conn_set.insert(c); }
     }
     if !conn_set.is_empty() {
+        // Update LMDB: mark deletions
+        let id_str = id.to_string();
+        for qid in &query_ids {
+            let qid_str = qid.to_string();
+            let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
+            for conn_id in conns {
+                let _ = storage.handle_deletion(&conn_id, &qid_str, &id_str);
+            }
+        }
+
         let conns_vec: Vec<String> = conn_set.into_iter().collect();
         let old_doc = Some(Document { id, score: None, timestamp: None, name: None });
         let notification = Notification::ChangeEvent {

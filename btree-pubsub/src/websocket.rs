@@ -175,7 +175,7 @@ async fn handle_connection(
                             .await?;
                         }
                         ClientMessage::Unsubscribe { min_score, max_score } => {
-                            handle_unsubscribe(&connection_id, min_score, max_score, &range_index).await?;
+                            handle_unsubscribe(&connection_id, min_score, max_score, &range_index, &storage).await?;
                         }
                         ClientMessage::WaitForDoc { doc_id, query_id } => {
                             retrieval_jobs.register(doc_id, query_id).await;
@@ -298,11 +298,14 @@ async fn handle_unsubscribe(
     min_score: i32,
     max_score: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
+    storage: &Arc<SubscriptionStore>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Unsubscribe: conn={} range=[{}, {}]", connection_id, min_score, max_score);
     let mut index = range_index.write().await;
     if let Some(qid) = index.lookup_range_query_id(min_score as f64, i64::MAX, max_score as f64) {
         index.unsubscribe_connection(connection_id, qid);
+        // Cleanup LMDB entries for this (connection, query)
+        let _ = storage.remove_query_for_connection(connection_id, &qid.to_string());
         if index.get_connections_for_query(qid).is_empty() {
             index.remove_query(qid);
         }
