@@ -237,26 +237,29 @@ async fn handle_insert(
     retrieval_jobs: &Arc<RetrievalJobIndex>,
     doc_index: &Arc<RwLock<DocIndex>>,
 ) {
-    // Get queries this document matches and emit per-connection Added
+    // Compute added queries and update LMDB per (conn,query) while notifying per-connection
+    use std::collections::{HashMap, HashSet};
     let added_queries = {
         let mut index = range_index.write().await;
         index.get_queries_for_change(id, None, score as f64, 1).added_to
     };
     if !added_queries.is_empty() {
-        // Update LMDB and notify each connection once
-        use std::collections::{HashMap, HashSet};
-        let mut conn_to_qid: HashMap<String, u32> = HashMap::new();
+        // Build per-connection list of added queries
+        let mut per_conn_added: HashMap<String, Vec<u32>> = HashMap::new();
         {
             let index = range_index.read().await;
             for qid in &added_queries {
                 for conn in index.get_connections_for_query(*qid) {
-                    conn_to_qid.entry(conn).or_insert(*qid);
+                    per_conn_added.entry(conn).or_default().push(*qid);
                 }
             }
         }
-        for (conn_id, qid) in conn_to_qid.iter() {
-            let _ = storage.add_document_to_connection(conn_id, *qid, id);
-            let notification = Notification::Added { query_id: *qid, id, score, timestamp };
+        // For each connection: add all (conn,qid,doc) and send a single Added
+        for (conn_id, qids) in per_conn_added.iter() {
+            for qid in qids {
+                let _ = storage.add_document_to_connection(conn_id, *qid, id);
+            }
+            let notification = Notification::Added { id, score, timestamp };
             registry.notify(conn_id, notification).await;
         }
     }
@@ -271,7 +274,7 @@ async fn handle_insert(
         let index = range_index.read().await;
         for qid in &waiting_queries {
             for conn in index.get_connections_for_query(*qid) {
-                let notification = Notification::Added { query_id: *qid, id, score, timestamp };
+                let notification = Notification::Added { id, score, timestamp };
                 registry.notify(&conn, notification).await;
             }
         }
@@ -296,6 +299,7 @@ mod tests {
         let temp_path: PathBuf = std::env::temp_dir().join(format!("store_test_{}", Uuid::new_v4()));
         fs::create_dir_all(&temp_path).unwrap();
         let store = Arc::new(SubscriptionStore::new(&temp_path).unwrap());
+        let doc_index = Arc::new(RwLock::new(DocIndex::new()));
 
         // Register test connection
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -314,34 +318,92 @@ mod tests {
         retrieval_jobs.register(999u32, qid).await;
         retrieval_jobs.rotate().await;
 
-        handle_insert(1u32, 50, 0, &range_index, &store, &registry, &retrieval_jobs).await;
+        handle_insert(1u32, 50, 0, &range_index, &store, &registry, &retrieval_jobs, &doc_index).await;
         {
             let idx = range_index.read().await;
             let tracked = idx.get_tracked_queries_for_document(1u32);
             assert!(tracked.contains(&qid));
         }
         let first = timeout(Duration::from_millis(500), rx.recv()).await.expect("insert timeout").expect("channel closed");
-        if let Notification::Added { query_id, id, .. } = first {
+        if let Notification::Added { id, .. } = first {
             assert_eq!(id, 1u32);
-            assert_eq!(query_id, qid);
         } else { panic!("Expected Added"); }
 
-        handle_update(1u32, Some(50), 500, &range_index, &store, &registry, &retrieval_jobs).await;
+        handle_update(1u32, Some(50), 500, &range_index, &store, &registry, &retrieval_jobs, &doc_index).await;
         let second = timeout(Duration::from_millis(500), rx.recv()).await.expect("update timeout").expect("channel closed");
-        if let Notification::Updated { query_id, id, .. } = second {
+        if let Notification::Removed { id } = second {
             assert_eq!(id, 1u32);
-            assert_eq!(query_id, qid);
-        } else { panic!("Expected Updated"); }
-
-        handle_delete(1u32, 500, &range_index, &store, &registry, &retrieval_jobs).await;
-        let third = timeout(Duration::from_millis(500), rx.recv()).await.expect("delete timeout").expect("channel closed");
-        if let Notification::Removed { query_id, id } = third {
-            assert_eq!(id, 1u32);
-            assert_eq!(query_id, qid);
         } else { panic!("Expected Removed"); }
+
+        handle_delete(1u32, 500, &range_index, &store, &registry, &retrieval_jobs, &doc_index).await;
+        // No further notification expected here since the doc was already removed
         let idx = range_index.read().await;
         let tracked = idx.get_tracked_queries_for_document(1u32);
         assert!(tracked.is_empty());
+    }
+
+    #[tokio::test]
+    async fn overlapping_queries_count_notifications() {
+        let registry = ConnectionRegistry::new();
+        let range_index = Arc::new(RwLock::new(RangeQueryIndex::new(0, 1000)));
+        let retrieval_jobs = Arc::new(RetrievalJobIndex::new());
+        let temp_path: PathBuf = std::env::temp_dir().join(format!("store_test_overlap_{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_path).unwrap();
+        let store = Arc::new(SubscriptionStore::new(&temp_path).unwrap());
+
+        // Register a test connection
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn_id = "conn-overlap".to_string();
+        registry.register(conn_id.clone(), tx).await;
+
+        // Two overlapping queries for the same connection
+        // q1: [20, 80], q2: [50, 120]
+        let (q1, q2) = {
+            let mut idx = range_index.write().await;
+            let q1 = idx.add_query(20.0, 1_000_000, 80.0);
+            let q2 = idx.add_query(50.0, 1_000_000, 120.0);
+            idx.subscribe_connection(conn_id.clone(), q1);
+            idx.subscribe_connection(conn_id.clone(), q2);
+            (q1, q2)
+        };
+
+        // Insert doc within overlap => Added once
+        handle_insert(500u32, 60, 0, &range_index, &store, &registry, &retrieval_jobs, &Arc::new(RwLock::new(DocIndex::new()))).await;
+        let n1 = timeout(Duration::from_millis(500), rx.recv()).await.expect("added timeout").expect("channel closed");
+        match n1 { Notification::Added { id, .. } => assert_eq!(id, 500), _ => panic!("Expected Added") }
+        // Ensure LMDB has both (conn,q,doc) entries reflected
+        let docs_q1 = store.get_documents_for_query(&conn_id, q1).unwrap();
+        let docs_q2 = store.get_documents_for_query(&conn_id, q2).unwrap();
+        assert!(docs_q1.contains(&500));
+        assert!(docs_q2.contains(&500));
+
+        // Move but still inside both => Updated
+        handle_update(500u32, Some(60), 75, &range_index, &store, &registry, &retrieval_jobs, &Arc::new(RwLock::new(DocIndex::new()))).await;
+        let n2 = timeout(Duration::from_millis(500), rx.recv()).await.expect("updated timeout").expect("channel closed");
+        match n2 { Notification::Updated { id, .. } => assert_eq!(id, 500), _ => panic!("Expected Updated") }
+
+        // Move to match only q1 => Updated (count remains > 0)
+        handle_update(500u32, Some(75), 45, &range_index, &store, &registry, &retrieval_jobs, &Arc::new(RwLock::new(DocIndex::new()))).await;
+        let n3 = timeout(Duration::from_millis(500), rx.recv()).await.expect("updated timeout 2").expect("channel closed");
+        match n3 { Notification::Updated { id, .. } => assert_eq!(id, 500), _ => panic!("Expected Updated") }
+        let docs_q1_after = store.get_documents_for_query(&conn_id, q1).unwrap();
+        let docs_q2_after = store.get_documents_for_query(&conn_id, q2).unwrap();
+        assert!(docs_q1_after.contains(&500));
+        assert!(!docs_q2_after.contains(&500));
+
+        // Move out of all => Removed
+        handle_update(500u32, Some(45), 10, &range_index, &store, &registry, &retrieval_jobs, &Arc::new(RwLock::new(DocIndex::new()))).await;
+        let n4 = timeout(Duration::from_millis(500), rx.recv()).await.expect("removed timeout").expect("channel closed");
+        match n4 { Notification::Removed { id } => assert_eq!(id, 500), _ => panic!("Expected Removed") }
+        let docs_q1_none = store.get_documents_for_query(&conn_id, q1).unwrap();
+        let docs_q2_none = store.get_documents_for_query(&conn_id, q2).unwrap();
+        assert!(!docs_q1_none.contains(&500));
+        assert!(!docs_q2_none.contains(&500));
+
+        // Move back into overlap => Added
+        handle_update(500u32, Some(10), 55, &range_index, &store, &registry, &retrieval_jobs, &Arc::new(RwLock::new(DocIndex::new()))).await;
+        let n5 = timeout(Duration::from_millis(500), rx.recv()).await.expect("added timeout 2").expect("channel closed");
+        match n5 { Notification::Added { id, .. } => assert_eq!(id, 500), _ => panic!("Expected Added") }
     }
 }
 
@@ -355,7 +417,7 @@ async fn handle_update(
     _retrieval_jobs: &Arc<RetrievalJobIndex>,
     doc_index: &Arc<RwLock<DocIndex>>,
 ) {
-    // Compute before/after queries and notify per-connection Added/Updated/Removed
+    // Compute before/after queries and perform per-(conn,query) LMDB updates.
     use std::collections::{HashMap, HashSet};
     let (before_queries, added_queries, removed_queries) = {
         let mut idx = range_index.write().await;
@@ -363,47 +425,58 @@ async fn handle_update(
         let diff = idx.get_queries_for_change(id, old_score.map(|s| s as f64), new_score as f64, 1);
         (before, diff.added_to, diff.removed_from)
     };
-    // after = before ∪ added - removed
-    let mut after_queries: HashSet<u32> = before_queries.iter().cloned().collect();
-    for q in &added_queries { after_queries.insert(*q); }
-    for q in &removed_queries { after_queries.remove(q); }
 
-    // Build connection sets with representative query_id
-    let mut before_conns: HashMap<String, u32> = HashMap::new();
-    let mut after_conns: HashMap<String, u32> = HashMap::new();
+    // Build per-connection before/after query sets
+    let mut before_per_conn: HashMap<String, HashSet<u32>> = HashMap::new();
+    let mut after_per_conn: HashMap<String, HashSet<u32>> = HashMap::new();
     {
         let index = range_index.read().await;
+        // before
         for q in &before_queries {
-            for c in index.get_connections_for_query(*q) { before_conns.entry(c).or_insert(*q); }
+            for c in index.get_connections_for_query(*q) {
+                before_per_conn.entry(c).or_default().insert(*q);
+            }
         }
+        // after = before ∪ added - removed
+        let mut after_queries: HashSet<u32> = before_queries.iter().cloned().collect();
+        for q in &added_queries { after_queries.insert(*q); }
+        for q in &removed_queries { after_queries.remove(q); }
         for q in &after_queries {
-            for c in index.get_connections_for_query(*q) { after_conns.entry(c).or_insert(*q); }
+            for c in index.get_connections_for_query(*q) {
+                after_per_conn.entry(c).or_default().insert(*q);
+            }
         }
     }
-    let before_keys: HashSet<String> = before_conns.keys().cloned().collect();
-    let after_keys: HashSet<String> = after_conns.keys().cloned().collect();
 
-    let added_conns: HashSet<String> = after_keys.difference(&before_keys).cloned().collect();
-    let removed_conns: HashSet<String> = before_keys.difference(&after_keys).cloned().collect();
-    let updated_conns: HashSet<String> = before_keys.intersection(&after_keys).cloned().collect();
+    // Union of connections involved
+    let all_conns: HashSet<String> = before_per_conn.keys().cloned().chain(after_per_conn.keys().cloned()).collect();
 
-    // LMDB updates and notifications
-    for conn in &added_conns {
-        let qid = after_conns.get(conn).copied().unwrap_or(0);
-        let _ = storage.add_document_to_connection(conn, qid, id);
-        let notification = Notification::Added { query_id: qid, id, score: new_score, timestamp: 0 };
-        registry.notify(conn, notification).await;
-    }
-    for conn in &updated_conns {
-        let qid = after_conns.get(conn).copied().unwrap_or(0);
-        let notification = Notification::Updated { query_id: qid, id, score: new_score, timestamp: 0 };
-        registry.notify(conn, notification).await;
-    }
-    for conn in &removed_conns {
-        let qid = before_conns.get(conn).copied().unwrap_or(0);
-        let _ = storage.handle_deletion(conn, qid, id);
-        let notification = Notification::Removed { query_id: qid, id };
-        registry.notify(conn, notification).await;
+    for conn in all_conns {
+        let before_set = before_per_conn.get(&conn).cloned().unwrap_or_default();
+        let after_set = after_per_conn.get(&conn).cloned().unwrap_or_default();
+
+        // Per-conn per-query delta
+        let mut added_qs: Vec<u32> = after_set.difference(&before_set).cloned().collect();
+        let mut removed_qs: Vec<u32> = before_set.difference(&after_set).cloned().collect();
+
+        // Apply LMDB transitions
+        for q in &added_qs { let _ = storage.add_document_to_connection(&conn, *q, id); }
+        for q in &removed_qs { let _ = storage.handle_deletion(&conn, *q, id); }
+
+        let before_count = before_set.len();
+        let after_count = after_set.len();
+
+        // Notifications derived from per-connection counts
+        if before_count == 0 && after_count > 0 {
+            let notification = Notification::Added { id, score: new_score, timestamp: 0 };
+            registry.notify(&conn, notification).await;
+        } else if before_count > 0 && after_count == 0 {
+            let notification = Notification::Removed { id };
+            registry.notify(&conn, notification).await;
+        } else if after_count > 0 {
+            let notification = Notification::Updated { id, score: new_score, timestamp: 0 };
+            registry.notify(&conn, notification).await;
+        }
     }
     // Update doc index score
     {
@@ -430,7 +503,7 @@ async fn handle_delete(
         let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
         for conn_id in conns {
             let _ = storage.handle_deletion(&conn_id, *qid, id);
-            let notification = Notification::Removed { query_id: *qid, id };
+            let notification = Notification::Removed { id };
             registry.notify(&conn_id, notification).await;
         }
     }
@@ -455,7 +528,7 @@ async fn handle_delete_no_value(
         let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
         for conn_id in conns {
             let _ = storage.handle_deletion(&conn_id, *qid, id);
-            let notification = Notification::Removed { query_id: *qid, id };
+            let notification = Notification::Removed { id };
             registry.notify(&conn_id, notification).await;
         }
     }
@@ -477,7 +550,7 @@ async fn broadcast_timestamp_update(
     for query_id in query_ids {
         let conns = { let index = range_index.read().await; index.get_connections_for_query(query_id) };
         for conn_id in conns {
-            let notification = Notification::Updated { query_id, id, score: 0, timestamp };
+            let notification = Notification::Updated { id, score: 0, timestamp };
             registry.notify(&conn_id, notification).await;
         }
     }

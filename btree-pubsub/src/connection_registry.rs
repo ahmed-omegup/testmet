@@ -7,21 +7,11 @@ use serde::{Serialize};
 #[serde(tag = "type")]
 pub enum Notification {
     #[serde(rename = "added")]
-    Added {
-        query_id: u32,
-        id: u32,
-        score: i32,
-        timestamp: i32,
-    },
+    Added { id: u32, score: i32, timestamp: i32 },
     #[serde(rename = "updated")]
-    Updated {
-        query_id: u32,
-        id: u32,
-        score: i32,
-        timestamp: i32,
-    },
+    Updated { id: u32, score: i32, timestamp: i32 },
     #[serde(rename = "removed")]
-    Removed { query_id: u32, id: u32 },
+    Removed { id: u32 },
 }
 
 pub type NotificationSender = mpsc::UnboundedSender<Notification>;

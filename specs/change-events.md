@@ -1,120 +1,54 @@
-# Change Events Specification
+# Connection-Centric Change Notifications (Current Spec)
 
-## 1. Purpose
-Define a canonical payload for document-level changes derived from logical replication (new_tuple / old_tuple) enabling clients to react to query membership transitions.
+This document describes the current, connection-centric event model used by the B-Tree PubSub worker. It supersedes earlier query-centric “ChangeEvent” drafts.
 
-## 2. Payload Shape
-```jsonc
-{
-  "id": "doc_123",            // string identifier
-  "old": {                     // null on insert
-    "id": "doc_123",
-    "score": 42,               // index field (numeric)
-    "timestamp": 17,           // replication timestamp / logical ordering
-    "name": "doc_123"         // optional extra fields
-  },
-  "new": {                     // null on delete
-    "id": "doc_123",
-    "score": 47,
-    "timestamp": 18,
-    "name": "doc_123"
-  },
-  "addedToQueries": ["qA", "qC"],      // matches(new) − matches(old)
-  "removedFromQueries": ["qB"],         // matches(old) − matches(new)
-  "meta": {                      // MAY: optional envelope additions
-    "op": "UPDATE",            // INSERT | UPDATE | DELETE
-    "lsn": "<wal-position>"     // MAY: future include
-  }
-}
-```
+## Goals
+- Notify each connection about document changes it cares about.
+- Keep queries as internal routing state only; they MUST NOT appear in the payload.
+- Scale via LMDB multiplexing and binary keys; support u32 document IDs end-to-end.
 
-## 3. Semantics
-| Operation | old           | new           | addedToQueries                | removedFromQueries              |
-|-----------|---------------|---------------|-------------------------------|---------------------------------|
-| INSERT    | null          | Document(new) | all queries matching new      | []                              |
-| DELETE    | Document(old) | null          | []                            | all queries matching old        |
-| UPDATE    | Document(old) | Document(new) | queries: match(new) not old   | queries: match(old) not new     |
+## Payloads (WebSocket)
+- added: `{ "type": "added", "id": u32, "score": i32, "timestamp": i32 }`
+- updated: `{ "type": "updated", "id": u32, "score": i32, "timestamp": i32 }`
+- removed: `{ "type": "removed", "id": u32 }`
 
-Intersection is explicitly excluded.
+Notes:
+- `timestamp = -1` is used as a cleanup signal (e.g., final drain); otherwise timestamp reflects the latest DB value when available.
+- No `query_id` is included. A connection may have multiple queries; the server deduplicates per-connection and emits a single event per document change.
 
-## 4. Document Extraction Rules
-- Missing columns in decoderbufs message → field omitted / None.
-- Numeric fields coerced to i32/f64 as per index requirements.
-- Quoted column names (e.g., "timestamp") normalized by stripping surrounding quotes.
+## Semantics
+- Insert: emit `added` to every connection that has at least one query matching the new document.
+- Update: for every connection, compute before/after membership across all its queries for this document:
+  - If it transitions from not-watched → watched: emit `added`.
+  - If it stays watched: emit `updated` (with new score/timestamp).
+  - If it transitions from watched → not-watched: emit `removed`.
+- Delete: emit `removed` to every connection that was watching the document.
 
-## 5. Ordering / Consistency
-- Emission order follows logical replication fetch order.
-- For UPDATE with identical score but other field changes: old.score == new.score still processed; membership may stay the same → both arrays empty.
-- Idempotency: Consumers may safely ignore events where both arrays are empty if only non-index fields changed.
+## Routing and Multiplexing
+- In-memory index: `RangeQueryIndex` tracks query definitions and which documents they match; it also maps `query_id -> {connections}`.
+- LMDB:
+  - `connection_documents` (Bytes → I8): key `[conn][0x00][query_id:BE u32][doc_id:BE u32]` → state (-1,0,1)
+  - `document_connections` (Bytes → U32): key `[doc_id:BE u32][0x00][conn]` → per-connection refcount
+  - State machine: replication inserts/updates set state→1; DB backfill applies -1→0, 0→1, 1→1; deletions drop the key or set -1 and decrement counts.
+  - Keys are binary for performance; IDs are `u32`.
 
-## 6. Error Handling
-| Case | Handling |
-|------|----------|
-| Decode failure | Log error; skip event (MUST not panic) |
-| Missing id | Skip event (MUST) |
-| Score unparsable | Treat score=None; exclude from range matching (MUST) |
+## Type Discipline
+- Document IDs: `u32` everywhere (DB INTEGER, replication decode, indexes, LMDB keys, notifications).
+- Query IDs: internal only (u32); never exposed in notifications.
 
-## 7. Extension Points
-- meta.lsn for WAL position tracking
-- meta.transaction_id for batching correlation
-- addedToQueriesDetailed: MAY include min/max scores of queries for debugging
+## Ordering & Idempotency
+- Events follow logical replication order; per-connection dedup ensures at most one event per document change.
+- Clients can treat `updated` idempotently and recompute view state.
 
-## 8. Versioning
-- Initial version: v1 (implicit). Future breaking changes require `"version": 2` field.
+## Backfill / Subscription
+- On subscribe, the server queries the DB and applies results to LMDB using the state machine, then sends `{ type: "subscribed", initial_count }`.
+- Subsequent replication changes drive `added`/`updated`/`removed`.
 
-## 9. Performance Considerations
-- Filter queries using existing RangeQueryIndex for both old/new score values once; reuse sets to diff.
-- MUST avoid duplicate membership computation.
+## Implementation Notes
+- WebSocket sender forwards `Notification` from `ConnectionRegistry` directly; these are already connection-scoped payloads.
+- `broadcast_timestamp_update` emits `updated` with current timestamp and `score=0` when only timestamp changes.
+- Retrieval-job arrivals (waitForDoc) also emit `added` per connection watching queries that reference the arrived doc.
 
-## 10. Open Questions (Track in decisions.md when resolved)
-- Multi-field range queries (score + timestamp?)
-- Aggregation changes (count-based triggers)
-
-## 11. References
-- decisions.md: D002 (full Document), D003 (exclude intersection)
-
-## 12. WebSocket Envelope Example (Informative)
-
-Server may wrap the ChangeEvent inside a notification message when multiplexing different event types:
-
-```jsonc
-{
-  "type": "changeEvent",          // existing types: connected, subscribed, added, updated, removed
-  "version": 1,                    // ChangeEvent spec version (implicit if omitted)
-  "event": {
-    "id": "doc_123",
-    "old": null,
-    "new": { "id": "doc_123", "score": 47, "timestamp": 18 },
-    "addedToQueries": ["qA"],
-    "removedFromQueries": [],
-    "meta": { "op": "INSERT" }
-  }
-}
-```
-
-Clients SHOULD handle unknown top-level `type` values gracefully and MAY ignore fields not recognized.
-
-## 13. Planned Rust Structures (Phase 1)
-
-```rust
-pub struct Document {
-    pub id: String,        // normalized id
-    pub score: f64,        // index field
-    pub timestamp: i32,    // logical ordering / recency
-    pub name: Option<String>, // optional extra field(s)
-}
-
-pub struct ChangeEvent {
-    pub id: String,                // convenience copy of new.id/old.id
-    pub old: Option<Document>,
-    pub new: Option<Document>,
-    pub added_to_queries: Vec<String>,
-    pub removed_from_queries: Vec<String>,
-    pub op: OpKind,                // INSERT | UPDATE | DELETE
-    pub lsn: Option<String>,       // WAL position (future)
-}
-
-pub enum OpKind { Insert, Update, Delete }
-```
-
-MUST: Emission path computes matches(old) and matches(new) once and then diffs sets to populate added_to_queries / removed_from_queries.
+## Open Items
+- Optional: expose a debug/admin endpoint to list LMDB entries per connection.
+- Optional: batch multiple doc events into a single frame if needed.
