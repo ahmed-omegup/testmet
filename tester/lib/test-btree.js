@@ -29,7 +29,7 @@ export async function seedBTree() {
     
     await client.query(`
       CREATE TABLE docs (
-        id BIGINT PRIMARY KEY,
+        id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         score INTEGER NOT NULL,
         timestamp INTEGER NOT NULL

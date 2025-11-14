@@ -28,7 +28,7 @@ enum ClientMessage {
     },
     #[serde(rename = "waitForDoc")]
     WaitForDoc {
-        doc_id: i64,
+        doc_id: u32,
         query_id: u32,
     },
     #[serde(rename = "rank")]
@@ -62,7 +62,7 @@ enum ServerMessage {
     #[serde(rename = "removed")]
     Removed { query_id: u32, id: String },
     #[serde(rename = "waitRegistered")]
-    WaitRegistered { doc_id: i64, query_id: u32, batch: String },
+    WaitRegistered { doc_id: u32, query_id: u32, batch: String },
     #[serde(rename = "rankResult")]
     RankResult { score: i32, count: u32 },
     #[serde(rename = "rangeCountResult")]
@@ -281,8 +281,8 @@ async fn handle_subscribe(
     // Apply DB results with state machine
     let query_id_str = qid.to_string();
     for row in rows {
-        let doc_id: String = row.get(0);
-        storage.apply_db_result(connection_id, &query_id_str, &doc_id)?;
+        let doc_id: i32 = row.get(0);
+        storage.apply_db_result(connection_id, &query_id_str, &doc_id.to_string())?;
     }
 
     // Send subscription acknowledgment with initial count

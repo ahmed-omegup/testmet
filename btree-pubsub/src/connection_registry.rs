@@ -9,22 +9,22 @@ pub enum Notification {
     #[serde(rename = "added")]
     Added {
         query_id: u32,
-        id: String,
+        id: u32,
         score: i32,
         timestamp: i32,
     },
     #[serde(rename = "updated")]
     Updated {
         query_id: u32,
-        id: String,
+        id: u32,
         score: i32,
         timestamp: i32,
     },
     #[serde(rename = "removed")]
-    Removed { query_id: u32, id: String },
+    Removed { query_id: u32, id: u32 },
     #[serde(rename = "changeEvent")]
     ChangeEvent {
-        id: String,
+        id: u32,
         old: Option<Document>,
         new: Option<Document>,
         #[serde(rename = "addedToQueries")]
@@ -40,7 +40,7 @@ pub type NotificationSender = mpsc::UnboundedSender<Notification>;
 /// Lightweight document shape used for ChangeEvent payloads
 #[derive(Debug, Clone, Serialize)]
 pub struct Document {
-    pub id: String,
+    pub id: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]

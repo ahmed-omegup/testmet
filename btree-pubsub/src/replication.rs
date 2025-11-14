@@ -142,7 +142,7 @@ async fn process_decoderbufs_message(
                     if let Some(ts) = new_ts_opt { 
                         if ts == -1 { 
                             info!("Broadcasting timestamp update for doc: {}, ts={}", id_new, ts);
-                            broadcast_timestamp_update(id_new, ts, range_index, registry).await; 
+                            broadcast_timestamp_update(id_new as u32, ts, range_index, registry).await; 
                         } 
                     }
                 }
@@ -150,7 +150,7 @@ async fn process_decoderbufs_message(
                     if let Some(new_score) = new_score_opt {
                         handle_update(id.clone(), None, new_score, range_index, storage, registry, retrieval_jobs, doc_index).await;
                     }
-                    if let Some(ts) = new_ts_opt { if ts == -1 { broadcast_timestamp_update(id, ts, range_index, registry).await; } }
+                    if let Some(ts) = new_ts_opt { if ts == -1 { broadcast_timestamp_update(id as u32, ts, range_index, registry).await; } }
                 }
                 _ => {}
             }
@@ -175,8 +175,8 @@ async fn process_decoderbufs_message(
     }
 }
 
-fn extract_id_score_ts(tuple: &[decoderbufs::DatumMessage]) -> Option<(i64, Option<i32>, Option<i32>)> {
-    let mut id: Option<i64> = None;
+fn extract_id_score_ts(tuple: &[decoderbufs::DatumMessage]) -> Option<(u32, Option<i32>, Option<i32>)> {
+    let mut id: Option<u32> = None;
     let mut score: Option<i32> = None;
     let mut timestamp: Option<i32> = None;
 
@@ -186,9 +186,9 @@ fn extract_id_score_ts(tuple: &[decoderbufs::DatumMessage]) -> Option<(i64, Opti
         match col_name.as_str() {
             "id" => {
                 if let Some(decoderbufs::datum_message::Datum::DatumInt64(v)) = datum.datum {
-                    id = Some(v);
+                    if v >= 0 && v <= u32::MAX as i64 { id = Some(v as u32); }
                 } else if let Some(decoderbufs::datum_message::Datum::DatumInt32(v)) = datum.datum {
-                    id = Some(v as i64);
+                    if v >= 0 { id = Some(v as u32); }
                 }
             }
             "score" => {
@@ -215,12 +215,12 @@ fn extract_id_score_ts(tuple: &[decoderbufs::DatumMessage]) -> Option<(i64, Opti
     result
 }
 
-fn extract_id(tuple: &[decoderbufs::DatumMessage]) -> Option<i64> {
+fn extract_id(tuple: &[decoderbufs::DatumMessage]) -> Option<u32> {
     for datum in tuple {
         if let Some(ref col_name) = datum.column_name {
             if col_name == "id" {
-                if let Some(decoderbufs::datum_message::Datum::DatumInt64(v)) = datum.datum { info!("Extracted DELETE id={}", v); return Some(v); }
-                if let Some(decoderbufs::datum_message::Datum::DatumInt32(v)) = datum.datum { info!("Extracted DELETE id={}", v); return Some(v as i64); }
+                if let Some(decoderbufs::datum_message::Datum::DatumInt64(v)) = datum.datum { info!("Extracted DELETE id={}", v); if v>=0 && v<=u32::MAX as i64 { return Some(v as u32); } }
+                if let Some(decoderbufs::datum_message::Datum::DatumInt32(v)) = datum.datum { info!("Extracted DELETE id={}", v); if v>=0 { return Some(v as u32); } }
             }
         }
     }
@@ -228,7 +228,7 @@ fn extract_id(tuple: &[decoderbufs::DatumMessage]) -> Option<i64> {
 }
 
 async fn handle_insert(
-    id: i64,
+    id: u32,
     score: i32,
     timestamp: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
@@ -240,7 +240,7 @@ async fn handle_insert(
     // Get queries this document matches
     let matches = {
         let mut index = range_index.write().await;
-        index.get_queries_for_change(&id.to_string(), None, score as f64, 1)
+        index.get_queries_for_change(id, None, score as f64, 1)
     };
     // Collect unique connections across all affected queries and emit a single ChangeEvent
     let mut conn_set: HashSet<String> = HashSet::new();
@@ -251,9 +251,9 @@ async fn handle_insert(
 
     if !conn_set.is_empty() {
         let conns_vec: Vec<String> = conn_set.into_iter().collect();
-        let new_doc = Document { id: id.to_string(), score: Some(score), timestamp: Some(timestamp), name: None };
+        let new_doc = Document { id, score: Some(score), timestamp: Some(timestamp), name: None };
         let notification = Notification::ChangeEvent {
-            id: id.to_string(),
+            id,
             old: None,
             new: Some(new_doc),
             added_to: matches.added_to.clone(),
@@ -264,9 +264,9 @@ async fn handle_insert(
     }
 
     // Also handle retrieval job waiting queries in processing batch
-    if id >= 0 && id <= u32::MAX as i64 {
+    {
         let mut di = doc_index.write().await;
-        di.insert(id as u32, score);
+        di.insert(id, score);
         let waiting_queries = retrieval_jobs.document_arrived(id).await;
         if !waiting_queries.is_empty() {
             // Gather connections subscribed to these queries
@@ -278,9 +278,9 @@ async fn handle_insert(
             }
             if !conn_set.is_empty() {
                 let conns_vec: Vec<String> = conn_set.into_iter().collect();
-                let new_doc = Document { id: id.to_string(), score: Some(score), timestamp: Some(timestamp), name: None };
+                let new_doc = Document { id, score: Some(score), timestamp: Some(timestamp), name: None };
                 let notification = Notification::ChangeEvent {
-                    id: id.to_string(),
+                    id,
                     old: None,
                     new: Some(new_doc),
                     added_to: waiting_queries.clone(),
@@ -326,40 +326,40 @@ mod tests {
         };
 
         // Rotate retrieval jobs after registering unrelated wait so processing batch non-empty
-        retrieval_jobs.register(999, qid).await;
+        retrieval_jobs.register(999u32, qid).await;
         retrieval_jobs.rotate().await;
 
-        handle_insert("doc1".to_string(), 50, 0, &range_index, &store, &registry, &retrieval_jobs).await;
+        handle_insert(1u32, 50, 0, &range_index, &store, &registry, &retrieval_jobs).await;
         {
             let idx = range_index.read().await;
-            let tracked = idx.get_tracked_queries_for_document("doc1");
+            let tracked = idx.get_tracked_queries_for_document(1u32);
             assert!(tracked.contains(&qid));
         }
         let first = timeout(Duration::from_millis(500), rx.recv()).await.expect("insert timeout").expect("channel closed");
         if let Notification::ChangeEvent { id, added_to, removed_from, .. } = first {
-            assert_eq!(id, "doc1");
+            assert_eq!(id, 1u32);
             assert!(added_to.contains(&qid));
             assert!(removed_from.is_empty());
         } else { panic!("Unexpected variant"); }
 
-        handle_update("doc1".to_string(), Some(50), 500, &range_index, &store, &registry, &retrieval_jobs).await;
+        handle_update(1u32, Some(50), 500, &range_index, &store, &registry, &retrieval_jobs).await;
         let second = timeout(Duration::from_millis(500), rx.recv()).await.expect("update timeout").expect("channel closed");
         if let Notification::ChangeEvent { added_to, removed_from, .. } = second {
             assert!(added_to.is_empty());
             assert!(!removed_from.is_empty());
         } else { panic!("Unexpected variant"); }
 
-        handle_delete("doc1".to_string(), 500, &range_index, &store, &registry, &retrieval_jobs).await;
+        handle_delete(1u32, 500, &range_index, &store, &registry, &retrieval_jobs).await;
         {
             let idx = range_index.read().await;
-            let tracked = idx.get_tracked_queries_for_document("doc1");
+            let tracked = idx.get_tracked_queries_for_document(1u32);
             assert!(tracked.is_empty());
         }
     }
 }
 
 async fn handle_update(
-    id: i64,
+    id: u32,
     old_score: Option<i32>,
     new_score: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
@@ -371,7 +371,7 @@ async fn handle_update(
     // Get queries this document was added to or removed from
     let matches = {
         let mut index = range_index.write().await;
-        index.get_queries_for_change(&id.to_string(), old_score.map(|s| s as f64), new_score as f64, 1)
+        index.get_queries_for_change(id, old_score.map(|s| s as f64), new_score as f64, 1)
     };
     // Collect unique connections across added_to + removed_from
     let mut conn_set: HashSet<String> = HashSet::new();
@@ -386,10 +386,10 @@ async fn handle_update(
 
     if !conn_set.is_empty() {
         let conns_vec: Vec<String> = conn_set.into_iter().collect();
-        let old_doc = old_score.map(|s| Document { id: id.to_string(), score: Some(s), timestamp: None, name: None });
-        let new_doc = Some(Document { id: id.to_string(), score: Some(new_score), timestamp: None, name: None });
+        let old_doc = old_score.map(|s| Document { id, score: Some(s), timestamp: None, name: None });
+        let new_doc = Some(Document { id, score: Some(new_score), timestamp: None, name: None });
         let notification = Notification::ChangeEvent {
-            id: id.to_string(),
+            id,
             old: old_doc,
             new: new_doc,
             added_to: matches.added_to.clone(),
@@ -399,14 +399,14 @@ async fn handle_update(
         registry.notify_many(&conns_vec, notification).await;
     }
     // Update doc index score
-    if id >= 0 && id <= u32::MAX as i64 {
+    {
         let mut di = doc_index.write().await;
-        if let Some(old) = old_score { di.update(id as u32, old, new_score); } else { di.insert(id as u32, new_score); }
+        if let Some(old) = old_score { di.update(id, old, new_score); } else { di.insert(id, new_score); }
     }
 }
 
 async fn handle_delete(
-    id: i64,
+    id: u32,
     old_score: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     _storage: &Arc<SubscriptionStore>,
@@ -417,7 +417,7 @@ async fn handle_delete(
     // Remove from index and get queries it was part of
     let query_ids = {
         let mut index = range_index.write().await;
-        index.remove_document(&id.to_string(), old_score as f64, 1)
+        index.remove_document(id, old_score as f64, 1)
     };
     // Collect unique connections across affected queries and emit a ChangeEvent
     let mut conn_set: HashSet<String> = HashSet::new();
@@ -428,9 +428,9 @@ async fn handle_delete(
 
     if !conn_set.is_empty() {
         let conns_vec: Vec<String> = conn_set.into_iter().collect();
-        let old_doc = Some(Document { id: id.to_string(), score: Some(old_score), timestamp: None, name: None });
+        let old_doc = Some(Document { id, score: Some(old_score), timestamp: None, name: None });
         let notification = Notification::ChangeEvent {
-            id: id.to_string(),
+            id,
             old: old_doc,
             new: None,
             added_to: vec![],
@@ -439,13 +439,13 @@ async fn handle_delete(
         };
         registry.notify_many(&conns_vec, notification).await;
     }
-    if id >= 0 && id <= u32::MAX as i64 {
-        let mut di = doc_index.write().await; di.delete(id as u32, old_score);
+    {
+        let mut di = doc_index.write().await; di.delete(id, old_score);
     }
 }
 
 async fn handle_delete_no_value(
-    id: i64,
+    id: u32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     _storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
@@ -454,7 +454,7 @@ async fn handle_delete_no_value(
 ) {
     let query_ids = {
         let index = range_index.read().await;
-        index.get_tracked_queries_for_document(&id.to_string())
+        index.get_tracked_queries_for_document(id)
     };
     let mut conn_set: HashSet<String> = HashSet::new();
     for query_id in &query_ids {
@@ -463,9 +463,9 @@ async fn handle_delete_no_value(
     }
     if !conn_set.is_empty() {
         let conns_vec: Vec<String> = conn_set.into_iter().collect();
-        let old_doc = Some(Document { id: id.to_string(), score: None, timestamp: None, name: None });
+        let old_doc = Some(Document { id, score: None, timestamp: None, name: None });
         let notification = Notification::ChangeEvent {
-            id: id.to_string(),
+            id,
             old: old_doc,
             new: None,
             added_to: vec![],
@@ -474,25 +474,25 @@ async fn handle_delete_no_value(
         };
         registry.notify_many(&conns_vec, notification).await;
     }
-    if id >= 0 && id <= u32::MAX as i64 {
-        let mut di = doc_index.write().await; di.delete(id as u32, 0);
+    {
+        let mut di = doc_index.write().await; di.delete(id, 0);
     }
 }
 
 async fn broadcast_timestamp_update(
-    id: i64,
+    id: u32,
     timestamp: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     registry: &Arc<ConnectionRegistry>,
 ) {
     let query_ids = {
         let index = range_index.read().await;
-        index.get_tracked_queries_for_document(&id.to_string())
+        index.get_tracked_queries_for_document(id)
     };
     for query_id in query_ids {
         let conns = { let index = range_index.read().await; index.get_connections_for_query(query_id) };
         for conn_id in conns {
-            let notification = Notification::Updated { query_id, id: id.to_string(), score: 0, timestamp };
+            let notification = Notification::Updated { query_id, id, score: 0, timestamp };
             registry.notify(&conn_id, notification).await;
         }
     }

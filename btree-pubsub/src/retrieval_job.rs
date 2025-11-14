@@ -5,14 +5,14 @@ use tokio::sync::Mutex;
 /// A batch holds mapping from document id -> waiting query ids.
 #[derive(Debug, Default)]
 pub struct RetrievalBatch {
-    pub waiting: HashMap<i64, Vec<u32>>, // doc_id -> queries waiting
+    pub waiting: HashMap<u32, Vec<u32>>, // doc_id -> queries waiting
 }
 
 impl RetrievalBatch {
-    fn add(&mut self, doc_id: i64, query_id: u32) {
+    fn add(&mut self, doc_id: u32, query_id: u32) {
         self.waiting.entry(doc_id).or_insert_with(Vec::new).push(query_id);
     }
-    fn take(&mut self, doc_id: i64) -> Vec<u32> {
+    fn take(&mut self, doc_id: u32) -> Vec<u32> {
         self.waiting.remove(&doc_id).unwrap_or_default()
     }
 }
@@ -37,7 +37,7 @@ impl RetrievalJobIndex {
     }
 
     /// Register a query waiting for a document. Goes into the registration batch of the current cycle.
-    pub async fn register(&self, doc_id: i64, query_id: u32) {
+    pub async fn register(&self, doc_id: u32, query_id: u32) {
         let mut inner = self.inner.lock().await;
         inner.registration.add(doc_id, query_id);
     }
@@ -63,7 +63,7 @@ impl RetrievalJobIndex {
 
     /// Called when a document arrives from the database. Returns queries waiting in the processing batch for this doc.
     /// Registration batch is intentionally ignored until rotation to avoid mid-cycle race conditions.
-    pub async fn document_arrived(&self, doc_id: i64) -> Vec<u32> {
+    pub async fn document_arrived(&self, doc_id: u32) -> Vec<u32> {
         let mut inner = self.inner.lock().await;
         inner.processing.take(doc_id)
     }
@@ -100,7 +100,7 @@ mod tests {
         assert_eq!(idx.len_processing().await, 0);
 
         // Register doc 11 after arrival but before rotation -> stays in registration
-        idx.register(11, 3).await;
+        idx.register(11u32, 3).await;
         assert_eq!(idx.len_processing().await, 0);
         assert_eq!(idx.len_registration().await, 1);
 

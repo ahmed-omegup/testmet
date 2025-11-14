@@ -31,7 +31,7 @@ pub struct RangeQueryIndex {
     // Track connections subscribed to each query id
     query_connections: HashMap<QueryId, HashSet<String>>,
     // Track which queries currently match each document
-    document_queries: HashMap<String, HashSet<QueryId>>,
+    document_queries: HashMap<u32, HashSet<QueryId>>,
 }
 
 impl RangeQueryIndex {
@@ -119,7 +119,7 @@ impl RangeQueryIndex {
     /// Get queries affected by a document change (insert/update)
     /// value: the document's value (e.g., score, timestamp, price)
     /// count: how many documents at this value (typically 1, but can batch)
-    pub fn get_queries_for_change(&mut self, doc_id: &str, old_value: Option<f64>, new_value: f64, count: i64) -> QueryChangeResult {
+    pub fn get_queries_for_change(&mut self, doc_id: u32, old_value: Option<f64>, new_value: f64, count: i64) -> QueryChangeResult {
         // If update, remove old doc first
         if let Some(old_val) = old_value {
             self.docs.update(old_val, -count);
@@ -144,13 +144,13 @@ impl RangeQueryIndex {
 
         let new_matches: HashSet<QueryId> = matching_internal_ids.into_iter().collect();
 
-        let old_matches = self.document_queries.get(doc_id).cloned().unwrap_or_default();
+        let old_matches = self.document_queries.get(&doc_id).cloned().unwrap_or_default();
 
         let added_to: Vec<QueryId> = new_matches.difference(&old_matches).cloned().collect();
 
         let removed_from: Vec<QueryId> = old_matches.difference(&new_matches).cloned().collect();
 
-        if new_matches.is_empty() { self.document_queries.remove(doc_id); } else { self.document_queries.insert(doc_id.to_string(), new_matches); }
+        if new_matches.is_empty() { self.document_queries.remove(&doc_id); } else { self.document_queries.insert(doc_id, new_matches); }
 
         QueryChangeResult {
             added_to,
@@ -159,11 +159,11 @@ impl RangeQueryIndex {
     }
 
     /// Remove document from tracking (for deletes)
-    pub fn remove_document(&mut self, doc_id: &str, value: f64, count: i64) -> Vec<QueryId> {
+    pub fn remove_document(&mut self, doc_id: u32, value: f64, count: i64) -> Vec<QueryId> {
         self.docs.update(value, -count);
         self.queries.range_add_keys_greater_than(value, -count);
 
-    self.document_queries.remove(doc_id).map(|queries| queries.into_iter().collect()).unwrap_or_default()
+    self.document_queries.remove(&doc_id).map(|queries| queries.into_iter().collect()).unwrap_or_default()
     }
 
     /// Get connections subscribed to a query
@@ -172,8 +172,8 @@ impl RangeQueryIndex {
     }
 
     /// Get current queries tracking a document (without mutating state)
-    pub fn get_tracked_queries_for_document(&self, doc_id: &str) -> Vec<QueryId> {
-        self.document_queries.get(doc_id).map(|qs| qs.iter().cloned().collect()).unwrap_or_default()
+    pub fn get_tracked_queries_for_document(&self, doc_id: u32) -> Vec<QueryId> {
+        self.document_queries.get(&doc_id).map(|qs| qs.iter().cloned().collect()).unwrap_or_default()
     }
 
     /// Get all queries for a connection
@@ -245,18 +245,18 @@ mod tests {
     index.subscribe_connection("conn3".to_string(), q3);
 
         // Insert doc at value 175.0 - should match q1 and q2 (both haven't seen 100 docs yet)
-        let result = index.get_queries_for_change("doc1", None, 175.0, 1);
+        let result = index.get_queries_for_change(1u32, None, 175.0, 1);
         assert_eq!(result.added_to.len(), 2);
     assert!(result.added_to.contains(&q1));
     assert!(result.added_to.contains(&q2));
         assert_eq!(result.removed_from.len(), 0);
 
         // Update doc1 to value 225.0 - should still match q1 and q2
-        let _result = index.get_queries_for_change("doc1", Some(175.0), 225.0, 1);
+        let _result = index.get_queries_for_change(1u32, Some(175.0), 225.0, 1);
         // Depends on how many docs accumulated; with 1 doc both still active
         
         // Update doc1 to value 350.0 - should match q3 now
-        let result = index.get_queries_for_change("doc1", Some(225.0), 350.0, 1);
+        let result = index.get_queries_for_change(1u32, Some(225.0), 350.0, 1);
     assert!(result.added_to.contains(&q3));
 
         // Verify connections can be retrieved
@@ -273,11 +273,11 @@ mod tests {
     let q2 = index.add_query(150.0, 50, f64::INFINITY);
 
         // Add document at value 175.0
-        let result = index.get_queries_for_change("doc1", None, 175.0, 1);
+        let result = index.get_queries_for_change(1u32, None, 175.0, 1);
         assert_eq!(result.added_to.len(), 2);
 
         // Remove document
-        let removed = index.remove_document("doc1", 175.0, 1);
+        let removed = index.remove_document(1u32, 175.0, 1);
         assert_eq!(removed.len(), 2);
     assert!(removed.contains(&q1));
     assert!(removed.contains(&q2));
@@ -294,7 +294,7 @@ mod tests {
         }
 
         // Insert at value 225.0 - queries with a <= 225 and haven't seen 100 docs yet should match
-        let result = index.get_queries_for_change("doc1", None, 225.0, 1);
+        let result = index.get_queries_for_change(1u32, None, 225.0, 1);
         // With 1 doc at 225, queries q0, q1, q2 should all match (all need 100 docs, only saw 1)
         assert!(result.added_to.len() >= 1);
     }
