@@ -4,6 +4,7 @@ mod replication;
 mod websocket;
 mod connection_registry;
 mod retrieval_job;
+mod doc_index;
 
 use btree_index::RangeQueryIndex;
 use storage::SubscriptionStore;
