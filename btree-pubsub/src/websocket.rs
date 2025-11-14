@@ -11,6 +11,7 @@ use crate::btree_index::RangeQueryIndex;
 use crate::storage::SubscriptionStore;
 use crate::connection_registry::{ConnectionRegistry, Notification};
 use crate::retrieval_job::RetrievalJobIndex;
+use crate::doc_index::DocIndex;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
@@ -30,6 +31,10 @@ enum ClientMessage {
         doc_id: i64,
         query_id: u32,
     },
+    #[serde(rename = "rank")]
+    Rank { score: i32 },
+    #[serde(rename = "rangeCount")]
+    RangeCount { min: i32, max: i32 },
 }
 
 #[derive(Debug, Serialize)]
@@ -58,6 +63,10 @@ enum ServerMessage {
     Removed { query_id: u32, id: String },
     #[serde(rename = "waitRegistered")]
     WaitRegistered { doc_id: i64, query_id: u32, batch: String },
+    #[serde(rename = "rankResult")]
+    RankResult { score: i32, count: u32 },
+    #[serde(rename = "rangeCountResult")]
+    RangeCountResult { min: i32, max: i32, count: u32 },
 }
 
 pub async fn start_websocket_server(
@@ -67,6 +76,7 @@ pub async fn start_websocket_server(
     pool: Arc<deadpool_postgres::Pool>,
     registry: Arc<ConnectionRegistry>,
     retrieval_jobs: Arc<RetrievalJobIndex>,
+    doc_index: Arc<RwLock<DocIndex>>,
 ) {
     let listener = TcpListener::bind(addr).await.expect("Failed to bind");
     info!("WebSocket server listening on {}", addr);
@@ -78,9 +88,10 @@ pub async fn start_websocket_server(
         let pool = pool.clone();
     let registry = registry.clone();
     let retrieval_jobs = retrieval_jobs.clone();
+    let doc_index = doc_index.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, range_index, storage, pool, registry, retrieval_jobs).await {
+            if let Err(e) = handle_connection(stream, range_index, storage, pool, registry, retrieval_jobs, doc_index).await {
                 error!("Error handling connection: {}", e);
             }
         });
@@ -94,6 +105,7 @@ async fn handle_connection(
     pool: Arc<deadpool_postgres::Pool>,
     registry: Arc<ConnectionRegistry>,
     retrieval_jobs: Arc<RetrievalJobIndex>,
+    doc_index: Arc<RwLock<DocIndex>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ws_stream = accept_async(stream).await?;
     let (ws_sender, mut ws_receiver) = ws_stream.split();
@@ -168,6 +180,22 @@ async fn handle_connection(
                         ClientMessage::WaitForDoc { doc_id, query_id } => {
                             retrieval_jobs.register(doc_id, query_id).await;
                             let response = ServerMessage::WaitRegistered { doc_id, query_id, batch: "registration".to_string() };
+                            tx.send(serde_json::to_string(&response)?)?;
+                        }
+                        ClientMessage::Rank { score } => {
+                            let count = {
+                                let di = doc_index.read().await;
+                                di.rank(score)
+                            };
+                            let response = ServerMessage::RankResult { score, count };
+                            tx.send(serde_json::to_string(&response)?)?;
+                        }
+                        ClientMessage::RangeCount { min, max } => {
+                            let count = {
+                                let di = doc_index.read().await;
+                                di.range_count(min, max)
+                            };
+                            let response = ServerMessage::RangeCountResult { min, max, count };
                             tx.send(serde_json::to_string(&response)?)?;
                         }
                     }

@@ -29,7 +29,7 @@ export async function seedBTree() {
     
     await client.query(`
       CREATE TABLE docs (
-        id TEXT PRIMARY KEY,
+        id BIGINT PRIMARY KEY,
         name TEXT NOT NULL,
         score INTEGER NOT NULL,
         timestamp INTEGER NOT NULL
@@ -65,7 +65,7 @@ export async function seedBTree() {
     for (let i = 0; i < N; i += batchSize) {
       const values = [];
       for (let j = i; j < Math.min(i + batchSize, N); j++) {
-        values.push(`('doc_${j}', 'doc_${j}', ${Math.floor(rand() * RANGE)}, ${j})`);
+        values.push(`(${j}, 'doc_${j}', ${Math.floor(rand() * RANGE)}, ${j})`);
       }
       
       await client.query(`
@@ -229,7 +229,7 @@ export async function periodicUpdatesBTree(duration) {
       
       // Updates
       for (let i = 0; i < updatesPerTick; i++) {
-        const id = `doc_${Math.floor(rand() * N)}`;
+        const id = Math.floor(rand() * N);
         operations.push(
           client.query(
             'UPDATE docs SET score = $1, timestamp = $2 WHERE id = $3',
@@ -241,8 +241,8 @@ export async function periodicUpdatesBTree(duration) {
       // Inserts
       const insertValues = [];
       for (let i = 0; i < insertsPerTick; i++) {
-        const id = `doc_${N + tick * insertsPerTick + i}`;
-        insertValues.push(`('${id}', '${id}', ${Math.floor(rand() * RANGE)}, ${tick})`);
+        const id = N + tick * insertsPerTick + i;
+        insertValues.push(`(${id}, 'doc_${id}', ${Math.floor(rand() * RANGE)}, ${tick})`);
       }
       if (insertValues.length) {
         operations.push(
@@ -252,7 +252,7 @@ export async function periodicUpdatesBTree(duration) {
       
       // Deletes
       for (let i = 0; i < deletesPerTick; i++) {
-        const id = `doc_${Math.floor(rand() * N)}`;
+        const id = Math.floor(rand() * N);
         operations.push(
           client.query('DELETE FROM docs WHERE id = $1', [id])
         );

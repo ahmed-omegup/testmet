@@ -4,12 +4,14 @@ mod replication;
 mod websocket;
 mod connection_registry;
 mod retrieval_job;
+// doc_index already declared below; remove duplicate (kept single declaration)
 mod doc_index;
 
 use btree_index::RangeQueryIndex;
 use storage::SubscriptionStore;
 use replication::start_replication;
 use websocket::start_websocket_server;
+use doc_index::DocIndex;
 use connection_registry::ConnectionRegistry;
 use retrieval_job::RetrievalJobIndex;
 
@@ -36,6 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage = Arc::new(SubscriptionStore::new("./data")?);
     let registry = ConnectionRegistry::new();
     let retrieval_jobs = Arc::new(RetrievalJobIndex::new());
+    let doc_index = Arc::new(RwLock::new(DocIndex::new()));
 
     // PostgreSQL connection pool
     let pg_url = std::env::var("POSTGRES_URL")
@@ -56,6 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         storage.clone(),
         registry.clone(),
         retrieval_jobs.clone(),
+        doc_index.clone(),
     ));
 
     // Start WebSocket server for client connections
@@ -66,6 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pool.clone(),
         registry.clone(),
         retrieval_jobs.clone(),
+        doc_index.clone(),
     ));
 
     info!("B-Tree PubSub Server started");

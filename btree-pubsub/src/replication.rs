@@ -6,6 +6,7 @@ use crate::btree_index::RangeQueryIndex;
 use crate::storage::SubscriptionStore;
 use crate::connection_registry::{ConnectionRegistry, Notification, Document, ChangeMeta};
 use crate::retrieval_job::RetrievalJobIndex;
+use crate::doc_index::DocIndex;
 use std::collections::HashSet;
 use prost::Message;
 
@@ -20,8 +21,9 @@ pub async fn start_replication(
     storage: Arc<SubscriptionStore>,
     registry: Arc<ConnectionRegistry>,
     retrieval_jobs: Arc<RetrievalJobIndex>,
+    doc_index: Arc<RwLock<DocIndex>>,
 ) {
-    if let Err(e) = run_replication(&pg_url, range_index, storage, registry, retrieval_jobs).await {
+    if let Err(e) = run_replication(&pg_url, range_index, storage, registry, retrieval_jobs, doc_index).await {
         error!("Fatal replication error: {}", e);
         std::process::exit(1);
     }
@@ -33,6 +35,7 @@ async fn run_replication(
     storage: Arc<SubscriptionStore>,
     registry: Arc<ConnectionRegistry>,
     retrieval_jobs: Arc<RetrievalJobIndex>,
+    doc_index: Arc<RwLock<DocIndex>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (client, connection) = tokio_postgres::connect(pg_url, NoTls).await?;
     tokio::spawn(async move {
@@ -43,7 +46,7 @@ async fn run_replication(
 
     info!("Connected to PostgreSQL for replication");
     setup_replication_slot(&client).await?;
-    consume_changes(client, range_index, storage, registry, retrieval_jobs).await?;
+    consume_changes(client, range_index, storage, registry, retrieval_jobs, doc_index).await?;
     Ok(())
 }
 
@@ -72,6 +75,7 @@ async fn consume_changes(
     storage: Arc<SubscriptionStore>,
     registry: Arc<ConnectionRegistry>,
     retrieval_jobs: Arc<RetrievalJobIndex>,
+    doc_index: Arc<RwLock<DocIndex>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Starting to consume logical replication stream...");
     let query = "SELECT lsn, xid, data FROM pg_logical_slot_get_binary_changes('btree_pubsub_slot', NULL, NULL)";
@@ -81,7 +85,7 @@ async fn consume_changes(
                 if rows.len() > 0 { info!("Received {} replication messages", rows.len()); }
                 for row in rows {
                     if let Ok(data) = row.try_get::<_, Vec<u8>>(2) {
-                        process_decoderbufs_message(&data, &range_index, &storage, &registry, &retrieval_jobs).await;
+                        process_decoderbufs_message(&data, &range_index, &storage, &registry, &retrieval_jobs, &doc_index).await;
                     }
                 }
                 // Chain retrieval job rotation: promote registration batch only if it has entries
@@ -101,6 +105,7 @@ async fn process_decoderbufs_message(
     storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
     retrieval_jobs: &Arc<RetrievalJobIndex>,
+    doc_index: &Arc<RwLock<DocIndex>>,
 ) {
     if data.is_empty() {
         return;
@@ -122,7 +127,7 @@ async fn process_decoderbufs_message(
         decoderbufs::Op::Insert => {
             if let Some((id, score_opt, ts_opt)) = extract_id_score_ts(&row_msg.new_tuple) {
                 if let Some(score) = score_opt {
-                    handle_insert(id, score, ts_opt.unwrap_or(0), range_index, storage, registry, retrieval_jobs).await;
+                    handle_insert(id, score, ts_opt.unwrap_or(0), range_index, storage, registry, retrieval_jobs, doc_index).await;
                 }
             }
         }
@@ -132,20 +137,20 @@ async fn process_decoderbufs_message(
             match (newv, old) {
                 (Some((id_new, new_score_opt, new_ts_opt)), Some((_id_old, old_score_opt, _))) => {
                     if let Some(new_score) = new_score_opt {
-                        handle_update(id_new.clone(), old_score_opt, new_score, range_index, storage, registry, retrieval_jobs).await;
+                        handle_update(id_new.clone(), old_score_opt, new_score, range_index, storage, registry, retrieval_jobs, doc_index).await;
                     }
                     if let Some(ts) = new_ts_opt { 
                         if ts == -1 { 
                             info!("Broadcasting timestamp update for doc: {}, ts={}", id_new, ts);
-                            broadcast_timestamp_update(&id_new, ts, range_index, registry).await; 
+                            broadcast_timestamp_update(id_new, ts, range_index, registry).await; 
                         } 
                     }
                 }
                 (Some((id, new_score_opt, new_ts_opt)), None) => {
                     if let Some(new_score) = new_score_opt {
-                        handle_update(id.clone(), None, new_score, range_index, storage, registry, retrieval_jobs).await;
+                        handle_update(id.clone(), None, new_score, range_index, storage, registry, retrieval_jobs, doc_index).await;
                     }
-                    if let Some(ts) = new_ts_opt { if ts == -1 { broadcast_timestamp_update(&id, ts, range_index, registry).await; } }
+                    if let Some(ts) = new_ts_opt { if ts == -1 { broadcast_timestamp_update(id, ts, range_index, registry).await; } }
                 }
                 _ => {}
             }
@@ -153,12 +158,12 @@ async fn process_decoderbufs_message(
         decoderbufs::Op::Delete => {
             if let Some((id, old_score_opt, _)) = extract_id_score_ts(&row_msg.old_tuple) {
                 if let Some(old_score) = old_score_opt {
-                    handle_delete(id, old_score, range_index, storage, registry, retrieval_jobs).await;
+                    handle_delete(id, old_score, range_index, storage, registry, retrieval_jobs, doc_index).await;
                 } else if let Some(id2) = extract_id(&row_msg.old_tuple) {
-                    handle_delete_no_value(id2, range_index, storage, registry, retrieval_jobs).await;
+                    handle_delete_no_value(id2, range_index, storage, registry, retrieval_jobs, doc_index).await;
                 }
             } else if let Some(id) = extract_id(&row_msg.old_tuple) {
-                handle_delete_no_value(id, range_index, storage, registry, retrieval_jobs).await;
+                handle_delete_no_value(id, range_index, storage, registry, retrieval_jobs, doc_index).await;
             }
         }
         decoderbufs::Op::Begin | decoderbufs::Op::Commit => {
@@ -170,8 +175,8 @@ async fn process_decoderbufs_message(
     }
 }
 
-fn extract_id_score_ts(tuple: &[decoderbufs::DatumMessage]) -> Option<(String, Option<i32>, Option<i32>)> {
-    let mut id: Option<String> = None;
+fn extract_id_score_ts(tuple: &[decoderbufs::DatumMessage]) -> Option<(i64, Option<i32>, Option<i32>)> {
+    let mut id: Option<i64> = None;
     let mut score: Option<i32> = None;
     let mut timestamp: Option<i32> = None;
 
@@ -180,8 +185,10 @@ fn extract_id_score_ts(tuple: &[decoderbufs::DatumMessage]) -> Option<(String, O
         
         match col_name.as_str() {
             "id" => {
-                if let Some(decoderbufs::datum_message::Datum::DatumString(ref s)) = datum.datum {
-                    id = Some(s.clone());
+                if let Some(decoderbufs::datum_message::Datum::DatumInt64(v)) = datum.datum {
+                    id = Some(v);
+                } else if let Some(decoderbufs::datum_message::Datum::DatumInt32(v)) = datum.datum {
+                    id = Some(v as i64);
                 }
             }
             "score" => {
@@ -208,14 +215,12 @@ fn extract_id_score_ts(tuple: &[decoderbufs::DatumMessage]) -> Option<(String, O
     result
 }
 
-fn extract_id(tuple: &[decoderbufs::DatumMessage]) -> Option<String> {
+fn extract_id(tuple: &[decoderbufs::DatumMessage]) -> Option<i64> {
     for datum in tuple {
         if let Some(ref col_name) = datum.column_name {
             if col_name == "id" {
-                if let Some(decoderbufs::datum_message::Datum::DatumString(ref s)) = datum.datum {
-                    info!("Extracted DELETE id={}", s);
-                    return Some(s.clone());
-                }
+                if let Some(decoderbufs::datum_message::Datum::DatumInt64(v)) = datum.datum { info!("Extracted DELETE id={}", v); return Some(v); }
+                if let Some(decoderbufs::datum_message::Datum::DatumInt32(v)) = datum.datum { info!("Extracted DELETE id={}", v); return Some(v as i64); }
             }
         }
     }
@@ -223,18 +228,19 @@ fn extract_id(tuple: &[decoderbufs::DatumMessage]) -> Option<String> {
 }
 
 async fn handle_insert(
-    id: String,
+    id: i64,
     score: i32,
     timestamp: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     _storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
     retrieval_jobs: &Arc<RetrievalJobIndex>,
+    doc_index: &Arc<RwLock<DocIndex>>,
 ) {
     // Get queries this document matches
     let matches = {
         let mut index = range_index.write().await;
-        index.get_queries_for_change(&id, None, score as f64, 1)
+        index.get_queries_for_change(&id.to_string(), None, score as f64, 1)
     };
     // Collect unique connections across all affected queries and emit a single ChangeEvent
     let mut conn_set: HashSet<String> = HashSet::new();
@@ -245,9 +251,9 @@ async fn handle_insert(
 
     if !conn_set.is_empty() {
         let conns_vec: Vec<String> = conn_set.into_iter().collect();
-        let new_doc = Document { id: id.clone(), score: Some(score), timestamp: Some(timestamp), name: None };
+        let new_doc = Document { id: id.to_string(), score: Some(score), timestamp: Some(timestamp), name: None };
         let notification = Notification::ChangeEvent {
-            id: id.clone(),
+            id: id.to_string(),
             old: None,
             new: Some(new_doc),
             added_to: matches.added_to.clone(),
@@ -258,8 +264,10 @@ async fn handle_insert(
     }
 
     // Also handle retrieval job waiting queries in processing batch
-    if let Ok(doc_num) = id.parse::<i64>() {
-        let waiting_queries = retrieval_jobs.document_arrived(doc_num).await;
+    if id >= 0 && id <= u32::MAX as i64 {
+        let mut di = doc_index.write().await;
+        di.insert(id as u32, score);
+        let waiting_queries = retrieval_jobs.document_arrived(id).await;
         if !waiting_queries.is_empty() {
             // Gather connections subscribed to these queries
             use std::collections::HashSet;
@@ -270,9 +278,9 @@ async fn handle_insert(
             }
             if !conn_set.is_empty() {
                 let conns_vec: Vec<String> = conn_set.into_iter().collect();
-                let new_doc = Document { id: id.clone(), score: Some(score), timestamp: Some(timestamp), name: None };
+                let new_doc = Document { id: id.to_string(), score: Some(score), timestamp: Some(timestamp), name: None };
                 let notification = Notification::ChangeEvent {
-                    id: id.clone(),
+                    id: id.to_string(),
                     old: None,
                     new: Some(new_doc),
                     added_to: waiting_queries.clone(),
@@ -351,18 +359,19 @@ mod tests {
 }
 
 async fn handle_update(
-    id: String,
+    id: i64,
     old_score: Option<i32>,
     new_score: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     _storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
     _retrieval_jobs: &Arc<RetrievalJobIndex>,
+    doc_index: &Arc<RwLock<DocIndex>>,
 ) {
     // Get queries this document was added to or removed from
     let matches = {
         let mut index = range_index.write().await;
-        index.get_queries_for_change(&id, old_score.map(|s| s as f64), new_score as f64, 1)
+        index.get_queries_for_change(&id.to_string(), old_score.map(|s| s as f64), new_score as f64, 1)
     };
     // Collect unique connections across added_to + removed_from
     let mut conn_set: HashSet<String> = HashSet::new();
@@ -377,10 +386,10 @@ async fn handle_update(
 
     if !conn_set.is_empty() {
         let conns_vec: Vec<String> = conn_set.into_iter().collect();
-        let old_doc = old_score.map(|s| Document { id: id.clone(), score: Some(s), timestamp: None, name: None });
-        let new_doc = Some(Document { id: id.clone(), score: Some(new_score), timestamp: None, name: None });
+        let old_doc = old_score.map(|s| Document { id: id.to_string(), score: Some(s), timestamp: None, name: None });
+        let new_doc = Some(Document { id: id.to_string(), score: Some(new_score), timestamp: None, name: None });
         let notification = Notification::ChangeEvent {
-            id: id.clone(),
+            id: id.to_string(),
             old: old_doc,
             new: new_doc,
             added_to: matches.added_to.clone(),
@@ -389,20 +398,26 @@ async fn handle_update(
         };
         registry.notify_many(&conns_vec, notification).await;
     }
+    // Update doc index score
+    if id >= 0 && id <= u32::MAX as i64 {
+        let mut di = doc_index.write().await;
+        if let Some(old) = old_score { di.update(id as u32, old, new_score); } else { di.insert(id as u32, new_score); }
+    }
 }
 
 async fn handle_delete(
-    id: String,
+    id: i64,
     old_score: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     _storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
     _retrieval_jobs: &Arc<RetrievalJobIndex>,
+    doc_index: &Arc<RwLock<DocIndex>>,
 ) {
     // Remove from index and get queries it was part of
     let query_ids = {
         let mut index = range_index.write().await;
-        index.remove_document(&id, old_score as f64, 1)
+        index.remove_document(&id.to_string(), old_score as f64, 1)
     };
     // Collect unique connections across affected queries and emit a ChangeEvent
     let mut conn_set: HashSet<String> = HashSet::new();
@@ -413,9 +428,9 @@ async fn handle_delete(
 
     if !conn_set.is_empty() {
         let conns_vec: Vec<String> = conn_set.into_iter().collect();
-        let old_doc = Some(Document { id: id.clone(), score: Some(old_score), timestamp: None, name: None });
+        let old_doc = Some(Document { id: id.to_string(), score: Some(old_score), timestamp: None, name: None });
         let notification = Notification::ChangeEvent {
-            id: id.clone(),
+            id: id.to_string(),
             old: old_doc,
             new: None,
             added_to: vec![],
@@ -424,18 +439,22 @@ async fn handle_delete(
         };
         registry.notify_many(&conns_vec, notification).await;
     }
+    if id >= 0 && id <= u32::MAX as i64 {
+        let mut di = doc_index.write().await; di.delete(id as u32, old_score);
+    }
 }
 
 async fn handle_delete_no_value(
-    id: String,
+    id: i64,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     _storage: &Arc<SubscriptionStore>,
     registry: &Arc<ConnectionRegistry>,
     _retrieval_jobs: &Arc<RetrievalJobIndex>,
+    doc_index: &Arc<RwLock<DocIndex>>,
 ) {
     let query_ids = {
         let index = range_index.read().await;
-        index.get_tracked_queries_for_document(&id)
+        index.get_tracked_queries_for_document(&id.to_string())
     };
     let mut conn_set: HashSet<String> = HashSet::new();
     for query_id in &query_ids {
@@ -444,9 +463,9 @@ async fn handle_delete_no_value(
     }
     if !conn_set.is_empty() {
         let conns_vec: Vec<String> = conn_set.into_iter().collect();
-        let old_doc = Some(Document { id: id.clone(), score: None, timestamp: None, name: None });
+        let old_doc = Some(Document { id: id.to_string(), score: None, timestamp: None, name: None });
         let notification = Notification::ChangeEvent {
-            id: id.clone(),
+            id: id.to_string(),
             old: old_doc,
             new: None,
             added_to: vec![],
@@ -455,17 +474,20 @@ async fn handle_delete_no_value(
         };
         registry.notify_many(&conns_vec, notification).await;
     }
+    if id >= 0 && id <= u32::MAX as i64 {
+        let mut di = doc_index.write().await; di.delete(id as u32, 0);
+    }
 }
 
 async fn broadcast_timestamp_update(
-    id: &str,
+    id: i64,
     timestamp: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     registry: &Arc<ConnectionRegistry>,
 ) {
     let query_ids = {
         let index = range_index.read().await;
-        index.get_tracked_queries_for_document(id)
+        index.get_tracked_queries_for_document(&id.to_string())
     };
     for query_id in query_ids {
         let conns = { let index = range_index.read().await; index.get_connections_for_query(query_id) };
