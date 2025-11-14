@@ -13,11 +13,11 @@ pub struct DocState {
 #[serde(tag = "type")]
 pub enum Notification {
     #[serde(rename = "added")]
-    Added { id: u32, score: i32, timestamp: i32 },
+    Added { id: u32, new: DocState },
     #[serde(rename = "updated")]
     Updated { id: u32, old: DocState, new: DocState },
     #[serde(rename = "removed")]
-    Removed { id: u32 },
+    Removed { id: u32, old: DocState },
 }
 
 pub type NotificationSender = mpsc::UnboundedSender<Notification>;

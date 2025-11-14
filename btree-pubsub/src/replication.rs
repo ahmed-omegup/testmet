@@ -264,7 +264,7 @@ async fn handle_insert(
             for qid in qids.iter() {
                 let _ = storage.add_document_to_connection(*conn_id, *qid, id);
             }
-            let notification = Notification::Added { id, score, timestamp };
+            let notification = Notification::Added { id, new: DocState { score: Some(score), timestamp: Some(timestamp) } };
             registry.notify(*conn_id, notification).await;
         }
     }
@@ -279,7 +279,7 @@ async fn handle_insert(
         let index = range_index.read().await;
         for qid in &waiting_queries {
             for conn in index.get_connections_for_query(*qid) {
-                let notification = Notification::Added { id, score, timestamp };
+                let notification = Notification::Added { id, new: DocState { score: Some(score), timestamp: Some(timestamp) } };
                 registry.notify(conn, notification).await;
             }
         }
@@ -336,7 +336,7 @@ mod tests {
 
         handle_update(1u32, Some(50), 500, None, &range_index, &store, &registry, &retrieval_jobs, &doc_index).await;
         let second = timeout(Duration::from_millis(500), rx.recv()).await.expect("update timeout").expect("channel closed");
-        if let Notification::Removed { id } = second {
+        if let Notification::Removed { id, .. } = second {
             assert_eq!(id, 1u32);
         } else { panic!("Expected Removed"); }
 
@@ -400,7 +400,7 @@ mod tests {
         // Move out of all => Removed
         handle_update(500u32, Some(45), 10, None, &range_index, &store, &registry, &retrieval_jobs, &doc_index).await;
         let n4 = timeout(Duration::from_millis(500), rx.recv()).await.expect("removed timeout").expect("channel closed");
-        match n4 { Notification::Removed { id } => assert_eq!(id, 500), _ => panic!("Expected Removed") }
+        match n4 { Notification::Removed { id, .. } => assert_eq!(id, 500), _ => panic!("Expected Removed") }
         let docs_q1_none = store.get_documents_for_query(conn_id, q1).unwrap();
         let docs_q2_none = store.get_documents_for_query(conn_id, q2).unwrap();
         assert!(!docs_q1_none.contains(&500));
@@ -475,10 +475,10 @@ async fn handle_update(
 
         // Notifications derived from per-connection counts
         if before_count == 0 && after_count > 0 {
-            let notification = Notification::Added { id, score: new_score, timestamp: new_timestamp.unwrap_or(0) };
+            let notification = Notification::Added { id, new: DocState { score: Some(new_score), timestamp: new_timestamp } };
             registry.notify(conn, notification).await;
         } else if before_count > 0 && after_count == 0 {
-            let notification = Notification::Removed { id };
+            let notification = Notification::Removed { id, old: DocState { score: old_score, timestamp: None } };
             registry.notify(conn, notification).await;
         } else if after_count > 0 {
             let notification = Notification::Updated {
@@ -514,7 +514,7 @@ async fn handle_delete(
         let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
         for conn_id in conns {
             let _ = storage.handle_deletion(conn_id, *qid, id);
-            let notification = Notification::Removed { id };
+            let notification = Notification::Removed { id, old: DocState { score: Some(old_score), timestamp: None } };
             registry.notify(conn_id, notification).await;
         }
     }
@@ -539,7 +539,7 @@ async fn handle_delete_no_value(
         let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
         for conn_id in conns {
             let _ = storage.handle_deletion(conn_id, *qid, id);
-            let notification = Notification::Removed { id };
+            let notification = Notification::Removed { id, old: DocState { score: None, timestamp: None } };
             registry.notify(conn_id, notification).await;
         }
     }
