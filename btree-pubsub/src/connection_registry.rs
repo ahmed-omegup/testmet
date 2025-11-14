@@ -22,39 +22,11 @@ pub enum Notification {
     },
     #[serde(rename = "removed")]
     Removed { query_id: u32, id: u32 },
-    #[serde(rename = "changeEvent")]
-    ChangeEvent {
-        id: u32,
-        old: Option<Document>,
-        new: Option<Document>,
-        #[serde(rename = "addedToQueries")]
-        added_to: Vec<u32>,
-        #[serde(rename = "removedFromQueries")]
-        removed_from: Vec<u32>,
-        meta: Option<ChangeMeta>,
-    },
 }
 
 pub type NotificationSender = mpsc::UnboundedSender<Notification>;
 
-/// Lightweight document shape used for ChangeEvent payloads
-#[derive(Debug, Clone, Serialize)]
-pub struct Document {
-    pub id: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub score: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timestamp: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ChangeMeta {
-    pub op: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub lsn: Option<String>,
-}
+// Removed complex ChangeEvent/document meta now that multiplexing emits direct per-connection doc events.
 
 /// Registry of active WebSocket connections
 pub struct ConnectionRegistry {

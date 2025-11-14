@@ -279,10 +279,9 @@ async fn handle_subscribe(
     let initial_count = rows.len();
     
     // Apply DB results with state machine
-    let query_id_str = qid.to_string();
     for row in rows {
         let doc_id: i32 = row.get(0);
-        storage.apply_db_result(connection_id, &query_id_str, &doc_id.to_string())?;
+        storage.apply_db_result(connection_id, qid, doc_id as u32)?;
     }
 
     // Send subscription acknowledgment with initial count
@@ -305,7 +304,7 @@ async fn handle_unsubscribe(
     if let Some(qid) = index.lookup_range_query_id(min_score as f64, i64::MAX, max_score as f64) {
         index.unsubscribe_connection(connection_id, qid);
         // Cleanup LMDB entries for this (connection, query)
-        let _ = storage.remove_query_for_connection(connection_id, &qid.to_string());
+        let _ = storage.remove_query_for_connection(connection_id, qid);
         if index.get_connections_for_query(qid).is_empty() {
             index.remove_query(qid);
         }

@@ -4,7 +4,7 @@ use tokio::sync::RwLock;
 use tracing::{info, error, warn};
 use crate::btree_index::RangeQueryIndex;
 use crate::storage::SubscriptionStore;
-use crate::connection_registry::{ConnectionRegistry, Notification, Document, ChangeMeta};
+use crate::connection_registry::{ConnectionRegistry, Notification};
 use crate::retrieval_job::RetrievalJobIndex;
 use crate::doc_index::DocIndex;
 use std::collections::HashSet;
@@ -237,67 +237,42 @@ async fn handle_insert(
     retrieval_jobs: &Arc<RetrievalJobIndex>,
     doc_index: &Arc<RwLock<DocIndex>>,
 ) {
-    // Get queries this document matches
-    let matches = {
+    // Get queries this document matches and emit per-connection Added
+    let added_queries = {
         let mut index = range_index.write().await;
-        index.get_queries_for_change(id, None, score as f64, 1)
+        index.get_queries_for_change(id, None, score as f64, 1).added_to
     };
-    // Collect unique connections across all affected queries and emit a single ChangeEvent
-    let mut conn_set: HashSet<String> = HashSet::new();
-    for query_id in &matches.added_to {
-        let conns = { let index = range_index.read().await; index.get_connections_for_query(*query_id) };
-        for c in conns { conn_set.insert(c); }
-    }
-
-    if !conn_set.is_empty() {
-        // Update LMDB per (connection, query, doc)
-        let id_str = id.to_string();
-        for qid in &matches.added_to {
-            let qid_str = qid.to_string();
-            let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
-            for conn_id in conns {
-                let _ = storage.add_document_to_connection(&conn_id, &qid_str, &id_str);
+    if !added_queries.is_empty() {
+        // Update LMDB and notify each connection once
+        use std::collections::{HashMap, HashSet};
+        let mut conn_to_qid: HashMap<String, u32> = HashMap::new();
+        {
+            let index = range_index.read().await;
+            for qid in &added_queries {
+                for conn in index.get_connections_for_query(*qid) {
+                    conn_to_qid.entry(conn).or_insert(*qid);
+                }
             }
         }
-
-        let conns_vec: Vec<String> = conn_set.into_iter().collect();
-        let new_doc = Document { id, score: Some(score), timestamp: Some(timestamp), name: None };
-        let notification = Notification::ChangeEvent {
-            id,
-            old: None,
-            new: Some(new_doc),
-            added_to: matches.added_to.clone(),
-            removed_from: vec![],
-            meta: Some(ChangeMeta { op: "INSERT".to_string(), lsn: None }),
-        };
-        registry.notify_many(&conns_vec, notification).await;
+        for (conn_id, qid) in conn_to_qid.iter() {
+            let _ = storage.add_document_to_connection(conn_id, *qid, id);
+            let notification = Notification::Added { query_id: *qid, id, score, timestamp };
+            registry.notify(conn_id, notification).await;
+        }
     }
 
-    // Also handle retrieval job waiting queries in processing batch
+    // Update doc index and notify retrieval waiting queries as Added
     {
         let mut di = doc_index.write().await;
         di.insert(id, score);
-        let waiting_queries = retrieval_jobs.document_arrived(id).await;
-        if !waiting_queries.is_empty() {
-            // Gather connections subscribed to these queries
-            use std::collections::HashSet;
-            let mut conn_set: HashSet<String> = HashSet::new();
-            for qid in &waiting_queries {
-                let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
-                for c in conns { conn_set.insert(c); }
-            }
-            if !conn_set.is_empty() {
-                let conns_vec: Vec<String> = conn_set.into_iter().collect();
-                let new_doc = Document { id, score: Some(score), timestamp: Some(timestamp), name: None };
-                let notification = Notification::ChangeEvent {
-                    id,
-                    old: None,
-                    new: Some(new_doc),
-                    added_to: waiting_queries.clone(),
-                    removed_from: vec![],
-                    meta: Some(ChangeMeta { op: "RETRIEVAL".to_string(), lsn: None }),
-                };
-                registry.notify_many(&conns_vec, notification).await;
+    }
+    let waiting_queries = retrieval_jobs.document_arrived(id).await;
+    if !waiting_queries.is_empty() {
+        let index = range_index.read().await;
+        for qid in &waiting_queries {
+            for conn in index.get_connections_for_query(*qid) {
+                let notification = Notification::Added { query_id: *qid, id, score, timestamp };
+                registry.notify(&conn, notification).await;
             }
         }
     }
@@ -346,25 +321,27 @@ mod tests {
             assert!(tracked.contains(&qid));
         }
         let first = timeout(Duration::from_millis(500), rx.recv()).await.expect("insert timeout").expect("channel closed");
-        if let Notification::ChangeEvent { id, added_to, removed_from, .. } = first {
+        if let Notification::Added { query_id, id, .. } = first {
             assert_eq!(id, 1u32);
-            assert!(added_to.contains(&qid));
-            assert!(removed_from.is_empty());
-        } else { panic!("Unexpected variant"); }
+            assert_eq!(query_id, qid);
+        } else { panic!("Expected Added"); }
 
         handle_update(1u32, Some(50), 500, &range_index, &store, &registry, &retrieval_jobs).await;
         let second = timeout(Duration::from_millis(500), rx.recv()).await.expect("update timeout").expect("channel closed");
-        if let Notification::ChangeEvent { added_to, removed_from, .. } = second {
-            assert!(added_to.is_empty());
-            assert!(!removed_from.is_empty());
-        } else { panic!("Unexpected variant"); }
+        if let Notification::Updated { query_id, id, .. } = second {
+            assert_eq!(id, 1u32);
+            assert_eq!(query_id, qid);
+        } else { panic!("Expected Updated"); }
 
         handle_delete(1u32, 500, &range_index, &store, &registry, &retrieval_jobs).await;
-        {
-            let idx = range_index.read().await;
-            let tracked = idx.get_tracked_queries_for_document(1u32);
-            assert!(tracked.is_empty());
-        }
+        let third = timeout(Duration::from_millis(500), rx.recv()).await.expect("delete timeout").expect("channel closed");
+        if let Notification::Removed { query_id, id } = third {
+            assert_eq!(id, 1u32);
+            assert_eq!(query_id, qid);
+        } else { panic!("Expected Removed"); }
+        let idx = range_index.read().await;
+        let tracked = idx.get_tracked_queries_for_document(1u32);
+        assert!(tracked.is_empty());
     }
 }
 
@@ -378,52 +355,55 @@ async fn handle_update(
     _retrieval_jobs: &Arc<RetrievalJobIndex>,
     doc_index: &Arc<RwLock<DocIndex>>,
 ) {
-    // Get queries this document was added to or removed from
-    let matches = {
-        let mut index = range_index.write().await;
-        index.get_queries_for_change(id, old_score.map(|s| s as f64), new_score as f64, 1)
+    // Compute before/after queries and notify per-connection Added/Updated/Removed
+    use std::collections::{HashMap, HashSet};
+    let (before_queries, added_queries, removed_queries) = {
+        let mut idx = range_index.write().await;
+        let before = idx.get_tracked_queries_for_document(id);
+        let diff = idx.get_queries_for_change(id, old_score.map(|s| s as f64), new_score as f64, 1);
+        (before, diff.added_to, diff.removed_from)
     };
-    // Collect unique connections across added_to + removed_from
-    let mut conn_set: HashSet<String> = HashSet::new();
-    for query_id in &matches.added_to {
-        let conns = { let index = range_index.read().await; index.get_connections_for_query(*query_id) };
-        for c in conns { conn_set.insert(c); }
-    }
-    for query_id in &matches.removed_from {
-        let conns = { let index = range_index.read().await; index.get_connections_for_query(*query_id) };
-        for c in conns { conn_set.insert(c); }
-    }
+    // after = before ∪ added - removed
+    let mut after_queries: HashSet<u32> = before_queries.iter().cloned().collect();
+    for q in &added_queries { after_queries.insert(*q); }
+    for q in &removed_queries { after_queries.remove(q); }
 
-    if !conn_set.is_empty() {
-        // Update LMDB for added_to: set -> Exists; removed_from: delete or set -1
-        let id_str = id.to_string();
-        for qid in &matches.added_to {
-            let qid_str = qid.to_string();
-            let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
-            for conn_id in conns {
-                let _ = storage.add_document_to_connection(&conn_id, &qid_str, &id_str);
-            }
+    // Build connection sets with representative query_id
+    let mut before_conns: HashMap<String, u32> = HashMap::new();
+    let mut after_conns: HashMap<String, u32> = HashMap::new();
+    {
+        let index = range_index.read().await;
+        for q in &before_queries {
+            for c in index.get_connections_for_query(*q) { before_conns.entry(c).or_insert(*q); }
         }
-        for qid in &matches.removed_from {
-            let qid_str = qid.to_string();
-            let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
-            for conn_id in conns {
-                let _ = storage.handle_deletion(&conn_id, &qid_str, &id_str);
-            }
+        for q in &after_queries {
+            for c in index.get_connections_for_query(*q) { after_conns.entry(c).or_insert(*q); }
         }
+    }
+    let before_keys: HashSet<String> = before_conns.keys().cloned().collect();
+    let after_keys: HashSet<String> = after_conns.keys().cloned().collect();
 
-        let conns_vec: Vec<String> = conn_set.into_iter().collect();
-        let old_doc = old_score.map(|s| Document { id, score: Some(s), timestamp: None, name: None });
-        let new_doc = Some(Document { id, score: Some(new_score), timestamp: None, name: None });
-        let notification = Notification::ChangeEvent {
-            id,
-            old: old_doc,
-            new: new_doc,
-            added_to: matches.added_to.clone(),
-            removed_from: matches.removed_from.clone(),
-            meta: Some(ChangeMeta { op: "UPDATE".to_string(), lsn: None }),
-        };
-        registry.notify_many(&conns_vec, notification).await;
+    let added_conns: HashSet<String> = after_keys.difference(&before_keys).cloned().collect();
+    let removed_conns: HashSet<String> = before_keys.difference(&after_keys).cloned().collect();
+    let updated_conns: HashSet<String> = before_keys.intersection(&after_keys).cloned().collect();
+
+    // LMDB updates and notifications
+    for conn in &added_conns {
+        let qid = after_conns.get(conn).copied().unwrap_or(0);
+        let _ = storage.add_document_to_connection(conn, qid, id);
+        let notification = Notification::Added { query_id: qid, id, score: new_score, timestamp: 0 };
+        registry.notify(conn, notification).await;
+    }
+    for conn in &updated_conns {
+        let qid = after_conns.get(conn).copied().unwrap_or(0);
+        let notification = Notification::Updated { query_id: qid, id, score: new_score, timestamp: 0 };
+        registry.notify(conn, notification).await;
+    }
+    for conn in &removed_conns {
+        let qid = before_conns.get(conn).copied().unwrap_or(0);
+        let _ = storage.handle_deletion(conn, qid, id);
+        let notification = Notification::Removed { query_id: qid, id };
+        registry.notify(conn, notification).await;
     }
     // Update doc index score
     {
@@ -441,40 +421,18 @@ async fn handle_delete(
     _retrieval_jobs: &Arc<RetrievalJobIndex>,
     doc_index: &Arc<RwLock<DocIndex>>,
 ) {
-    // Remove from index and get queries it was part of
+    // Remove from index and notify 'Removed' per connection
     let query_ids = {
         let mut index = range_index.write().await;
         index.remove_document(id, old_score as f64, 1)
     };
-    // Collect unique connections across affected queries and emit a ChangeEvent
-    let mut conn_set: HashSet<String> = HashSet::new();
-    for query_id in &query_ids {
-        let conns = { let index = range_index.read().await; index.get_connections_for_query(*query_id) };
-        for c in conns { conn_set.insert(c); }
-    }
-
-    if !conn_set.is_empty() {
-        // Update LMDB: mark deletions for all affected (connection, query, doc)
-        let id_str = id.to_string();
-        for qid in &query_ids {
-            let qid_str = qid.to_string();
-            let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
-            for conn_id in conns {
-                let _ = storage.handle_deletion(&conn_id, &qid_str, &id_str);
-            }
+    for qid in &query_ids {
+        let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
+        for conn_id in conns {
+            let _ = storage.handle_deletion(&conn_id, *qid, id);
+            let notification = Notification::Removed { query_id: *qid, id };
+            registry.notify(&conn_id, notification).await;
         }
-
-        let conns_vec: Vec<String> = conn_set.into_iter().collect();
-        let old_doc = Some(Document { id, score: Some(old_score), timestamp: None, name: None });
-        let notification = Notification::ChangeEvent {
-            id,
-            old: old_doc,
-            new: None,
-            added_to: vec![],
-            removed_from: query_ids.clone(),
-            meta: Some(ChangeMeta { op: "DELETE".to_string(), lsn: None }),
-        };
-        registry.notify_many(&conns_vec, notification).await;
     }
     {
         let mut di = doc_index.write().await; di.delete(id, old_score);
@@ -493,33 +451,13 @@ async fn handle_delete_no_value(
         let index = range_index.read().await;
         index.get_tracked_queries_for_document(id)
     };
-    let mut conn_set: HashSet<String> = HashSet::new();
-    for query_id in &query_ids {
-        let conns = { let index = range_index.read().await; index.get_connections_for_query(*query_id) };
-        for c in conns { conn_set.insert(c); }
-    }
-    if !conn_set.is_empty() {
-        // Update LMDB: mark deletions
-        let id_str = id.to_string();
-        for qid in &query_ids {
-            let qid_str = qid.to_string();
-            let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
-            for conn_id in conns {
-                let _ = storage.handle_deletion(&conn_id, &qid_str, &id_str);
-            }
+    for qid in &query_ids {
+        let conns = { let index = range_index.read().await; index.get_connections_for_query(*qid) };
+        for conn_id in conns {
+            let _ = storage.handle_deletion(&conn_id, *qid, id);
+            let notification = Notification::Removed { query_id: *qid, id };
+            registry.notify(&conn_id, notification).await;
         }
-
-        let conns_vec: Vec<String> = conn_set.into_iter().collect();
-        let old_doc = Some(Document { id, score: None, timestamp: None, name: None });
-        let notification = Notification::ChangeEvent {
-            id,
-            old: old_doc,
-            new: None,
-            added_to: vec![],
-            removed_from: query_ids.clone(),
-            meta: Some(ChangeMeta { op: "DELETE".to_string(), lsn: None }),
-        };
-        registry.notify_many(&conns_vec, notification).await;
     }
     {
         let mut di = doc_index.write().await; di.delete(id, 0);
