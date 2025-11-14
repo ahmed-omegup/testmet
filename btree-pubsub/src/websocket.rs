@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 use serde::{Deserialize, Serialize};
 use tracing::{info, error, warn};
-use uuid::Uuid;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::btree_index::RangeQueryIndex;
 use crate::storage::SubscriptionStore;
@@ -37,6 +37,8 @@ enum ClientMessage {
     RangeCount { min: i32, max: i32 },
 }
 
+static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 enum ServerMessage {
@@ -47,20 +49,8 @@ enum ServerMessage {
         query_id: u32,
         initial_count: u32,
     },
-    #[serde(rename = "added")]
-    Added {
-        query_id: u32,
-        id: String,
-        score: i32,
-    },
-    #[serde(rename = "updated")]
-    Updated {
-        query_id: u32,
-        id: String,
-        score: i32,
-    },
-    #[serde(rename = "removed")]
-    Removed { query_id: u32, id: String },
+    #[serde(rename = "unsubscribed")]
+    Unsubscribed { query_id: u32 },
     #[serde(rename = "waitRegistered")]
     WaitRegistered { doc_id: u32, query_id: u32, batch: String },
     #[serde(rename = "rankResult")]
@@ -111,7 +101,7 @@ async fn handle_connection(
     let (ws_sender, mut ws_receiver) = ws_stream.split();
 
     // Generate connection ID
-    let connection_id = Uuid::new_v4().to_string();
+    let connection_id: u64 = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
     info!("Connection established: {}", connection_id);
 
     // Create notification channel for outgoing messages
@@ -119,16 +109,14 @@ async fn handle_connection(
     
     // Register connection in registry
     let (notif_tx, mut notif_rx) = mpsc::unbounded_channel();
-    registry.register(connection_id.clone(), notif_tx).await;
+    registry.register(connection_id, notif_tx).await;
 
     // Send connection ID
-    let msg = ServerMessage::Connected {
-        connection_id: connection_id.clone(),
-    };
+    let msg = ServerMessage::Connected { connection_id: connection_id.to_string() };
     let _ = tx.send(serde_json::to_string(&msg)?);
 
     // Spawn task to send messages to WebSocket
-    let connection_id_clone = connection_id.clone();
+    let connection_id_clone = connection_id;
     tokio::spawn(async move {
         let mut ws_sender = ws_sender;
         loop {
@@ -164,7 +152,7 @@ async fn handle_connection(
                             max_score,
                         } => {
                             handle_subscribe(
-                                &connection_id,
+                                connection_id,
                                 min_score,
                                 max_score,
                                 &range_index,
@@ -175,7 +163,7 @@ async fn handle_connection(
                             .await?;
                         }
                         ClientMessage::Unsubscribe { min_score, max_score } => {
-                            handle_unsubscribe(&connection_id, min_score, max_score, &range_index, &storage).await?;
+                            handle_unsubscribe(connection_id, min_score, max_score, &range_index, &storage, &tx).await?;
                         }
                         ClientMessage::WaitForDoc { doc_id, query_id } => {
                             retrieval_jobs.register(doc_id, query_id).await;
@@ -216,19 +204,19 @@ async fn handle_connection(
     }
 
     // Cleanup on disconnect
-    registry.unregister(&connection_id).await;
+    registry.unregister(connection_id).await;
     {
         let mut index = range_index.write().await;
-        let queries = index.get_queries_for_connection(&connection_id);
+        let queries = index.get_queries_for_connection(connection_id);
         for query_id in queries {
-            index.unsubscribe_connection(&connection_id, query_id);
+            index.unsubscribe_connection(connection_id, query_id);
             if index.get_connections_for_query(query_id).is_empty() {
                 index.remove_query(query_id);
             }
         }
     }
 
-    if let Err(e) = storage.remove_connection(&connection_id) {
+    if let Err(e) = storage.remove_connection(connection_id) {
         error!("Failed to cleanup connection storage: {}", e);
     }
 
@@ -237,7 +225,7 @@ async fn handle_connection(
 }
 
 async fn handle_subscribe(
-    connection_id: &str,
+    connection_id: u64,
     min_score: i32,
     max_score: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
@@ -251,8 +239,8 @@ async fn handle_subscribe(
     // Add to index and subscribe connection
     let qid = {
         let mut index = range_index.write().await;
-        let internal = index.add_query(min_score as f64, i64::MAX, max_score as f64);
-        index.subscribe_connection(connection_id.to_string(), internal);
+        let internal = index.add_query(min_score as f64, u32::MAX as i64, max_score as f64);
+        index.subscribe_connection(connection_id, internal);
         internal
     };
 
@@ -293,21 +281,24 @@ async fn handle_subscribe(
 }
 
 async fn handle_unsubscribe(
-    connection_id: &str,
+    connection_id: u64,
     min_score: i32,
     max_score: i32,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     storage: &Arc<SubscriptionStore>,
+    sender: &mpsc::UnboundedSender<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Unsubscribe: conn={} range=[{}, {}]", connection_id, min_score, max_score);
     let mut index = range_index.write().await;
-    if let Some(qid) = index.lookup_range_query_id(min_score as f64, i64::MAX, max_score as f64) {
+    if let Some(qid) = index.lookup_range_query_id(min_score as f64, u32::MAX as i64, max_score as f64) {
         index.unsubscribe_connection(connection_id, qid);
         // Cleanup LMDB entries for this (connection, query)
         let _ = storage.remove_query_for_connection(connection_id, qid);
         if index.get_connections_for_query(qid).is_empty() {
             index.remove_query(qid);
         }
+        let response = ServerMessage::Unsubscribed { query_id: qid };
+        sender.send(serde_json::to_string(&response)?)?;
     }
 
     Ok(())

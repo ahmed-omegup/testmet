@@ -57,9 +57,16 @@ impl SubscriptionStore {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
         std::fs::create_dir_all(&path)?;
         
+        let map_size: usize = {
+            let bytes = std::env::var("LMDB_MAP_SIZE_BYTES").ok().and_then(|v| v.parse::<u64>().ok());
+            let mb = std::env::var("LMDB_MAP_SIZE_MB").ok().and_then(|v| v.parse::<u64>().ok());
+            let size_u64 = if let Some(b) = bytes { b } else if let Some(m) = mb { m * 1024 * 1024 } else { 10 * 1024 * 1024 * 1024 };
+            size_u64 as usize
+        };
+
         let env = unsafe {
             EnvOpenOptions::new()
-                .map_size(10 * 1024 * 1024 * 1024) // 10GB
+                .map_size(map_size)
                 .max_dbs(3)
                 .open(path)?
         };
@@ -78,18 +85,21 @@ impl SubscriptionStore {
     }
 
     #[inline]
-    fn enc_conn_query_prefix(connection_id: &str, query_id: u32) -> Vec<u8> {
-        let mut k = Vec::with_capacity(connection_id.len() + 1 + 4);
-        k.extend_from_slice(connection_id.as_bytes());
+    #[inline]
+    fn enc_conn_query_prefix(connection_id: u64, query_id: u32) -> Vec<u8> {
+        let cid = connection_id;
+        let mut k = Vec::with_capacity(8 + 1 + 4);
+        k.extend_from_slice(&cid.to_be_bytes());
         k.push(0);
         k.extend_from_slice(&query_id.to_be_bytes());
         k
     }
 
     #[inline]
-    fn enc_conn_doc_key(connection_id: &str, query_id: u32, doc_id: u32) -> Vec<u8> {
-        let mut k = Vec::with_capacity(connection_id.len() + 1 + 4 + 4);
-        k.extend_from_slice(connection_id.as_bytes());
+    fn enc_conn_doc_key(connection_id: u64, query_id: u32, doc_id: u32) -> Vec<u8> {
+        let cid = connection_id;
+        let mut k = Vec::with_capacity(8 + 1 + 4 + 4);
+        k.extend_from_slice(&cid.to_be_bytes());
         k.push(0);
         k.extend_from_slice(&query_id.to_be_bytes());
         k.extend_from_slice(&doc_id.to_be_bytes());
@@ -97,11 +107,12 @@ impl SubscriptionStore {
     }
 
     #[inline]
-    fn enc_doc_conn_key(doc_id: u32, connection_id: &str) -> Vec<u8> {
-        let mut k = Vec::with_capacity(4 + 1 + connection_id.len());
+    fn enc_doc_conn_key(doc_id: u32, connection_id: u64) -> Vec<u8> {
+        let cid = connection_id;
+        let mut k = Vec::with_capacity(4 + 1 + 8);
         k.extend_from_slice(&doc_id.to_be_bytes());
         k.push(0);
-        k.extend_from_slice(connection_id.as_bytes());
+        k.extend_from_slice(&cid.to_be_bytes());
         k
     }
 
@@ -109,7 +120,7 @@ impl SubscriptionStore {
     /// Decrements per-document connection counts accordingly when state was Exists (1)
     pub fn remove_query_for_connection(
         &self,
-        connection_id: &str,
+        connection_id: u64,
         query_id: u32,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut wtxn = self.env.write_txn()?;
@@ -157,7 +168,7 @@ impl SubscriptionStore {
     /// Add a document to a connection's subscription (insertion event: any -> 1)
     pub fn add_document_to_connection(
         &self,
-        connection_id: &str,
+        connection_id: u64,
         query_id: u32,
         doc_id: u32,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -184,7 +195,7 @@ impl SubscriptionStore {
     /// Handle deletion event
     pub fn handle_deletion(
         &self,
-        connection_id: &str,
+        connection_id: u64,
         query_id: u32,
         doc_id: u32,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -224,7 +235,7 @@ impl SubscriptionStore {
     /// State transitions: -1 -> 0, 0 -> 1, 1 -> 1
     pub fn apply_db_result(
         &self,
-        connection_id: &str,
+        connection_id: u64,
         query_id: u32,
         doc_id: u32,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -268,7 +279,7 @@ impl SubscriptionStore {
     /// Remove a document from a connection's subscription
     pub fn remove_document_from_connection(
         &self,
-        connection_id: &str,
+        connection_id: u64,
         query_id: u32,
         doc_id: u32,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -278,7 +289,7 @@ impl SubscriptionStore {
     /// Check if a connection already has this document
     pub fn has_document(
         &self,
-        connection_id: &str,
+        connection_id: u64,
         query_id: u32,
         doc_id: u32,
     ) -> Result<bool, Box<dyn std::error::Error>> {
@@ -288,7 +299,7 @@ impl SubscriptionStore {
     }
 
     /// Get all connections for a document
-    pub fn get_connections_for_document(&self, doc_id: u32) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    pub fn get_connections_for_document(&self, doc_id: u32) -> Result<Vec<u64>, Box<dyn std::error::Error>> {
         let rtxn = self.env.read_txn()?;
         let mut prefix = Vec::with_capacity(5);
         prefix.extend_from_slice(&doc_id.to_be_bytes());
@@ -298,9 +309,11 @@ impl SubscriptionStore {
         let iter = self.document_connections.prefix_iter(&rtxn, &prefix)?;
         for result in iter {
             let (key, _) = result?;
-            if key.len() > 5 {
-                let conn_id = String::from_utf8_lossy(&key[5..]).into_owned();
-                connections.push(conn_id);
+            if key.len() >= 5 + 8 {
+                let start = 5;
+                let end = start + 8;
+                let cid = u64::from_be_bytes(key[start..end].try_into().unwrap());
+                connections.push(cid);
             }
         }
 
@@ -310,7 +323,7 @@ impl SubscriptionStore {
     /// Get all documents for a connection query
     pub fn get_documents_for_query(
         &self,
-        connection_id: &str,
+        connection_id: u64,
         query_id: u32,
     ) -> Result<Vec<u32>, Box<dyn std::error::Error>> {
         let rtxn = self.env.read_txn()?;
@@ -331,10 +344,11 @@ impl SubscriptionStore {
     }
 
     /// Remove all subscriptions for a connection
-    pub fn remove_connection(&self, connection_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn remove_connection(&self, connection_id: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut wtxn = self.env.write_txn()?;
-        let mut prefix = Vec::with_capacity(connection_id.len() + 1);
-        prefix.extend_from_slice(connection_id.as_bytes());
+        let cid = connection_id;
+        let mut prefix = Vec::with_capacity(9);
+        prefix.extend_from_slice(&cid.to_be_bytes());
         prefix.push(0);
 
         // Collect keys to remove

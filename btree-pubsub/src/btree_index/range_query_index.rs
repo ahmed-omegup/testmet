@@ -29,7 +29,7 @@ pub struct RangeQueryIndex {
     // Map (min_value,max_value,num_docs) tuple to an internal query id for reuse
     range_key_to_internal: HashMap<(i64, i64, i64), QueryId>,
     // Track connections subscribed to each query id
-    query_connections: HashMap<QueryId, HashSet<String>>,
+    query_connections: HashMap<QueryId, HashSet<u64>>,
     // Track which queries currently match each document
     document_queries: HashMap<u32, HashSet<QueryId>>,
 }
@@ -85,14 +85,14 @@ impl RangeQueryIndex {
     }
 
     /// Subscribe a connection to a query
-    pub fn subscribe_connection(&mut self, connection_id: String, query_id: QueryId) {
+    pub fn subscribe_connection(&mut self, connection_id: u64, query_id: QueryId) {
         self.query_connections.entry(query_id).or_insert_with(HashSet::new).insert(connection_id);
     }
 
     /// Unsubscribe a connection from a query
-    pub fn unsubscribe_connection(&mut self, connection_id: &str, query_id: QueryId) {
+    pub fn unsubscribe_connection(&mut self, connection_id: u64, query_id: QueryId) {
         if let Some(connections) = self.query_connections.get_mut(&query_id) {
-            connections.remove(connection_id);
+            connections.remove(&connection_id);
             if connections.is_empty() {
                 self.query_connections.remove(&query_id);
             }
@@ -167,7 +167,7 @@ impl RangeQueryIndex {
     }
 
     /// Get connections subscribed to a query
-    pub fn get_connections_for_query(&self, query_id: QueryId) -> Vec<String> {
+    pub fn get_connections_for_query(&self, query_id: QueryId) -> Vec<u64> {
         self.query_connections.get(&query_id).map(|conns| conns.iter().cloned().collect()).unwrap_or_default()
     }
 
@@ -177,8 +177,8 @@ impl RangeQueryIndex {
     }
 
     /// Get all queries for a connection
-    pub fn get_queries_for_connection(&self, connection_id: &str) -> Vec<QueryId> {
-        self.query_connections.iter().filter(|(_, conns)| conns.contains(connection_id)).map(|(qid, _)| *qid).collect()
+    pub fn get_queries_for_connection(&self, connection_id: u64) -> Vec<QueryId> {
+        self.query_connections.iter().filter(|(_, conns)| conns.contains(&connection_id)).map(|(qid, _)| *qid).collect()
     }
 
     /// Get query by id
@@ -240,9 +240,9 @@ mod tests {
     let q3 = index.add_query(300.0, 100, f64::INFINITY);
 
         // Subscribe connections to queries
-    index.subscribe_connection("conn1".to_string(), q1);
-    index.subscribe_connection("conn2".to_string(), q2);
-    index.subscribe_connection("conn3".to_string(), q3);
+    index.subscribe_connection(1u64, q1);
+    index.subscribe_connection(2u64, q2);
+    index.subscribe_connection(3u64, q3);
 
         // Insert doc at value 175.0 - should match q1 and q2 (both haven't seen 100 docs yet)
         let result = index.get_queries_for_change(1u32, None, 175.0, 1);
@@ -262,7 +262,7 @@ mod tests {
         // Verify connections can be retrieved
     let conns = index.get_connections_for_query(q3);
         assert_eq!(conns.len(), 1);
-        assert!(conns.contains(&"conn3".to_string()));
+        assert!(conns.contains(&3u64));
     }
 
     #[test]

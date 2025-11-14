@@ -20,7 +20,7 @@ pub type NotificationSender = mpsc::UnboundedSender<Notification>;
 
 /// Registry of active WebSocket connections
 pub struct ConnectionRegistry {
-    connections: RwLock<HashMap<String, NotificationSender>>,
+    connections: RwLock<HashMap<u64, NotificationSender>>,
 }
 
 impl ConnectionRegistry {
@@ -31,27 +31,27 @@ impl ConnectionRegistry {
     }
 
     /// Register a new connection
-    pub async fn register(&self, connection_id: String, sender: NotificationSender) {
+    pub async fn register(&self, connection_id: u64, sender: NotificationSender) {
         let mut conns = self.connections.write().await;
         conns.insert(connection_id, sender);
     }
 
     /// Unregister a connection
-    pub async fn unregister(&self, connection_id: &str) {
+    pub async fn unregister(&self, connection_id: u64) {
         let mut conns = self.connections.write().await;
-        conns.remove(connection_id);
+        conns.remove(&connection_id);
     }
 
     /// Send notification to a specific connection
-    pub async fn notify(&self, connection_id: &str, notification: Notification) {
+    pub async fn notify(&self, connection_id: u64, notification: Notification) {
         let conns = self.connections.read().await;
-        if let Some(sender) = conns.get(connection_id) {
+        if let Some(sender) = conns.get(&connection_id) {
             let _ = sender.send(notification);
         }
     }
 
     /// Send notification to multiple connections
-    pub async fn notify_many(&self, connection_ids: &[String], notification: Notification) {
+    pub async fn notify_many(&self, connection_ids: &[u64], notification: Notification) {
         let conns = self.connections.read().await;
         for conn_id in connection_ids {
             if let Some(sender) = conns.get(conn_id) {
