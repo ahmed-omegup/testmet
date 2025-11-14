@@ -4,12 +4,18 @@ use tokio::sync::{RwLock, mpsc};
 use serde::{Serialize};
 
 #[derive(Debug, Clone, Serialize)]
+pub struct DocState {
+    pub score: Option<i32>,
+    pub timestamp: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
 pub enum Notification {
     #[serde(rename = "added")]
     Added { id: u32, score: i32, timestamp: i32 },
     #[serde(rename = "updated")]
-    Updated { id: u32, score: i32, timestamp: i32 },
+    Updated { id: u32, old: DocState, new: DocState },
     #[serde(rename = "removed")]
     Removed { id: u32 },
 }

@@ -4,7 +4,7 @@ use tokio::sync::RwLock;
 use tracing::{info, error, warn};
 use crate::btree_index::RangeQueryIndex;
 use crate::storage::SubscriptionStore;
-use crate::connection_registry::{ConnectionRegistry, Notification};
+use crate::connection_registry::{ConnectionRegistry, Notification, DocState};
 use crate::retrieval_job::RetrievalJobIndex;
 use crate::doc_index::DocIndex;
 use std::collections::HashSet;
@@ -481,7 +481,11 @@ async fn handle_update(
             let notification = Notification::Removed { id };
             registry.notify(conn, notification).await;
         } else if after_count > 0 {
-            let notification = Notification::Updated { id, score: new_score, timestamp: new_timestamp.unwrap_or(0) };
+            let notification = Notification::Updated {
+                id,
+                old: DocState { score: old_score, timestamp: None },
+                new: DocState { score: Some(new_score), timestamp: new_timestamp },
+            };
             registry.notify(conn, notification).await;
         }
     }
@@ -557,7 +561,11 @@ async fn timestamp_only_update(
     for query_id in query_ids {
         let conns = { let index = range_index.read().await; index.get_connections_for_query(query_id) };
         for conn_id in conns {
-            let notification = Notification::Updated { id, score: 0, timestamp };
+            let notification = Notification::Updated {
+                id,
+                old: DocState { score: None, timestamp: None },
+                new: DocState { score: None, timestamp: Some(timestamp) },
+            };
             registry.notify(conn_id, notification).await;
         }
     }
