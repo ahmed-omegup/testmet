@@ -117,3 +117,8 @@ Acceptance Criteria (Future):
 - Spec groundwork: decisions, change events, top-K design — complete.
 - Phase 1: Pending (next to implement).
 - Phase 2: Pending design-ready. Sharding/delta batching marked as optional, to be enabled upon contention.
+
+## Status Update (2025-11-15)
+- Notifications are connection-centric and include full old/new DocState as agreed.
+- Query limits on WebSocket default to `u32::MAX`; no proactive hole-filling yet.
+- Hole-filling remains planned in Phase 2; current behavior: deletions reduce counts and emit `removed`, replacements are not fetched proactively.

@@ -195,6 +195,43 @@ impl DocIndex {
         let rmin_exclusive = if min == i32::MIN { 0 } else { self.rank(min - 1) };
         rmax - rmin_exclusive
     }
+
+    /// Iterate documents with score in [min, max] in ascending order, skipping `skip` ids, up to `limit` items.
+    pub fn iter_range(&self, min: i32, max: i32, skip: &std::collections::HashSet<u32>, limit: usize) -> Vec<(u32, i32)> {
+        let mut out: Vec<(u32, i32)> = Vec::new();
+        self.collect_in_range(self.root, min, max, skip, limit, &mut out);
+        out
+    }
+
+    fn collect_in_range(
+        &self,
+        node: NodeId,
+        min: i32,
+        max: i32,
+        skip: &std::collections::HashSet<u32>,
+        limit: usize,
+        out: &mut Vec<(u32, i32)>,
+    ) {
+        if node == NULL || out.len() >= limit { return; }
+        let score = self.score[node as usize];
+        let doc_id = self.doc_id[node as usize];
+        // Traverse left if there may be values >= min
+        if score > min {
+            let left = self.left[node as usize];
+            self.collect_in_range(left, min, max, skip, limit, out);
+            if out.len() >= limit { return; }
+        }
+        if score >= min && score <= max {
+            if !skip.contains(&doc_id) {
+                out.push((doc_id, score));
+                if out.len() >= limit { return; }
+            }
+        }
+        if score < max {
+            let right = self.right[node as usize];
+            self.collect_in_range(right, min, max, skip, limit, out);
+        }
+    }
 }
 
 #[cfg(test)]

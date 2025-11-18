@@ -20,11 +20,15 @@ enum ClientMessage {
     Subscribe {
         min_score: i32,
         max_score: i32,
+        #[serde(default)]
+        limit: Option<u32>,
     },
     #[serde(rename = "unsubscribe")]
     Unsubscribe {
         min_score: i32,
         max_score: i32,
+        #[serde(default)]
+        limit: Option<u32>,
     },
     #[serde(rename = "waitForDoc")]
     WaitForDoc {
@@ -150,11 +154,13 @@ async fn handle_connection(
                         ClientMessage::Subscribe {
                             min_score,
                             max_score,
+                                limit,
                         } => {
                             handle_subscribe(
                                 connection_id,
                                 min_score,
                                 max_score,
+                                   limit,
                                 &range_index,
                                 &storage,
                                 &pool,
@@ -162,8 +168,8 @@ async fn handle_connection(
                             )
                             .await?;
                         }
-                        ClientMessage::Unsubscribe { min_score, max_score } => {
-                            handle_unsubscribe(connection_id, min_score, max_score, &range_index, &storage, &tx).await?;
+                        ClientMessage::Unsubscribe { min_score, max_score, limit } => {
+                            handle_unsubscribe(connection_id, min_score, max_score, limit, &range_index, &storage, &tx).await?;
                         }
                         ClientMessage::WaitForDoc { doc_id, query_id } => {
                             retrieval_jobs.register(doc_id, query_id).await;
@@ -228,6 +234,7 @@ async fn handle_subscribe(
     connection_id: u64,
     min_score: i32,
     max_score: i32,
+    limit: Option<u32>,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     storage: &Arc<SubscriptionStore>,
     pool: &Arc<deadpool_postgres::Pool>,
@@ -237,9 +244,10 @@ async fn handle_subscribe(
     info!("Subscribe: conn={} range=[{}, {}]", connection_id, min_score, max_score);
 
     // Add to index and subscribe connection
+    let desired = limit.unwrap_or(u32::MAX) as i64;
     let qid = {
         let mut index = range_index.write().await;
-        let internal = index.add_query(min_score as f64, u32::MAX as i64, max_score as f64);
+        let internal = index.add_query(min_score as f64, desired, max_score as f64);
         index.subscribe_connection(connection_id, internal);
         internal
     };
@@ -254,13 +262,25 @@ async fn handle_subscribe(
     };
 
     // Query documents in range
-    let query = "SELECT id, score FROM docs WHERE score >= $1 AND score <= $2";
-    let rows = match client.query(query, &[&min_score, &max_score]).await {
-        Ok(r) => r,
-        Err(e) => {
-            error!("Failed to query documents: {:?}", e);
-            error!("Query was: {} with params [{}, {}]", query, min_score, max_score);
-            return Err(format!("Database query error: {:?}", e).into());
+    let rows = if desired >= i64::MAX / 2 {
+        let query = "SELECT id, score FROM docs WHERE score >= $1 AND score <= $2";
+        match client.query(query, &[&min_score, &max_score]).await {
+            Ok(r) => r,
+            Err(e) => {
+                error!("Failed to query documents: {:?}", e);
+                error!("Query was: {} with params [{}, {}]", query, min_score, max_score);
+                return Err(format!("Database query error: {:?}", e).into());
+            }
+        }
+    } else {
+        let query = "SELECT id, score FROM docs WHERE score >= $1 AND score <= $2 ORDER BY score ASC LIMIT $3";
+        match client.query(query, &[&min_score, &max_score, &(desired as i64)]).await {
+            Ok(r) => r,
+            Err(e) => {
+                error!("Failed to query documents: {:?}", e);
+                error!("Query was: {} with params [{}, {}, {}]", query, min_score, max_score, desired);
+                return Err(format!("Database query error: {:?}", e).into());
+            }
         }
     };
     
@@ -284,13 +304,15 @@ async fn handle_unsubscribe(
     connection_id: u64,
     min_score: i32,
     max_score: i32,
+    limit: Option<u32>,
     range_index: &Arc<RwLock<RangeQueryIndex>>,
     storage: &Arc<SubscriptionStore>,
     sender: &mpsc::UnboundedSender<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Unsubscribe: conn={} range=[{}, {}]", connection_id, min_score, max_score);
     let mut index = range_index.write().await;
-    if let Some(qid) = index.lookup_range_query_id(min_score as f64, u32::MAX as i64, max_score as f64) {
+    let desired = limit.unwrap_or(u32::MAX) as i64;
+    if let Some(qid) = index.lookup_range_query_id(min_score as f64, desired, max_score as f64) {
         index.unsubscribe_connection(connection_id, qid);
         // Cleanup LMDB entries for this (connection, query)
         let _ = storage.remove_query_for_connection(connection_id, qid);

@@ -9,6 +9,7 @@ This directory captures specification-oriented development artifacts for the rea
 - memory-and-scaling.md – Memory model, sizing estimates, optimization levers
 - implementation-roadmap.md – Phased plan to evolve toward full change-aware top-K subscriptions
 - glossary-and-status.md – Central glossary, acceptance criteria, risks, and progress snapshot for future sessions
+ - working-instructions.md – Persistent user instructions and working agreements
 
 ## Goals
 1. Persist architectural intent and rationale.

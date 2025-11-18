@@ -458,6 +458,7 @@ async fn handle_update(
     // Union of connections involved
     let all_conns: HashSet<u64> = before_per_conn.keys().cloned().chain(after_per_conn.keys().cloned()).collect();
 
+    let mut refill_list: Vec<(u64, u32)> = Vec::new();
     for conn in all_conns {
         let before_set = before_per_conn.get(&conn).cloned().unwrap_or_default();
         let after_set = after_per_conn.get(&conn).cloned().unwrap_or_default();
@@ -488,11 +489,66 @@ async fn handle_update(
             };
             registry.notify(conn, notification).await;
         }
+
+        // Collect removals for proactive hole-filling after doc_index is updated.
+        for q in removed_qs { refill_list.push((conn, q)); }
     }
     // Update doc index score
     {
         let mut di = doc_index.write().await;
         if let Some(old) = old_score { di.update(id, old, new_score); } else { di.insert(id, new_score); }
+    }
+
+    // Run refills now that doc_index reflects the new score
+    for (conn, q) in refill_list { refill_deficit(conn, q, range_index, storage, doc_index, registry).await; }
+}
+
+/// Refill a (connection, query) pair up to its configured num_docs using DocIndex as source.
+async fn refill_deficit(
+    connection_id: u64,
+    query_id: u32,
+    range_index: &Arc<RwLock<RangeQueryIndex>>,
+    storage: &Arc<SubscriptionStore>,
+    doc_index: &Arc<RwLock<DocIndex>>,
+    registry: &Arc<ConnectionRegistry>,
+) {
+    // Fetch query definition
+    let (min_f, max_f, limit_i64) = {
+        let idx = range_index.read().await;
+        if let Some(q) = idx.get_query(query_id) {
+            (q.min_value, q.max_value, q.num_docs)
+        } else {
+            return;
+        }
+    };
+    if limit_i64 >= i64::MAX / 2 { return; } // treat "infinite" as no refill needed
+    if limit_i64 <= 0 { return; }
+    let limit = limit_i64 as usize;
+
+    // Current docs for this (conn, query)
+    let current = match storage.get_documents_for_query(connection_id, query_id) {
+        Ok(v) => v,
+        Err(_) => Vec::new(),
+    };
+    if current.len() >= limit { return; }
+    let deficit = limit - current.len();
+
+    // Build skip set
+    let skip: std::collections::HashSet<u32> = current.into_iter().collect();
+    // Compute numeric bounds
+    let min = if min_f <= i32::MIN as f64 { i32::MIN } else { min_f as i32 };
+    let max = if max_f.is_infinite() && max_f.is_sign_positive() { i32::MAX } else { max_f as i32 };
+
+    // Get candidates from DocIndex
+    let candidates = {
+        let di = doc_index.read().await;
+        di.iter_range(min, max, &skip, deficit)
+    };
+
+    for (doc_id, score) in candidates {
+        let _ = storage.add_document_to_connection(connection_id, query_id, doc_id);
+        let notification = Notification::Added { id: doc_id, new: DocState { score: Some(score), timestamp: None } };
+        registry.notify(connection_id, notification).await;
     }
 }
 
@@ -516,6 +572,7 @@ async fn handle_delete(
             let _ = storage.handle_deletion(conn_id, *qid, id);
             let notification = Notification::Removed { id, old: DocState { score: Some(old_score), timestamp: None } };
             registry.notify(conn_id, notification).await;
+            refill_deficit(conn_id, *qid, range_index, storage, doc_index, registry).await;
         }
     }
     {
@@ -541,6 +598,7 @@ async fn handle_delete_no_value(
             let _ = storage.handle_deletion(conn_id, *qid, id);
             let notification = Notification::Removed { id, old: DocState { score: None, timestamp: None } };
             registry.notify(conn_id, notification).await;
+            refill_deficit(conn_id, *qid, range_index, storage, doc_index, registry).await;
         }
     }
     {
