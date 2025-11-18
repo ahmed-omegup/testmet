@@ -1,8 +1,5 @@
 import { RETHINKDB_HOST, POSTGRES_URL, BTREE_URL, CUSTOMERS, INIT_TIME, DURATION, fatal } from "./lib/commons.js";
-import { seedMongoDB, spawnCustomersMeteor, periodicUpdatesMongoDB } from "./lib/test-meteor.js";
 import { seedRethinkDB, spawnCustomersRethinkDB, periodicUpdatesRethinkDB } from "./lib/test-rethink.js";
-import { seedElectric, spawnCustomersElectric, periodicUpdatesElectric } from "./lib/test-electric.js";
-import { seedBTree, spawnCustomersBTree, periodicUpdatesBTree } from "./lib/test-btree.js";
 
 // Detect which database we're using
 const USE_BTREE = BTREE_URL ? true : false;
@@ -36,6 +33,7 @@ const USE_ELECTRIC = POSTGRES_URL && !USE_RETHINKDB && !USE_BTREE ? true : false
           ? await spawnCustomersRethinkDB(CUSTOMERS, INIT_TIME)
           : await spawnCustomersMeteor(CUSTOMERS, INIT_TIME)));
     
+    const start = new Date().getTime();
     // Step 3: Run periodic updates
     if (USE_BTREE) {
       await periodicUpdatesBTree(DURATION);
@@ -64,7 +62,7 @@ const USE_ELECTRIC = POSTGRES_URL && !USE_RETHINKDB && !USE_BTREE ? true : false
       const res = await Promise.race([Promise.all(customers), timeout]);
       clearInterval(interval);
       console.log("\n=== BENCHMARK COMPLETE ===");
-      console.log(`Successfully completed for ${res.length} customers`);
+      console.log(`Successfully completed for ${res.length} customers`, Math.round((new Date().getTime() - start) / 100) / 10);
     } catch (err) {
       clearInterval(interval);
       if (err.message.includes('Timeout')) {

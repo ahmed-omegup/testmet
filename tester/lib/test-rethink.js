@@ -158,60 +158,61 @@ export async function periodicUpdatesRethinkDB(duration) {
     conn = await r.connect({ host: RETHINKDB_HOST, port: RETHINKDB_PORT });
     const table = r.db('benchmark').table('docs');
     
+    // Percentages chosen empirically; keeping same ratios but executing in bulk.
     const updatesPerTick = Math.floor(0.05 * N); // 5% updates
     const insertsPerTick = Math.floor(0.01 * N); // 1% inserts
     const deletesPerTick = Math.floor(0.01 * N); // 1% deletes
 
-    console.log('******', updatesPerTick + insertsPerTick + deletesPerTick)
-    
-    const tickStart = Date.now();
+    // NOTE: Previous implementation launched thousands of individual queries per tick.
+    // This version performs: 1 bulk upsert + 1 bulk insert + 1 bulk delete (when non-empty),
+    // drastically reducing driver round-trips and server overhead.
     for (let tick = 0; tick < duration; tick++) {
-      const operations = [];
-      
-      // Updates
+      const tickStart = Date.now();
+
+      // Build bulk update docs (will be sent via insert conflict: 'update')
+      const updateDocs = [];
       for (let i = 0; i < updatesPerTick; i++) {
         const id = `doc_${Math.floor(rand() * N)}`;
-        operations.push(
-          table.get(id).update({
-            score: Math.floor(rand() * RANGE),
-            timestamp: tick
-          }).run(conn)
-        );
-      }
-      
-      // Inserts
-      const inserts = [];
-      for (let i = 0; i < insertsPerTick; i++) {
-        const id = `doc_${N + tick * insertsPerTick + i}`;
-        inserts.push({
-          id: id,
-          name: id,
-          score: Math.floor(rand() * RANGE),
-          timestamp: tick,
-        });
-      }
-      if (inserts.length) {
-        operations.push(table.insert(inserts).run(conn));
-      }
-      
-      // Deletes
-      for (let i = 0; i < deletesPerTick; i++) {
-        const id = `doc_${Math.floor(rand() * N)}`;
-        operations.push(table.get(id).delete().run(conn));
+        updateDocs.push({ id, score: Math.floor(rand() * RANGE), timestamp: tick });
       }
 
-      await Promise.all(operations).catch(err => fatal(`Operations failed at tick ${tick}`, err));
-      
-      const elapsed = Date.now() - tickStart;
-      console.log(`Tick ${tick + 1}/${duration}: ${operations.length} operations (${Math.round(elapsed/100)/10}s)`);
-      
-      // Sleep until next tick
-      const remaining = 1000 - elapsed;
-      if (remaining > 0) {
-        await sleep(0.01);
+      // Build inserts
+      const insertDocs = [];
+      for (let i = 0; i < insertsPerTick; i++) {
+        const id = `doc_${N + tick * insertsPerTick + i}`;
+        insertDocs.push({ id, name: id, score: Math.floor(rand() * RANGE), timestamp: tick });
       }
+
+      // Build deletions
+      const deleteIds = [];
+      for (let i = 0; i < deletesPerTick; i++) {
+        deleteIds.push(`doc_${Math.floor(rand() * N)}`);
+      }
+
+      // Execute bulk operations sequentially (server can parallelize internally);
+      // ordering preserves logical causality for a given tick.
+      try {
+        if (updateDocs.length) {
+          await table.insert(updateDocs, { conflict: 'update' }).run(conn);
+        }
+        if (insertDocs.length) {
+          await table.insert(insertDocs).run(conn);
+        }
+        if (deleteIds.length) {
+          // Primary key deletions in a single query
+          await table.getAll(...deleteIds).delete().run(conn);
+        }
+      } catch (err) {
+        fatal(`Bulk operations failed at tick ${tick}`, err);
+      }
+
+      const opsCount = updateDocs.length + insertDocs.length + deleteIds.length;
+      const elapsed = Date.now() - tickStart;
+      console.log(`Tick ${tick + 1}/${duration}: ${opsCount} ops in ${(elapsed/1000).toFixed(3)}s`);
     }
-    await table.update({timestamp: -1}).run(conn); // Clean up after updates
+
+    // Mark remaining docs with timestamp -1 for cleanup (single table-wide update)
+    await table.update({ timestamp: -1 }).run(conn); // Clean up after updates
   } catch (err) {
     fatal("Periodic updates failed", err);
   } finally {
