@@ -18,12 +18,6 @@
 
 type Nullable<T> = T | null;
 
-// Ambient declarations to silence TypeScript when not using @types/node
-// (Safe: runtime checks guard actual usage.)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-declare const require: any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-declare const module: any;
 
 // -------------------- Docs treap (dynamic prefix sums) --------------------
 let count = 0;

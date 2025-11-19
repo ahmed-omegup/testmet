@@ -6,6 +6,7 @@ mod connection_registry;
 mod retrieval_job;
 // doc_index already declared below; remove duplicate (kept single declaration)
 mod doc_index;
+mod limit_stream;
 
 use btree_index::RangeQueryIndex;
 use storage::SubscriptionStore;
