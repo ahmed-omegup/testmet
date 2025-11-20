@@ -1,10 +1,11 @@
 use std::hash::Hash;
 
-/// Change events for documents flowing into the limit layer.
+/// Change event for a document: insert/update/delete determined by old/new presence.
 #[derive(Clone, Debug)]
-pub enum DocChange<DocId, DocState> {
-    Upsert { id: DocId, new: DocState },
-    Remove { id: DocId },
+pub struct DocChange<DocId, DocState> {
+    pub id: DocId,
+    pub old: Option<DocState>,
+    pub new: Option<DocState>,
 }
 
 /// Query lifecycle events (register / update / remove).
@@ -20,7 +21,7 @@ pub struct LimitEvent<DocId, QueryId> {
     pub doc_id: DocId,
     pub added_to: Vec<QueryId>,
     pub removed_from: Vec<QueryId>,
-    pub evictions: Vec<QueryId>,
+    pub evictions: Vec<(QueryId, DocId)>,
 }
 
 impl<DocId: Clone, QueryId> LimitEvent<DocId, QueryId> {
@@ -51,8 +52,8 @@ impl<DocId: Eq + Hash + Clone, QueryId: Clone> EventCollector<DocId, QueryId> {
         self.entry(doc_id).removed_from.push(query_id);
     }
 
-    pub fn evicted(&mut self, doc_id: DocId, query_id: QueryId) {
-        self.entry(doc_id).evictions.push(query_id);
+    pub fn eviction_caused(&mut self, trigger_doc: DocId, query_id: QueryId, evicted_doc: DocId) {
+        self.entry(trigger_doc).evictions.push((query_id, evicted_doc));
     }
 
     pub fn finish(self) -> Vec<LimitEvent<DocId, QueryId>> {

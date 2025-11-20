@@ -12,7 +12,7 @@ pub trait LimitIndex: Send + Sync + 'static {
     type QueryId: Clone + Send + Sync + 'static;
     type QuerySpec: Clone + Send + Sync + 'static;
 
-    fn apply_change(&self, change: DocChange<Self::DocId, Self::DocState>) -> Vec<LimitEvent<Self::DocId, Self::QueryId>>;
+    fn apply_change(&self, change: &DocChange<Self::DocId, Self::DocState>) -> Vec<LimitEvent<Self::DocId, Self::QueryId>>;
     fn apply_query(&self, query: QueryRequest<Self::QueryId, Self::QuerySpec>) -> Vec<LimitEvent<Self::DocId, Self::QueryId>>;
 }
 
@@ -40,7 +40,7 @@ where
         let mut combined = futures::stream::select(change_stream, query_stream);
         while let Some(item) = combined.next().await {
             let emitted = match item {
-                StreamInput::Change(evt) => index.apply_change(evt),
+                StreamInput::Change(evt) => index.apply_change(&evt),
                 StreamInput::Query(evt) => index.apply_query(evt),
             };
             for event in emitted {
