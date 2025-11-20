@@ -13,10 +13,10 @@ It emits a third stream describing how each document moves across queries using 
 cargo test
 ```
 
-The tests exercise the in-memory `RangeLimitIndex`, showing how the operator reacts to document churn, query updates, and strict-cap evictions. The core pieces live in `src/lib.rs`:
+The tests exercise the in-memory `RangeLimitIndex`, showing how the operator reacts to document churn, query updates, and strict-cap evictions. The crate stays tidy by splitting responsibilities across three small modules:
 
-- `LimitIndex` trait abstracts the document index / membership logic
-- `spawn_limit_layer` wires change + query streams into an output receiver
-- `RangeLimitIndex` is a thread-safe reference implementation using sharded maps
+- `src/events.rs` – lightweight data types for the three streams plus an event collector helper
+- `src/limit_layer.rs` – `LimitIndex` trait and the `spawn_limit_layer` mux
+- `src/range_index.rs` – the default thread-safe implementation (swap this with another tree by re-implementing `LimitIndex`)
 
 Feel free to swap `RangeLimitIndex` with any structure that implements `LimitIndex` (e.g., Treap, B-Tree) to experiment with different indexing strategies.
