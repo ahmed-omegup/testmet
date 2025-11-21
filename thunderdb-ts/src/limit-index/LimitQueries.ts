@@ -3,7 +3,7 @@ import { DocsTreap } from "./docs-index.ts/docs-index.treap";
 import { QueriesTreap } from "./queries-index/queries-index.treap";
 
 
-interface QueryInfo { id: QueryId; a: number; k: bigint; max: number; }
+interface QueryInfo { id: QueryId; a: number; k: bigint; max: number; currentMatches: bigint; }
 
 export class DynamicRangeQueries {
     private docs = new DocsTreap();
@@ -14,14 +14,18 @@ export class DynamicRangeQueries {
     private idToBaseScore: Map<QueryId, bigint> = new Map();
 
     addDocument(value: number, id: DocId): void {
+        const affected = this.collectQueriesForValue(value);
         this.docs.add(value, id);
         // All queries with a > value increase their score by delta
         this.queries.rangeAddKeysGreaterThan(value, 1n);
+        affected.forEach(q => q.currentMatches += 1n);
     }
     removeDocument(value: number, id: DocId): void {
+        const affected = this.collectQueriesForValue(value);
         this.docs.remove(value, id);
         // All queries with a > value increase their score by delta
         this.queries.rangeAddKeysGreaterThan(value, -1n);
+        affected.forEach(q => q.currentMatches = q.currentMatches > 0n ? q.currentMatches - 1n : 0n);
     }
 
     // Add a query (a=minValue, k=numDocs, max=upper bound on value). Returns query id.
@@ -34,7 +38,8 @@ export class DynamicRangeQueries {
         // We can compute accumulated add at position a by walking the treap without modifying it.
         const baseScore = this.getBaseScoreAtKeyForValue(a, effectiveScore);
         this.idToBaseScore.set(id, baseScore);
-        this.idToQuery.set(id, { id, a, k, max });
+        const currentMatches = this.countDocsInRange(a, max);
+        this.idToQuery.set(id, { id, a, k, max, currentMatches });
         return id;
     }
 
@@ -68,8 +73,14 @@ export class DynamicRangeQueries {
     // Retrieve all queries (ids) that currently cover value v.
     // If you want full (a,k), map over ids via getQueryInfo.
     getQueriesCovering(v: number): QueryId[] {
+        return this.collectQueriesForValue(v).map(q => q.id);
+    }
+
+    getQueryInfo(id: QueryId): QueryInfo | undefined { return this.idToQuery.get(id); }
+
+    private collectQueriesForValue(v: number): QueryInfo[] {
         const cutoff = this.docs.rank(v);
-        const out: QueryId[] = [];
+        const out: QueryInfo[] = [];
         this.queries.collectForValue(
             v,
             cutoff,
@@ -77,11 +88,19 @@ export class DynamicRangeQueries {
                 const qi = this.idToQuery.get(id);
                 return !!qi && qi.max >= v;
             },
-            (id) => out.push(id)
+            (id) => {
+                const qi = this.idToQuery.get(id);
+                if (qi) out.push(qi);
+            }
         );
         return out;
     }
 
-    getQueryInfo(id: QueryId): QueryInfo | undefined { return this.idToQuery.get(id); }
+    private countDocsInRange(min: number, max: number): bigint {
+        const upper = this.docs.countAtMost(max);
+        const lower = this.docs.rank(min);
+        const diff = upper - lower;
+        return diff < 0n ? 0n : diff;
+    }
 }
 

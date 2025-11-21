@@ -102,6 +102,21 @@ export class DocsTreap implements DocsIndex {
         }
         return res;
     }
+
+    // prefix sum of scores less than or equal to score
+    countAtMost(score: Score): bigint {
+        let cur = this.root;
+        let res = 0n;
+        while (cur) {
+            if (score < cur.score) {
+                cur = cur.l;
+            } else {
+                res += DocsTreap.sum(cur.l) + cur.count();
+                cur = cur.r;
+            }
+        }
+        return res;
+    }
     getAtRank(rank: bigint): Nullable<[score: Score, ids: Set<DocId>, position: bigint]> {
         let cur = this.root;;
         let r = rank;
