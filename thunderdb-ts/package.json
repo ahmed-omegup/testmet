@@ -1,11 +1,12 @@
 {
   "name": "thunderdb-ts",
   "version": "0.1.0",
-  "type": "module",
   "scripts": {
-    "test": "node --test src/test.js"
+    "test": "node --require ts-node/register src/test.ts"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0"
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.0"
   }
 }

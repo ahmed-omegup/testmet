@@ -462,7 +462,7 @@ console.log('After doc at 2, covering 2:', dyn.getQueriesCovering(2).map(id => d
 console.log('After doc at 2, covering 6:', dyn.getQueriesCovering(6).map(id => dyn.getQueryInfo(id)));
 
 console.log(new Date)
-dyn.addQuery(1000000, 20000000n)
+dyn.addQuery(1000000, 3n)
 for(let i = 0; i < 300000; i++) {
 	dyn.addQuery(10000000+i, 1n)
 }

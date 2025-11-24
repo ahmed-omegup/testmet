@@ -1,9 +1,11 @@
-import { DocId, QueryId } from "./types";
+import { DocId, QueryId, Score } from "./types";
 import { DocsTreap } from "./docs-index.ts/docs-index.treap";
 import { QueriesTreap } from "./queries-index/queries-index.treap";
 
 
-interface QueryInfo { id: QueryId; a: number; k: bigint; max: number; currentMatches: bigint; }
+interface QueryInfo { id: QueryId; a: Score; k: bigint; max: Score; currentMatches: bigint; }
+
+const min = (a: bigint, b: bigint) => a < b ? a : b;
 
 export class DynamicRangeQueries {
     private docs = new DocsTreap();
@@ -13,14 +15,14 @@ export class DynamicRangeQueries {
     // baseScore stored at insertion for fast removal
     private idToBaseScore: Map<QueryId, bigint> = new Map();
 
-    addDocument(value: number, id: DocId): void {
+    addDocument(value: Score, id: DocId): void {
         const affected = this.collectQueriesForValue(value);
         this.docs.add(value, id);
         // All queries with a > value increase their score by delta
         this.queries.rangeAddKeysGreaterThan(value, 1n);
         affected.forEach(q => q.currentMatches += 1n);
     }
-    removeDocument(value: number, id: DocId): void {
+    removeDocument(value: Score, id: DocId): void {
         const affected = this.collectQueriesForValue(value);
         this.docs.remove(value, id);
         // All queries with a > value increase their score by delta
@@ -29,7 +31,7 @@ export class DynamicRangeQueries {
     }
 
     // Add a query (a=minValue, k=numDocs, max=upper bound on value). Returns query id.
-    addQuery(a: number, k: bigint, max = Number.POSITIVE_INFINITY): QueryId {
+    addQuery(a: Score, k: bigint, max = Number.POSITIVE_INFINITY): QueryId {
         const id = this.nextId++;
         const effectiveScore = this.docs.rank(a) + k;
         this.queries.insert(a, id, effectiveScore, max);
@@ -38,13 +40,13 @@ export class DynamicRangeQueries {
         // We can compute accumulated add at position a by walking the treap without modifying it.
         const baseScore = this.getBaseScoreAtKeyForValue(a, effectiveScore);
         this.idToBaseScore.set(id, baseScore);
-        const currentMatches = this.countDocsInRange(a, max);
+        const currentMatches = min(this.countDocsInRange(a, max), k);
         this.idToQuery.set(id, { id, a, k, max, currentMatches });
         return id;
     }
 
     // Internal: compute baseScore = effectiveScore - accumulatedAddAtPosition(a)
-    private getBaseScoreAtKeyForValue(a: number, effectiveScore: bigint): bigint {
+    private getBaseScoreAtKeyForValue(a: Score, effectiveScore: bigint): bigint {
         let n = this.queries.root;
         let accAdd = 0n;
         while (n) {
@@ -72,13 +74,13 @@ export class DynamicRangeQueries {
 
     // Retrieve all queries (ids) that currently cover value v.
     // If you want full (a,k), map over ids via getQueryInfo.
-    getQueriesCovering(v: number): QueryId[] {
+    getQueriesCovering(v: Score): QueryId[] {
         return this.collectQueriesForValue(v).map(q => q.id);
     }
 
     getQueryInfo(id: QueryId): QueryInfo | undefined { return this.idToQuery.get(id); }
 
-    private collectQueriesForValue(v: number): QueryInfo[] {
+    private collectQueriesForValue(v: Score): QueryInfo[] {
         const cutoff = this.docs.rank(v);
         const out: QueryInfo[] = [];
         this.queries.collectForValue(
@@ -96,7 +98,7 @@ export class DynamicRangeQueries {
         return out;
     }
 
-    private countDocsInRange(min: number, max: number): bigint {
+    private countDocsInRange(min: Score, max: Score): bigint {
         const upper = this.docs.countAtMost(max);
         const lower = this.docs.rank(min);
         const diff = upper - lower;
