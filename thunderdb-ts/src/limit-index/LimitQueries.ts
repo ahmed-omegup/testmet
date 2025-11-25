@@ -5,6 +5,11 @@ import { QueriesTreap } from "./queries-index/queries-index.treap";
 
 interface QueryInfo { id: QueryId; a: Score; k: bigint; max: Score; currentMatches: bigint; }
 
+interface AddResult {
+    matched: QueryId[];
+    evicted: Array<[QueryId, DocId]>;
+}
+
 const min = (a: bigint, b: bigint) => a < b ? a : b;
 
 export class DynamicRangeQueries {
@@ -15,19 +20,34 @@ export class DynamicRangeQueries {
     // baseScore stored at insertion for fast removal
     private idToBaseScore: Map<QueryId, bigint> = new Map();
 
-    addDocument(value: Score, id: DocId): void {
+    addDocument(value: Score, id: DocId): AddResult {
         const affected = this.collectQueriesForValue(value);
         this.docs.add(value, id);
-        // All queries with a > value increase their score by delta
         this.queries.rangeAddKeysGreaterThan(value, 1n);
-        affected.forEach(q => q.currentMatches += 1n);
+
+        const matched: QueryId[] = [];
+        const evicted: Array<[QueryId, DocId]> = [];
+
+        for (const q of affected) {
+            q.currentMatches += 1n;
+            if (q.currentMatches > q.k) {
+                const { kept, evictedDoc } = this.resolveOverflow(q, id);
+                if (kept) matched.push(q.id);
+                if (evictedDoc) evicted.push([q.id, evictedDoc]);
+            } else {
+                matched.push(q.id);
+            }
+        }
+
+        return { matched, evicted };
     }
-    removeDocument(value: Score, id: DocId): void {
+
+    removeDocument(value: Score, id: DocId): QueryId[] {
         const affected = this.collectQueriesForValue(value);
         this.docs.remove(value, id);
-        // All queries with a > value increase their score by delta
         this.queries.rangeAddKeysGreaterThan(value, -1n);
         affected.forEach(q => q.currentMatches = q.currentMatches > 0n ? q.currentMatches - 1n : 0n);
+        return affected.map(q => q.id);
     }
 
     // Add a query (a=minValue, k=numDocs, max=upper bound on value). Returns query id.
@@ -103,6 +123,43 @@ export class DynamicRangeQueries {
         const lower = this.docs.rank(min);
         const diff = upper - lower;
         return diff < 0n ? 0n : diff;
+    }
+
+    private resolveOverflow(q: QueryInfo, insertedId: DocId): { kept: boolean; evictedDoc: DocId | null } {
+        const startRank = this.docs.rank(q.a);
+        let targetRank = startRank + q.k;
+        while (true) {
+            const tuple = this.docs.getAtRank(targetRank);
+            if (!tuple) {
+                q.currentMatches = q.k;
+                return { kept: true, evictedDoc: null };
+            }
+            const [score, ids, position] = tuple;
+            if (score > q.max) {
+                q.currentMatches = q.k;
+                return { kept: true, evictedDoc: null };
+            }
+            const evictedId = this.pickDocId(ids, position);
+            if (!evictedId) {
+                q.currentMatches = q.k;
+                return { kept: true, evictedDoc: null };
+            }
+            if (evictedId === insertedId) {
+                q.currentMatches -= 1n;
+                return { kept: false, evictedDoc: null };
+            }
+            q.currentMatches = q.k;
+            return { kept: true, evictedDoc: evictedId };
+        }
+    }
+
+    private pickDocId(ids: Set<DocId>, position: bigint): DocId | null {
+        let idx = 0n;
+        for (const docId of ids) {
+            if (idx === position) return docId;
+            idx += 1n;
+        }
+        return ids.values().next().value ?? null;
     }
 }
 

@@ -21,5 +21,6 @@ export interface LimitMatchEvent<DocState extends DocStateDom> {
   new: DocState | null;
   matchesOld: QueryId[];
   matchesNew: QueryId[];
+  evictions: Array<[QueryId, DocId]>;
 }
 

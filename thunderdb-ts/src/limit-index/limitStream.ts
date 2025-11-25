@@ -1,4 +1,4 @@
-import { DocStateDom, QuerySpec, LimitMatchEvent, DocChange, Score, QueryId } from './types';
+import { DocStateDom, QuerySpec, LimitMatchEvent, DocChange, Score, QueryId, DocId } from './types';
 import { DynamicRangeQueries } from './LimitQueries';
 
 // Event union the operator consumes
@@ -26,29 +26,43 @@ export async function runLimitStream<DocState extends DocStateDom>(
       }
       case 'doc-change': {
         const { id, old, new: next } = item.change;
+
         const matchesOld: QueryId[] = [];
         const matchesNew: QueryId[] = [];
+        const evictions: Array<[QueryId, DocId]> = [];
 
         if (old) {
-          const score = getScore(old);
-          const covering = queries.getQueriesCovering(score);
-          queries.removeDocument(score, id);
-          covering.forEach(q => matchesOld.push(q));
+          const oldScore = getScore(old);
+          if (next && oldScore === getScore(next)) {
+            const covering = queries.getQueriesCovering(oldScore);
+            emit({
+              docId: id,
+              old,
+              new: next,
+              matchesOld: [...covering],
+              matchesNew: [...covering],
+              evictions: [],
+            });
+            break;
+          }
+          const removed = queries.removeDocument(oldScore, id);
+          matchesOld.push(...removed);
         }
         if (next) {
-          const score = getScore(next);
-          queries.addDocument(score, id);
-          const covering = queries.getQueriesCovering(score);
-          covering.forEach(q => matchesNew.push(q));
+          const newScore = getScore(next);
+          const { matched, evicted } = queries.addDocument(newScore, id);
+          matchesNew.push(...matched);
+          evictions.push(...evicted);
         }
 
-        if (matchesOld.length || matchesNew.length) {
+        if (matchesOld.length || matchesNew.length || evictions.length) {
           emit({
             docId: id,
             old,
             new: next,
             matchesOld,
             matchesNew,
+            evictions,
           });
         }
         break;
@@ -58,6 +72,6 @@ export async function runLimitStream<DocState extends DocStateDom>(
 }
 
 // Helper to build an async iterable from an array (tests / demos)
-export async function *fromArray<DocState extends DocStateDom>(items: StreamItem<DocState>[]): AsyncIterable<StreamItem<DocState>> {
+export async function* fromArray<DocState extends DocStateDom>(items: StreamItem<DocState>[]): AsyncIterable<StreamItem<DocState>> {
   for (const i of items) yield i;
 }

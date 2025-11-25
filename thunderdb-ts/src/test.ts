@@ -25,9 +25,9 @@ async function testBasic() {
     { kind: 'doc-change', change: { id: did(1), old: docState(12), new: null } },
   ]);
   assert(events.length === 3, 'expected 3 emitted events');
-  assert(events[0].matchesOld.length === 0 && events[0].matchesNew.length === 1);
-  assert(events[1].matchesOld.length === 0 && events[1].matchesNew.length === 1);
-  assert(events[2].matchesOld.length === 1 && events[2].matchesNew.length === 0);
+  assert(events[0].matchesOld.length === 0 && events[0].matchesNew.length === 1 && events[0].evictions.length === 0);
+  assert(events[1].matchesOld.length === 0 && events[1].matchesNew.length === 1 && events[1].evictions.length === 0);
+  assert(events[2].matchesOld.length === 1 && events[2].matchesNew.length === 0 && events[2].evictions.length === 0);
 }
 
 // Query limit effect: limit=1, adding second doc should still add but eviction list TBD (currently empty)
@@ -39,12 +39,27 @@ async function testLimitPlaceholder() {
     { kind: 'doc-change', change: { id: did(11), old: null, new: docState(6) } },
   ]);
   assert(events.length === 1, 'expected one event emitted');
-  assert(events[0].matchesNew.length === 1 && events[0].matchesOld.length === 0);
+  assert(events[0].matchesNew.length === 1 && events[0].matchesOld.length === 0 && events[0].evictions.length === 0);
+}
+
+async function testEvictions() {
+  const q: QuerySpec = { minScore: score(0), maxScore: score(100), limit: 1n };
+  const events = await collect([
+    { kind: 'query-add', spec: q },
+    { kind: 'doc-change', change: { id: did(1), old: null, new: docState(5) } },
+    { kind: 'doc-change', change: { id: did(2), old: null, new: docState(3) } },
+  ]);
+  assert(events.length === 2, 'expected two events emitted');
+  const evictionEvent = events[1];
+  assert(evictionEvent.matchesNew.length === 1, 'new doc should match');
+  assert(evictionEvent.evictions.length === 1, 'eviction should be reported');
+  assert(evictionEvent.evictions[0][1] === did(1), 'older doc should be evicted');
 }
 
 async function main() {
   await testBasic();
   await testLimitPlaceholder();
+  await testEvictions();
   console.log('Tests passed');
 }
 
