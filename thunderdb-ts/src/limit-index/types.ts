@@ -15,10 +15,11 @@ export interface QuerySpec {
   limit: bigint;
 }
 
-export interface LimitEvent {
+export interface LimitMatchEvent<DocState extends DocStateDom> {
   docId: DocId;
-  addedTo: QueryId[];
-  removedFrom: QueryId[];
-  evictions: Array<[queryId: QueryId, evictedDocId: DocId]>;
+  old: DocState | null;
+  new: DocState | null;
+  matchesOld: QueryId[];
+  matchesNew: QueryId[];
 }
 

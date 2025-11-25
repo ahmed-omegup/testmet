@@ -1,4 +1,4 @@
-import { DocStateDom, QuerySpec, LimitEvent, DocChange, Score, QueryId } from './types';
+import { DocStateDom, QuerySpec, LimitMatchEvent, DocChange, Score, QueryId } from './types';
 import { DynamicRangeQueries } from './LimitQueries';
 
 // Event union the operator consumes
@@ -11,7 +11,7 @@ export type StreamItem<DocState extends DocStateDom> =
 export async function runLimitStream<DocState extends DocStateDom>(
   items: AsyncIterable<StreamItem<DocState>>,
   getScore: (state: DocState) => Score,
-  emit: (e: LimitEvent) => void
+  emit: (e: LimitMatchEvent<DocState>) => void
 ): Promise<void> {
   const queries = new DynamicRangeQueries();
   for await (const item of items) {
@@ -26,36 +26,29 @@ export async function runLimitStream<DocState extends DocStateDom>(
       }
       case 'doc-change': {
         const { id, old, new: next } = item.change;
-        const removedSet = new Set<QueryId>();
-        const addedSet = new Set<QueryId>();
+        const matchesOld: QueryId[] = [];
+        const matchesNew: QueryId[] = [];
 
         if (old) {
           const score = getScore(old);
           const covering = queries.getQueriesCovering(score);
           queries.removeDocument(score, id);
-          covering.forEach(q => removedSet.add(q));
+          covering.forEach(q => matchesOld.push(q));
         }
         if (next) {
           const score = getScore(next);
           queries.addDocument(score, id);
           const covering = queries.getQueriesCovering(score);
-          covering.forEach(q => addedSet.add(q));
+          covering.forEach(q => matchesNew.push(q));
         }
 
-        // Remove intersections so that queries keeping the doc don't double emit
-        for (const q of addedSet) {
-          if (removedSet.has(q)) {
-            addedSet.delete(q);
-            removedSet.delete(q);
-          }
-        }
-
-        if (removedSet.size || addedSet.size) {
+        if (matchesOld.length || matchesNew.length) {
           emit({
             docId: id,
-            addedTo: Array.from(addedSet),
-            removedFrom: Array.from(removedSet),
-            evictions: [],
+            old,
+            new: next,
+            matchesOld,
+            matchesNew,
           });
         }
         break;
