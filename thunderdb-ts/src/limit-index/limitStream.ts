@@ -30,6 +30,7 @@ export async function runLimitStream<DocState extends DocStateDom>(
         const id = queries.addQuery(item.spec.minScore, item.spec.limit, item.spec.maxScore);
         if (retrievalJob) {
           const seedDocs = queries.getDocsForQuery(id);
+          if (BigInt(seedDocs.length) !== queries.getQueryInfo(id)?.currentMatches) throw new Error('Inconsistent query state detected when adding query');
           for (const docId of seedDocs) {
             retrievalJob.register(docId, id);
           }
@@ -43,7 +44,6 @@ export async function runLimitStream<DocState extends DocStateDom>(
       case 'doc-change': {
         const { id, old, new: next } = item.change;
         const oldScore = old ? getScore(old) : null;
-        const newScore = next ? getScore(next) : null;
 
         const notifyRetrieval = async () => {
           if (retrievalJob) {
@@ -61,7 +61,7 @@ export async function runLimitStream<DocState extends DocStateDom>(
         const evictions: Array<[QueryId, DocId]> = [];
 
         if (oldScore !== null) {
-          if (next && newScore !== null && oldScore === newScore) {
+          if (next && oldScore === getScore(next)) {
             const covering = queries.getQueriesCovering(oldScore);
             emit({
               kind: 'match',
@@ -78,8 +78,8 @@ export async function runLimitStream<DocState extends DocStateDom>(
           const removed = queries.removeDocument(oldScore, id);
           matchesOld.push(...removed);
         }
-        if (newScore !== null && next) {
-          const { matched, evicted } = queries.addDocument(newScore, id);
+        if (next) {
+          const { matched, evicted } = queries.addDocument(getScore(next), id);
           matchesNew.push(...matched);
           evictions.push(...evicted);
         }

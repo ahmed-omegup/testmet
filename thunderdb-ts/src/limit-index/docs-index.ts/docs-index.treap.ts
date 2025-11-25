@@ -1,18 +1,44 @@
 import { DocsIndex, Nullable } from "./docs-index";
 import { DocId, Score } from "../types";
 
+const findDocIndex = (arr: DocId[], value: DocId): number => {
+    let lo = 0;
+    let hi = arr.length - 1;
+    while (lo <= hi) {
+        const mid = (lo + hi) >>> 1;
+        const midVal = arr[mid];
+        if (midVal === value) return mid;
+        if (midVal < value) lo = mid + 1; else hi = mid - 1;
+    }
+    return -(lo + 1);
+};
+
+const insertDocId = (arr: DocId[], value: DocId): boolean => {
+    const idx = findDocIndex(arr, value);
+    if (idx >= 0) return false;
+    const insertAt = -idx - 1;
+    arr.splice(insertAt, 0, value);
+    return true;
+};
+
+const removeDocId = (arr: DocId[], value: DocId): boolean => {
+    const idx = findDocIndex(arr, value);
+    if (idx < 0) return false;
+    arr.splice(idx, 1);
+    return true;
+};
 
 class DocsNode {
     score: Score; // value
-    ids = new Set<DocId>; // docs at score
+    ids: DocId[] = []; // docs at score kept sorted for deterministic picks
     sum: bigint; // subtree sum
     prio: number;
-    count(): bigint { return BigInt(this.ids.size); }
+    count(): bigint { return BigInt(this.ids.length); }
     l: Nullable<DocsNode> = null;
     r: Nullable<DocsNode> = null;
     constructor(score: Score, ids: DocId[]) {
         this.score = score;
-        ids.forEach(id => this.ids.add(id));
+        ids.forEach(id => insertDocId(this.ids, id));
         this.sum = this.count();
         this.prio = Math.random();
     }
@@ -45,7 +71,7 @@ export class DocsTreap implements DocsIndex {
     add(score: Score, id: DocId): void {
         this.root = this._update(this.root, score, n => {
             if (!n) return new DocsNode(score, [id]);
-            n.ids.add(id);
+            insertDocId(n.ids, id);
             return n;
         });
     }
@@ -65,8 +91,8 @@ export class DocsTreap implements DocsIndex {
     remove(score: Score, id: DocId): void {
         this.root = this._update(this.root, score, n => {
             if (!n) return n;
-            n.ids.delete(id);
-            if (n.ids.size === 0) {
+            if (!removeDocId(n.ids, id)) return n;
+            if (n.ids.length === 0) {
                 return this._delete(n);
             }
             return n;
@@ -117,7 +143,7 @@ export class DocsTreap implements DocsIndex {
         }
         return res;
     }
-    getAtRank(rank: bigint): Nullable<[score: Score, ids: Set<DocId>, position: bigint]> {
+    getAtRank(rank: bigint): Nullable<[score: Score, ids: DocId[], position: bigint]> {
         let cur = this.root;;
         let r = rank;
         while (cur) {

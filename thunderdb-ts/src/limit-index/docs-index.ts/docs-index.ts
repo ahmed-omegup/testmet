@@ -6,5 +6,5 @@ export interface DocsIndex {
     remove(score: Score, id: DocId): void
     rank(score: Score): bigint
     countAtMost(score: Score): bigint
-    getAtRank(rank: bigint): null | [score: Score, ids: Set<DocId>, position: bigint]
+    getAtRank(rank: bigint): null | [score: Score, ids: DocId[], position: bigint]
 }
