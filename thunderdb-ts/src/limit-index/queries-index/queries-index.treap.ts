@@ -224,12 +224,17 @@ export class QueriesTreap implements QueriesIndex {
 		if (n.localScores.length) {
 			// upperBound gives first >= thresholdBase, but we need strictly > cutoff
 			// So use thresholdBase + 1 to get first > thresholdBase
-			const idx = this.upperBound(n.localScores, thresholdBase + 1n);
-			for (let i = idx; i < n.localScores.length; i++) {
+			let i = this.upperBound(n.localScores, thresholdBase + 1n);
+			while (i < n.localScores.length) {
 				const base = n.localScores[i];
 				const set = n.itemsByScore.get(base);
-				if (!set) continue;
-				for (const id of set) if (isAllowed(id)) visit(id);
+				if (set) {
+					for (const id of set) if (isAllowed(id)) visit(id);
+				}
+				// skip duplicates of the same base value (localScores stores one entry per query)
+				while (i < n.localScores.length && n.localScores[i] === base) {
+					i++;
+				}
 			}
 		}
 		// Recurse

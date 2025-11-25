@@ -1,0 +1,252 @@
+import dotenv from 'dotenv';
+import { performance } from 'node:perf_hooks';
+import { runLimitStream, fromArray, StreamItem } from './limit-index/limitStream';
+import { DocStateDom, DocId, Score, QuerySpec, DownstreamEvent } from './limit-index/types';
+import { RetrievalJobWorker } from './retrievalJob';
+import { LmdbDocStore } from './docStore';
+
+dotenv.config({ path: process.env.PERF_ENV || '.env' });
+
+type PerfDocState = DocStateDom & { scoreValue: Score };
+
+type PerfConfig = {
+  seed: number;
+  documents: number;
+  customers: number;
+  duration: number;
+  updateRate: number;
+  insertRate: number;
+  deleteRate: number;
+  queryLimit: number;
+  rangeMin: number;
+  rangeMax: number;
+  density: number;
+  enableRetrieval: boolean;
+};
+
+const debugEvictions = process.env.PERF_DEBUG_EVICS === '1';
+
+const config: PerfConfig & {
+  range: number;
+  updatesPerTick: number;
+  insertsPerTick: number;
+  deletesPerTick: number;
+} = {
+  seed: Number(process.env.PERF_SEED ?? 42),
+  documents: Number(process.env.PERF_DOCUMENTS ?? 100000),
+  customers: Number(process.env.PERF_CUSTOMERS ?? 5000),
+  duration: Number(process.env.PERF_DURATION ?? 5),
+  updateRate: Number(process.env.PERF_UPDATE_RATE ?? 0.02),
+  insertRate: Number(process.env.PERF_INSERT_RATE ?? 0.005),
+  deleteRate: Number(process.env.PERF_DELETE_RATE ?? 0.005),
+  queryLimit: Number(process.env.PERF_QUERY_LIMIT ?? 50),
+  rangeMin: Number(process.env.PERF_RANGE_MIN ?? 100),
+  rangeMax: Number(process.env.PERF_RANGE_MAX ?? 600),
+  density: Number(process.env.PERF_DENSITY ?? 10),
+  enableRetrieval: process.env.PERF_ENABLE_RETRIEVAL !== 'false',
+  range: 0,
+  updatesPerTick: 0,
+  insertsPerTick: 0,
+  deletesPerTick: 0,
+};
+
+config.range = Math.max(1, Math.floor(config.documents / Math.max(1, config.density)));
+config.updatesPerTick = Math.max(1, Math.floor(config.documents * config.updateRate));
+config.insertsPerTick = Math.max(0, Math.floor(config.documents * config.insertRate));
+config.deletesPerTick = Math.max(0, Math.floor(config.documents * config.deleteRate));
+
+const toScore = (value: number): Score => value as Score;
+const toDocId = (value: number): DocId => BigInt(value) as DocId;
+
+const prng = (seed: number) => {
+  let state = seed % 0x7fffffff;
+  if (state <= 0) state += 0x7fffffff;
+  return () => {
+    state = (state * 48271) % 0x7fffffff;
+    return state / 0x7fffffff;
+  };
+};
+
+const rand = prng(config.seed);
+
+const randomScore = () => Math.floor(rand() * config.range);
+const createDoc = (score: number): PerfDocState => ({ scoreValue: toScore(score) } as PerfDocState);
+const getScore = (doc: PerfDocState): Score => doc.scoreValue;
+
+const docStates = new Map<DocId, PerfDocState>();
+const docOrder: DocId[] = [];
+const docIndex = new Map<DocId, number>();
+
+const trackDoc = (id: DocId, state: PerfDocState) => {
+  docStates.set(id, state);
+  docIndex.set(id, docOrder.length);
+  docOrder.push(id);
+};
+
+const updateDoc = (id: DocId, state: PerfDocState) => {
+  docStates.set(id, state);
+};
+
+const removeDoc = (id: DocId) => {
+  const idx = docIndex.get(id);
+  if (idx === undefined) return false;
+  const lastIdx = docOrder.length - 1;
+  const lastId = docOrder[lastIdx];
+  docOrder[idx] = lastId;
+  docIndex.set(lastId, idx);
+  docOrder.pop();
+  docIndex.delete(id);
+  docStates.delete(id);
+  return true;
+};
+
+const pickDocId = (): DocId | null => {
+  if (docOrder.length === 0) return null;
+  const idx = Math.floor(rand() * docOrder.length);
+  return docOrder[idx];
+};
+
+const customerRange = (): [number, number] => {
+  const widthSpan = Math.max(1, config.rangeMax - config.rangeMin + 1);
+  const width = config.rangeMin + Math.floor(rand() * widthSpan);
+  const startMax = Math.max(0, config.range - width - 1);
+  const start = startMax > 0 ? Math.floor(rand() * startMax) : 0;
+  return [start, Math.min(config.range, start + width)];
+};
+
+const buildEvents = (): StreamItem<PerfDocState>[] => {
+  const events: StreamItem<PerfDocState>[] = [];
+  let nextDocNumericId = config.documents;
+
+  // Seed documents
+  for (let i = 0; i < config.documents; i++) {
+    const id = toDocId(i);
+    const state = createDoc(randomScore());
+    trackDoc(id, state);
+    events.push({ kind: 'doc-change', change: { id, old: null, new: state } });
+  }
+
+  // Register queries (customers)
+  const limit = BigInt(config.queryLimit);
+  for (let i = 0; i < config.customers; i++) {
+    const [min, max] = customerRange();
+    const spec: QuerySpec = { minScore: toScore(min), maxScore: toScore(max), limit };
+    events.push({ kind: 'query-add', spec });
+  }
+
+  // Periodic updates
+  for (let tick = 0; tick < config.duration; tick++) {
+    // updates
+    for (let u = 0; u < config.updatesPerTick; u++) {
+      const id = pickDocId();
+      if (!id) break;
+      const old = docStates.get(id) ?? null;
+      const updated = createDoc(randomScore());
+      updateDoc(id, updated);
+      events.push({ kind: 'doc-change', change: { id, old, new: updated } });
+    }
+
+    // inserts
+    for (let ins = 0; ins < config.insertsPerTick; ins++) {
+      const id = toDocId(nextDocNumericId++);
+      const state = createDoc(randomScore());
+      trackDoc(id, state);
+      events.push({ kind: 'doc-change', change: { id, old: null, new: state } });
+    }
+
+    // deletes
+    for (let del = 0; del < config.deletesPerTick; del++) {
+      const id = pickDocId();
+      if (!id) break;
+      const old = docStates.get(id) ?? null;
+      if (!old) continue;
+      removeDoc(id);
+      events.push({ kind: 'doc-change', change: { id, old, new: null } });
+    }
+  }
+
+  return events;
+};
+
+const formatNumber = (value: number) => value.toLocaleString('en-US');
+
+async function main() {
+  console.log('[perf] configuration:', {
+    seed: config.seed,
+    documents: config.documents,
+    customers: config.customers,
+    duration: config.duration,
+    updateRate: config.updateRate,
+    insertRate: config.insertRate,
+    deleteRate: config.deleteRate,
+    queryLimit: config.queryLimit,
+    rangeMin: config.rangeMin,
+    rangeMax: config.rangeMax,
+    density: config.density,
+    enableRetrieval: config.enableRetrieval,
+  });
+
+  const events = buildEvents();
+  console.log(`[perf] generated ${formatNumber(events.length)} stream items`);
+
+  let matchEvents = 0;
+  let evictions = 0;
+  let retrievalBatches = 0;
+  let retrievalDocs = 0;
+
+  const docStore = config.enableRetrieval ? new LmdbDocStore<PerfDocState>() : undefined;
+  const retrievalJob = config.enableRetrieval && docStore
+    ? new RetrievalJobWorker<PerfDocState>(
+        ids => docStore.getMany(ids),
+        event => {
+          retrievalBatches += 1;
+          retrievalDocs += event.docs.length;
+        }
+      )
+    : undefined;
+
+  const start = performance.now();
+  await runLimitStream(
+    fromArray(events),
+    getScore,
+    (event: DownstreamEvent<PerfDocState>) => {
+      if (event.kind === 'match') {
+        matchEvents += 1;
+        evictions += event.evictions.length;
+        if (debugEvictions) {
+          console.log('[perf] match', {
+            docId: event.docId.toString(),
+            matchesOld: event.matchesOld.length,
+            matchesNew: event.matchesNew.length,
+            evictions: event.evictions.length,
+          });
+        }
+      }
+    },
+    {
+      retrievalJob: retrievalJob ?? undefined,
+      docStore,
+    }
+  );
+  if (retrievalJob) {
+    await retrievalJob.stop();
+  }
+  const end = performance.now();
+
+  const elapsedMs = end - start;
+  const eventsPerSec = (events.length / (elapsedMs / 1000)).toFixed(2);
+
+  console.log('\n[perf] summary');
+  console.log(`  duration: ${elapsedMs.toFixed(2)} ms (~${eventsPerSec} events/s)`);
+  console.log(`  match events: ${formatNumber(matchEvents)} (evictions: ${formatNumber(evictions)})`);
+  if (config.enableRetrieval) {
+    console.log(`  retrieval batches: ${formatNumber(retrievalBatches)} (docs: ${formatNumber(retrievalDocs)})`);
+  } else {
+    console.log('  retrieval batches: disabled');
+  }
+}
+
+main().catch(err => {
+  console.error('[perf] failed', err);
+  process.exit(1);
+});

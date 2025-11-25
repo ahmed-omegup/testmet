@@ -2,7 +2,8 @@
   "name": "thunderdb-ts",
   "version": "0.1.0",
   "scripts": {
-    "test": "node --require ts-node/register src/test.ts"
+    "test": "node --require ts-node/register src/test.ts",
+    "perf": "node --require ts-node/register src/perf.ts"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

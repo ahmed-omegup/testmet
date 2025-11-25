@@ -101,6 +101,7 @@ async function testRetrievalJobWorker() {
   worker.register(did(300), qid(3));
   await waitFor(() => retrievalEvents.length === 2);
   assert(retrievalEvents[1].docs.some(doc => doc.queries.includes(qid(3))));
+  await worker.stop();
 }
 
 async function testQueryAddSeedsRetrievals() {
@@ -124,6 +125,7 @@ async function testQueryAddSeedsRetrievals() {
   const docIds = retrievalEvents.flatMap(evt => evt.docs.map(doc => doc.docId.toString()));
   assert(docIds.includes(did(1).toString()));
   assert(docIds.includes(did(2).toString()));
+  await worker.stop();
 }
 
 async function main() {
