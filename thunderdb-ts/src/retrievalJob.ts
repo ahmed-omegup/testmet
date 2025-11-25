@@ -18,6 +18,7 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
   private pendingWaiter: Promise<void> | null = null;
   private resolvePending: (() => void) | null = null;
   private loop: Promise<void>;
+  private stopped = false;
 
   constructor(
     private readonly loadDocs: (docIds: DocId[]) => Promise<Map<DocId, DocState>>,
@@ -27,6 +28,16 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
     this.loop = this.runLoop();
     // Silence unused variable lint
     void this.loop;
+  }
+
+  async stop(): Promise<void> {
+    if (this.stopped) {
+      await this.loop;
+      return;
+    }
+    this.stopped = true;
+    this.signalPending();
+    await this.loop;
   }
 
   register(docId: DocId, queryId: QueryId): BatchNumber {
@@ -58,8 +69,12 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
 
   private async runLoop(): Promise<void> {
     while (true) {
+      if (this.stopped && this.pendingBatch.size === 0) {
+        break;
+      }
       if (this.pendingBatch.size === 0) {
         await this.waitForPending();
+        if (this.stopped && this.pendingBatch.size === 0) break;
         continue;
       }
       const nextProcessing = this.pendingBatch;
@@ -127,7 +142,7 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
   }
 
   private async waitForPending(): Promise<void> {
-    if (this.pendingBatch.size > 0) return;
+    if (this.pendingBatch.size > 0 || this.stopped) return;
     if (!this.pendingWaiter) {
       this.pendingWaiter = new Promise(resolve => {
         this.resolvePending = resolve;
