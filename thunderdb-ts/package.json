@@ -8,5 +8,8 @@
     "@types/node": "^20.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "lmdb": "^3.4.4"
   }
 }

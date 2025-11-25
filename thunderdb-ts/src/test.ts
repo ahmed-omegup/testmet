@@ -1,10 +1,15 @@
 import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { runLimitStream, fromArray, StreamItem } from './limit-index/limitStream';
-import { QuerySpec, LimitMatchEvent, DocId, Score, DocStateDom } from './limit-index/types';
+import { QuerySpec, LimitMatchEvent, DocId, Score, DocStateDom, QueryId, DownstreamEvent, RetrievalEvent } from './limit-index/types';
 import { RetrievalJobWorker } from './retrievalJob';
+import { LmdbDocStore } from './docStore';
 
 // Cast helpers for branded types
 const did = (n: number) => BigInt(n) as DocId;
+const qid = (n: number) => BigInt(n) as QueryId;
 const score = (n: number) => n as Score;
 type DemoDocState = DocStateDom & { value: Score };
 const docState = (s: number): DemoDocState => ({ value: score(s) } as DemoDocState);
@@ -12,7 +17,9 @@ const getScore = (s: DemoDocState) => s.value;
 
 async function collect(items: StreamItem<DemoDocState>[]): Promise<LimitMatchEvent<DemoDocState>[]> {
   const out: LimitMatchEvent<DemoDocState>[] = [];
-  await runLimitStream(fromArray(items), getScore, e => out.push(e));
+  await runLimitStream(fromArray(items), getScore, e => {
+    if (e.kind === 'match') out.push(e);
+  });
   return out;
 }
 
@@ -57,72 +64,66 @@ async function testEvictions() {
   assert(evictionEvent.evictions[0][1] === did(1), 'older doc should be evicted');
 }
 
-async function testRetrievalJobWorker() {
-  const worker = new RetrievalJobWorker();
-  const docA = did(100);
-  const docB = did(200);
-  const docC = did(300);
-  const docD = did(400);
-
-  const batchOne = worker.register(docA);
-  worker.register(docA);
-  assert(worker.pendingCount(docA) === 2, 'docA should have two pending registrations');
-
-  assert(!worker.cancel(docA, batchOne + 1n), 'cancel with mismatched batch must be ignored');
-  assert(worker.pendingCount(docA) === 2, 'mismatched cancel must not change count');
-
-  assert(worker.cancel(docA, batchOne), 'cancel with matching batch should succeed');
-  assert(worker.pendingCount(docA) === 1, 'one registration should remain for docA');
-
-  const firstSnapshot = worker.startNextBatch();
-  assert(firstSnapshot && firstSnapshot.batchNumber === batchOne, 'first batch should promote docA');
-  assert.deepStrictEqual(firstSnapshot.entries, [[docA, 1]], 'docA should be the only entry in first batch');
-
-  const currentBatchAfterRotate = worker.getCurrentBatchNumber();
-  assert(currentBatchAfterRotate === batchOne + 1n, 'batch number should advance after rotation');
-
-  const batchTwo = worker.register(docB);
-  assert(batchTwo === currentBatchAfterRotate, 'docB must register against current batch');
-
-  const receiptA = worker.documentReceived(docA);
-  assert(receiptA && receiptA.batchNumber === batchOne && receiptA.count === 1, 'docA receipt should drain active batch');
-  assert(worker.activeSize() === 0, 'active batch should now be empty');
-
-  const secondSnapshot = worker.startNextBatch();
-  assert(secondSnapshot && secondSnapshot.batchNumber === batchTwo, 'second batch should promote docB');
-  assert.deepStrictEqual(secondSnapshot.entries, [[docB, 1]], 'docB should be the only entry in second batch');
-
-  const batchThree = worker.getCurrentBatchNumber();
-  const regBatchThree = worker.register(docC);
-  assert(regBatchThree === batchThree, 'docC should see the latest batch number');
-
-  let threw = false;
-  try {
-    worker.startNextBatch();
-  } catch (err) {
-    threw = true;
+async function waitFor(condition: () => boolean, timeoutMs = 200): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (condition()) return;
+    await new Promise(resolve => setTimeout(resolve, 5));
   }
-  assert(threw, 'cannot start next batch while previous one is active');
+  throw new Error('Timed out waiting for condition');
+}
 
-  const receiptB = worker.documentReceived(docB);
-  assert(receiptB && receiptB.batchNumber === batchTwo, 'docB receipt should be associated to batch two');
+async function testRetrievalJobWorker() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'thunderdb-rj-'));
+  const store = new LmdbDocStore<DemoDocState>(dir);
+  const retrievalEvents: RetrievalEvent<DemoDocState>[] = [];
+  const worker = new RetrievalJobWorker<DemoDocState>(
+    ids => store.getMany(ids),
+    e => retrievalEvents.push(e),
+    { batchIntervalMs: 1 }
+  );
 
-  const thirdSnapshot = worker.startNextBatch();
-  assert(thirdSnapshot && thirdSnapshot.batchNumber === batchThree, 'docC batch should promote once previous completes');
+  store.put(did(100), docState(5));
+  worker.register(did(100), qid(1));
+  await waitFor(() => retrievalEvents.length === 1);
+  assert(retrievalEvents[0].docs.length === 1);
+  assert(retrievalEvents[0].docs[0].docId === did(100));
+  assert(retrievalEvents[0].docs[0].queries.includes(qid(1)));
 
-  const receiptC = worker.documentReceived(docC);
-  assert(receiptC && receiptC.batchNumber === batchThree, 'docC receipt should reference batch three');
+  store.put(did(200), docState(7));
+  const batchTwo = worker.register(did(200), qid(2));
+  assert(!worker.cancel(did(200), qid(2), batchTwo + 1n), 'mismatched batch should not cancel');
+  assert(worker.cancel(did(200), qid(2), batchTwo), 'matching batch cancels');
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert(retrievalEvents.length === 1, 'canceled doc should not emit');
 
-  const batchFour = worker.getCurrentBatchNumber();
-  const regBatchFour = worker.register(docD);
-  assert(regBatchFour === batchFour, 'docD registration should reference new batch');
+  store.put(did(300), docState(11));
+  worker.register(did(300), qid(3));
+  await waitFor(() => retrievalEvents.length === 2);
+  assert(retrievalEvents[1].docs.some(doc => doc.queries.includes(qid(3))));
+}
 
-  const pendingReceipt = worker.documentReceived(docD);
-  assert(pendingReceipt && pendingReceipt.batchNumber === batchFour, 'docD removal should happen while pending');
-  assert(worker.pendingSize() === 0, 'pending batch should be empty after docD removal');
-
-  assert(worker.documentReceived(did(999)) === null, 'unknown doc receipts should noop');
-  assert(!worker.cancel(docB, batchTwo), 'cancelling using stale batch number should be ignored');
+async function testQueryAddSeedsRetrievals() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'thunderdb-stream-'));
+  const store = new LmdbDocStore<DemoDocState>(dir);
+  const events: DownstreamEvent<DemoDocState>[] = [];
+  const worker = new RetrievalJobWorker<DemoDocState>(
+    ids => store.getMany(ids),
+    e => events.push(e),
+    { batchIntervalMs: 1 }
+  );
+  const q: QuerySpec = { minScore: score(0), maxScore: score(100), limit: 2n };
+  const items: StreamItem<DemoDocState>[] = [
+    { kind: 'doc-change', change: { id: did(1), old: null, new: docState(10) } },
+    { kind: 'doc-change', change: { id: did(2), old: null, new: docState(20) } },
+    { kind: 'query-add', spec: q },
+  ];
+  await runLimitStream(fromArray(items), getScore, e => events.push(e), { retrievalJob: worker, docStore: store });
+  await waitFor(() => events.some(evt => evt.kind === 'retrieval' && (evt as RetrievalEvent<DemoDocState>).docs.length >= 2), 500);
+  const retrievalEvents = events.filter(evt => evt.kind === 'retrieval') as RetrievalEvent<DemoDocState>[];
+  const docIds = retrievalEvents.flatMap(evt => evt.docs.map(doc => doc.docId.toString()));
+  assert(docIds.includes(did(1).toString()));
+  assert(docIds.includes(did(2).toString()));
 }
 
 async function main() {
@@ -130,6 +131,7 @@ async function main() {
   await testLimitPlaceholder();
   await testEvictions();
   await testRetrievalJobWorker();
+  await testQueryAddSeedsRetrievals();
   console.log('Tests passed');
 }
 

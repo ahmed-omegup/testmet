@@ -133,4 +133,32 @@ export class DocsTreap implements DocsIndex {
         }
         return null;
     }
+
+    collectRange(min: Score, max: Score, limit: bigint): DocId[] {
+        const out: DocId[] = [];
+        if (limit <= 0n) return out;
+        const cap = limit > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(limit);
+        this._collectRange(this.root, min, max, cap, out);
+        return out;
+    }
+
+    private _collectRange(node: Nullable<DocsNode>, min: Score, max: Score, remaining: number, out: DocId[]): number {
+        if (!node || remaining <= 0) return remaining;
+        if (min < node.score) {
+            remaining = this._collectRange(node.l, min, max, remaining, out);
+        }
+        if (remaining <= 0) return 0;
+        if (node.score >= min && node.score <= max) {
+            for (const docId of node.ids) {
+                out.push(docId);
+                remaining -= 1;
+                if (remaining <= 0) return 0;
+            }
+        }
+        if (remaining <= 0) return 0;
+        if (node.score < max) {
+            remaining = this._collectRange(node.r, min, max, remaining, out);
+        }
+        return remaining;
+    }
 }

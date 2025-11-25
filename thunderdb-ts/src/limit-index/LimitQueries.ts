@@ -100,6 +100,12 @@ export class DynamicRangeQueries {
 
     getQueryInfo(id: QueryId): QueryInfo | undefined { return this.idToQuery.get(id); }
 
+    getDocsForQuery(id: QueryId): DocId[] {
+        const info = this.idToQuery.get(id);
+        if (!info) return [];
+        return this.docs.collectRange(info.a, info.max, info.k);
+    }
+
     private collectQueriesForValue(v: Score): QueryInfo[] {
         const cutoff = this.docs.rank(v);
         const out: QueryInfo[] = [];
