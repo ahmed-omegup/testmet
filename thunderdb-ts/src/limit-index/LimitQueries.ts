@@ -26,17 +26,15 @@ export class DynamicRangeQueries {
         this.docs.add(value, id);
         this.queries.rangeAddKeysGreaterThan(value, 1n);
 
-        const matched: QueryId[] = [];
+        const matched: QueryId[] = affected.map(q => q.id);
         const evicted: Array<[QueryId, DocId]> = [];
 
         for (const q of affected) {
-            q.currentMatches += 1n;
-            if (q.currentMatches > q.k) {
-                const { kept, evictedDoc } = this.resolveOverflow(q, id);
-                if (kept) matched.push(q.id);
-                if (evictedDoc) evicted.push([q.id, evictedDoc]);
+            if (q.currentMatches == q.k) {
+                const evictedDoc = this.resolveOverflow(q);
+                evicted.push([q.id, evictedDoc]);
             } else {
-                matched.push(q.id);
+                q.currentMatches += 1n;
             }
         }
 
@@ -47,7 +45,10 @@ export class DynamicRangeQueries {
         const affected = this.collectQueriesForValue(value);
         this.docs.remove(value, id);
         this.queries.rangeAddKeysGreaterThan(value, -1n);
-        affected.forEach(q => q.currentMatches = q.currentMatches > 0n ? q.currentMatches - 1n : 0n);
+        affected.forEach(q => {
+            if (q.currentMatches <= 0n) throw new Error('Inconsistent query state detected when removing document');
+            q.currentMatches--
+        });
         return affected.map(q => q.id);
     }
 
@@ -132,41 +133,14 @@ export class DynamicRangeQueries {
         return diff < 0n ? 0n : diff;
     }
 
-    private resolveOverflow(q: QueryInfo, insertedId: DocId): { kept: boolean; evictedDoc: DocId | null } {
+    private resolveOverflow(q: QueryInfo): DocId {
         const startRank = this.docs.rank(q.a);
         let targetRank = startRank + q.k;
-        const tuple = this.docs.getAtRank(targetRank);
-        if (!tuple) {
-            throw new Error(`Inconsistent state: no tuple at rank ${targetRank} for query ${q.id}`);
-            q.currentMatches = q.k;
-            return { kept: true, evictedDoc: null };
-        }
-        const [score, ids, position] = tuple;
-        if (score > q.max) {
-            throw new Error(`Inconsistent state: score ${score} at rank ${targetRank} exceeds max ${q.max} for query ${q.id}`);
-            q.currentMatches = q.k;
-            return { kept: true, evictedDoc: null };
-        }
-        const evictedId = this.pickDocId(ids, position);
-        if (!evictedId) {
-            throw new Error(`Inconsistent state: could not pick docId at rank ${targetRank} for query ${q.id}`);
-            q.currentMatches = q.k;
-            return { kept: true, evictedDoc: null };
-        }
-        if (evictedId === insertedId) {
-            throw new Error(`Inconsistent state: evicting newly inserted docId ${insertedId} for query ${q.id}`);
-            q.currentMatches -= 1n;
-            return { kept: false, evictedDoc: null };
-        }
+        const [, ids, position] = this.docs.getAtRank(targetRank)!;
+        const evictedId = ids[Number(position)];
         q.currentMatches = q.k;
-        return { kept: true, evictedDoc: evictedId };
+        return evictedId;
     }
 
-    private pickDocId(ids: DocId[], position: bigint): DocId | null {
-        const index = Number(position);
-        assert(Number.isSafeInteger(index), `pickDocId position ${position.toString()} is not representable as safe integer`);
-        assert(index >= 0 && index < ids.length, `pickDocId position ${index} out of range for ${ids.length} ids`);
-        return ids[index];
-    }
 }
 
