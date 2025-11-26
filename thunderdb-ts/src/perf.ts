@@ -67,9 +67,7 @@ const prng = (seed: number) => {
   };
 };
 
-const rand = prng(config.seed);
-
-const randomScore = () => Math.floor(rand() * config.range);
+const randomScore = (rand: () => number) => Math.floor(rand() * config.range);
 const createDoc = (score: number): PerfDocState => ({ scoreValue: toScore(score) } as PerfDocState);
 const getScore = (doc: PerfDocState): Score => doc.scoreValue;
 
@@ -100,13 +98,13 @@ const removeDoc = (id: DocId) => {
   return true;
 };
 
-const pickDocId = (): DocId | null => {
+const pickDocId = (rand: () => number): DocId | null => {
   if (docOrder.length === 0) return null;
   const idx = Math.floor(rand() * docOrder.length);
   return docOrder[idx];
 };
 
-const customerRange = (): [number, number] => {
+const customerRange = (rand: () => number): [number, number] => {
   const widthSpan = Math.max(1, config.rangeMax - config.rangeMin + 1);
   const width = config.rangeMin + Math.floor(rand() * widthSpan);
   const startMax = Math.max(0, config.range - width - 1);
@@ -117,6 +115,8 @@ const customerRange = (): [number, number] => {
 const SEED_BATCH_SIZE = Number(process.env.PERF_SEED_BATCH ?? 4096);
 
 const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
+  const rand = prng(config.seed);
+
   let nextDocNumericId = config.documents;
   const seedStart = performance.now();
   const seedBuffer: Array<{ id: DocId; state: PerfDocState }> = [];
@@ -129,7 +129,7 @@ const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
 
   for (let i = 0; i < config.documents; i++) {
     const id = toDocId(i);
-    const state = createDoc(randomScore());
+    const state = createDoc(randomScore(rand));
     trackDoc(id, state);
     seedBuffer.push({ id, state });
     if (seedBuffer.length >= SEED_BATCH_SIZE) {
@@ -146,7 +146,7 @@ const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
   // Register queries (customers)
   const limit = BigInt(config.queryLimit);
   for (let i = 0; i < config.customers; i++) {
-    const [min, max] = customerRange();
+    const [min, max] = customerRange(rand);
     const spec: QuerySpec = { minScore: toScore(min), maxScore: toScore(max), limit };
     yield { kind: 'query-add', spec };
   }
@@ -158,10 +158,10 @@ const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
   for (let tick = 0; tick < config.duration; tick++) {
     // updates
     for (let u = 0; u < config.updatesPerTick; u++) {
-      const id = pickDocId();
+      const id = pickDocId(rand);
       if (!id) break;
       const old = docStates.get(id) ?? null;
-      const updated = createDoc(randomScore());
+      const updated = createDoc(randomScore(rand));
       updateDoc(id, updated);
       yield { kind: 'doc-change', change: { id, old, new: updated } };
     }
@@ -169,14 +169,14 @@ const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
     // inserts
     for (let ins = 0; ins < config.insertsPerTick; ins++) {
       const id = toDocId(nextDocNumericId++);
-      const state = createDoc(randomScore());
+      const state = createDoc(randomScore(rand));
       trackDoc(id, state);
       yield { kind: 'doc-change', change: { id, old: null, new: state } };
     }
 
     // deletes
     for (let del = 0; del < config.deletesPerTick; del++) {
-      const id = pickDocId();
+      const id = pickDocId(rand);
       if (!id) break;
       const old = docStates.get(id) ?? null;
       if (!old) continue;
@@ -231,20 +231,22 @@ async function main() {
 
   const start = performance.now();
   runLimitStream(
-    events,
+    (function* () {
+      for (const e of events) {
+        if (debugEvictions) {
+          console.log('<<', JSON.stringify(e, (k, v) => typeof v === 'bigint' ? String(v) : v));
+        }
+        yield e
+      }
+    })(),
     getScore,
     (event: DownstreamEvent<PerfDocState>) => {
+      if (debugEvictions) {
+        console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
+      }
       if (event.kind === 'match') {
         matchEvents += 1;
         evictions += event.evictions.length;
-        if (debugEvictions) {
-          console.log('[perf] match', {
-            docId: event.docId.toString(),
-            matchesOld: event.matchesOld.length,
-            matchesNew: event.matchesNew.length,
-            evictions: event.evictions.length,
-          });
-        }
       }
     },
     {

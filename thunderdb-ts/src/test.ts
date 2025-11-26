@@ -15,18 +15,18 @@ type DemoDocState = DocStateDom & { value: Score };
 const docState = (s: number): DemoDocState => ({ value: score(s) } as DemoDocState);
 const getScore = (s: DemoDocState) => s.value;
 
-async function collect(items: StreamItem<DemoDocState>[]): Promise<LimitMatchEvent<DemoDocState>[]> {
+function collect(items: StreamItem<DemoDocState>[]): LimitMatchEvent<DemoDocState>[] {
   const out: LimitMatchEvent<DemoDocState>[] = [];
-  await runLimitStream(fromArray(items), getScore, e => {
+  runLimitStream(items, getScore, e => {
     if (e.kind === 'match') out.push(e);
   });
   return out;
 }
 
 // Basic scenario: one query, two docs within range, then remove one.
-async function testBasic() {
+function testBasic() {
   const q: QuerySpec = { minScore: score(10), maxScore: score(100), limit: 10n };
-  const events = await collect([
+  const events = collect([
     { kind: 'query-add', spec: q },
     { kind: 'doc-change', change: { id: did(1), old: null, new: docState(12) } },
     { kind: 'doc-change', change: { id: did(2), old: null, new: docState(50) } },
@@ -39,9 +39,9 @@ async function testBasic() {
 }
 
 // Query limit effect: limit=1, adding second doc should still add but eviction list TBD (currently empty)
-async function testLimitPlaceholder() {
+function testLimitPlaceholder() {
   const q: QuerySpec = { minScore: score(0), maxScore: score(100), limit: 1n };
-  const events = await collect([
+  const events = collect([
     { kind: 'query-add', spec: q },
     { kind: 'doc-change', change: { id: did(10), old: null, new: docState(5) } },
     { kind: 'doc-change', change: { id: did(11), old: null, new: docState(6) } },
@@ -50,9 +50,9 @@ async function testLimitPlaceholder() {
   assert(events[0].matchesNew.length === 1 && events[0].matchesOld.length === 0 && events[0].evictions.length === 0);
 }
 
-async function testEvictions() {
+function testEvictions() {
   const q: QuerySpec = { minScore: score(0), maxScore: score(100), limit: 1n };
-  const events = await collect([
+  const events = collect([
     { kind: 'query-add', spec: q },
     { kind: 'doc-change', change: { id: did(1), old: null, new: docState(5) } },
     { kind: 'doc-change', change: { id: did(2), old: null, new: docState(3) } },
@@ -119,7 +119,7 @@ async function testQueryAddSeedsRetrievals() {
     { kind: 'doc-change', change: { id: did(2), old: null, new: docState(20) } },
     { kind: 'query-add', spec: q },
   ];
-  await runLimitStream(fromArray(items), getScore, e => events.push(e), { retrievalJob: worker, docStore: store });
+  runLimitStream(items, getScore, e => events.push(e), { retrievalJob: worker, docStore: store });
   await waitFor(() => events.some(evt => evt.kind === 'retrieval' && (evt as RetrievalEvent<DemoDocState>).docs.length >= 2), 500);
   const retrievalEvents = events.filter(evt => evt.kind === 'retrieval') as RetrievalEvent<DemoDocState>[];
   const docIds = retrievalEvents.flatMap(evt => evt.docs.map(doc => doc.docId.toString()));
@@ -145,7 +145,7 @@ async function testGapFillRegistersRetrievals() {
     { kind: 'query-add', spec: q },
     { kind: 'doc-change', change: { id: did(2), old: docState(20), new: null } },
   ];
-  await runLimitStream(fromArray(items), getScore, e => events.push(e), { retrievalJob: worker, docStore: store });
+  runLimitStream(items, getScore, e => events.push(e), { retrievalJob: worker, docStore: store });
   await waitFor(
     () => events.some(evt => evt.kind === 'retrieval' && (evt as RetrievalEvent<DemoDocState>).docs.some(doc => doc.docId === did(3))),
     500
@@ -158,9 +158,9 @@ async function testGapFillRegistersRetrievals() {
 }
 
 async function main() {
-  await testBasic();
-  await testLimitPlaceholder();
-  await testEvictions();
+  testBasic();
+  testLimitPlaceholder();
+  testEvictions();
   await testRetrievalJobWorker();
   await testQueryAddSeedsRetrievals();
   await testGapFillRegistersRetrievals();
