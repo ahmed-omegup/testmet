@@ -74,7 +74,7 @@ export class QueriesTreap implements QueriesIndex {
 		let lo = 0, hi = arr.length;
 		while (lo < hi) {
 			const mid = (lo + hi) >>> 1;
-			if (arr[mid] < x) lo = mid + 1; else hi = mid;
+			if (arr[mid]! < x) lo = mid + 1; else hi = mid;
 		}
 		return lo;
 	}
@@ -85,7 +85,7 @@ export class QueriesTreap implements QueriesIndex {
 		let set = n.itemsByScore.get(baseScore);
 		if (!set) { set = new Set(); n.itemsByScore.set(baseScore, set); }
 		set.add(id);
-		n.baseLocalMax = n.localScores.length ? n.localScores[n.localScores.length - 1] : null;
+		n.baseLocalMax = n.localScores.length ? n.localScores[n.localScores.length - 1]! : null;
 		// update max cap freq
 		n.localMaxFreq.set(maxCap, (n.localMaxFreq.get(maxCap) ?? 0) + 1);
 		if (maxCap > n.localMaxCap) n.localMaxCap = maxCap;
@@ -98,7 +98,7 @@ export class QueriesTreap implements QueriesIndex {
 		// remove one occurrence of baseScore from localScores
 		const idx = this.findOneIndex(n.localScores, baseScore);
 		if (idx >= 0) n.localScores.splice(idx, 1);
-		n.baseLocalMax = n.localScores.length ? n.localScores[n.localScores.length - 1] : null;
+		n.baseLocalMax = n.localScores.length ? n.localScores[n.localScores.length - 1]! : null;
 		// update max cap freq
 		const prev = n.localMaxFreq.get(maxCap) ?? 0;
 		if (prev <= 1) {
@@ -121,7 +121,7 @@ export class QueriesTreap implements QueriesIndex {
 		while (lo <= hi) {
 			const mid = (lo + hi) >>> 1;
 			if (arr[mid] === x) return mid;
-			if (arr[mid] < x) lo = mid + 1; else hi = mid - 1;
+			if (arr[mid]! < x) lo = mid + 1; else hi = mid - 1;
 		}
 		return -1;
 	}
@@ -226,7 +226,7 @@ export class QueriesTreap implements QueriesIndex {
 			// So use thresholdBase + 1 to get first > thresholdBase
 			let i = this.upperBound(n.localScores, thresholdBase + 1n);
 			while (i < n.localScores.length) {
-				const base = n.localScores[i];
+				const base = n.localScores[i]!;
 				const set = n.itemsByScore.get(base);
 				if (set) {
 					for (const id of set) if (isAllowed(id)) visit(id);

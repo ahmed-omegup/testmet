@@ -40,7 +40,7 @@ const handleChange = <DocState extends DocStateDom>(
 
   if (oldScore !== null) {
     if (next && oldScore === getScore(next)) {
-      const covering = queries.getQueriesCovering(oldScore);
+      const covering = queries.getQueriesCovering(oldScore, id);
       emit({
         kind: 'match',
         docId: id,

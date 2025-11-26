@@ -89,7 +89,7 @@ const removeDoc = (id: DocId) => {
   const idx = docIndex.get(id);
   if (idx === undefined) return false;
   const lastIdx = docOrder.length - 1;
-  const lastId = docOrder[lastIdx];
+  const lastId = docOrder[lastIdx]!;
   docOrder[idx] = lastId;
   docIndex.set(lastId, idx);
   docOrder.pop();
@@ -101,7 +101,7 @@ const removeDoc = (id: DocId) => {
 const pickDocId = (rand: () => number): DocId | null => {
   if (docOrder.length === 0) return null;
   const idx = Math.floor(rand() * docOrder.length);
-  return docOrder[idx];
+  return docOrder[idx]!;
 };
 
 const customerRange = (rand: () => number): [number, number] => {

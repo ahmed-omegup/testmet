@@ -47,7 +47,7 @@ export class LmdbDocStore<DocState extends DocStateDom> {
     for (let i = 0; i < ids.length; i += 1) {
       const value = values[i];
       if (value) {
-        map.set(ids[i], value);
+        map.set(ids[i]!, value);
       }
     }
     return map;

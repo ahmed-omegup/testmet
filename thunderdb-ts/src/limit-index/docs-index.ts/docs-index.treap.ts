@@ -6,7 +6,7 @@ const findDocIndex = (arr: DocId[], value: DocId): number => {
     let hi = arr.length - 1;
     while (lo <= hi) {
         const mid = (lo + hi) >>> 1;
-        const midVal = arr[mid];
+        const midVal = arr[mid]!;
         if (midVal === value) return mid;
         if (midVal < value) lo = mid + 1; else hi = mid - 1;
     }
@@ -115,16 +115,26 @@ export class DocsTreap implements DocsIndex {
     }
 
     // prefix sum of scores strictly less than score
-    rank(score: Score): bigint {
+    rank(score: Score, id: DocId | null): bigint {
         let cur = this.root;
         let res = 0n;
         while (cur) {
-            if (score <= cur.score) {
+            if (score < cur.score) {
                 cur = cur.l;
-            } else {
+                continue;
+            }
+            if (score > cur.score) {
                 res += DocsTreap.sum(cur.l) + cur.count();
                 cur = cur.r;
+                continue;
             }
+            res += DocsTreap.sum(cur.l);
+            if (id === null) {
+                return res;
+            }
+            const idx = findDocIndex(cur.ids, id);
+            const insertionIndex = idx >= 0 ? idx : -idx - 1;
+            return res + BigInt(insertionIndex);
         }
         return res;
     }
@@ -143,7 +153,7 @@ export class DocsTreap implements DocsIndex {
         }
         return res;
     }
-    getAtRank(rank: bigint): Nullable<[score: Score, ids: DocId[], position: bigint]> {
+    getAtRank(rank: bigint): Nullable<[score: Score, id: DocId | null, position: bigint]> {
         let cur = this.root;;
         let r = rank;
         while (cur) {
@@ -151,7 +161,9 @@ export class DocsTreap implements DocsIndex {
             if (r < leftSum) {
                 cur = cur.l;
             } else if (r < leftSum + cur.count()) {
-                return [cur.score, cur.ids, r - leftSum];
+                const position = r - leftSum;
+                const id = cur.ids[Number(position)] ?? null;
+                return [cur.score, id as DocId | null, position];
             } else {
                 r -= leftSum + cur.count();
                 cur = cur.r;

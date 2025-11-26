@@ -33,9 +33,9 @@ function testBasic() {
     { kind: 'doc-change', change: { id: did(1), old: docState(12), new: null } },
   ]);
   assert(events.length === 3, 'expected 3 emitted events');
-  assert(events[0].matchesOld.length === 0 && events[0].matchesNew.length === 1 && events[0].evictions.length === 0);
-  assert(events[1].matchesOld.length === 0 && events[1].matchesNew.length === 1 && events[1].evictions.length === 0);
-  assert(events[2].matchesOld.length === 1 && events[2].matchesNew.length === 0 && events[2].evictions.length === 0);
+  assert(events[0]!.matchesOld.length === 0 && events[0]!.matchesNew.length === 1 && events[0]!.evictions.length === 0);
+  assert(events[1]!.matchesOld.length === 0 && events[1]!.matchesNew.length === 1 && events[1]!.evictions.length === 0);
+  assert(events[2]!.matchesOld.length === 1 && events[2]!.matchesNew.length === 0 && events[2]!.evictions.length === 0);
 }
 
 // Query limit effect: limit=1, adding second doc should still add but eviction list TBD (currently empty)
@@ -47,7 +47,7 @@ function testLimitPlaceholder() {
     { kind: 'doc-change', change: { id: did(11), old: null, new: docState(6) } },
   ]);
   assert(events.length === 1, 'expected one event emitted');
-  assert(events[0].matchesNew.length === 1 && events[0].matchesOld.length === 0 && events[0].evictions.length === 0);
+  assert(events[0]!.matchesNew.length === 1 && events[0]!.matchesOld.length === 0 && events[0]!.evictions.length === 0);
 }
 
 function testEvictions() {
@@ -58,10 +58,10 @@ function testEvictions() {
     { kind: 'doc-change', change: { id: did(2), old: null, new: docState(3) } },
   ]);
   assert(events.length === 2, 'expected two events emitted');
-  const evictionEvent = events[1];
+  const evictionEvent = events[1]!;
   assert(evictionEvent.matchesNew.length === 1, 'new doc should match');
   assert(evictionEvent.evictions.length === 1, 'eviction should be reported');
-  assert(evictionEvent.evictions[0][1] === did(1), 'older doc should be evicted');
+  assert(evictionEvent.evictions[0]![1] === did(1), 'older doc should be evicted');
 }
 
 async function waitFor(condition: () => boolean, timeoutMs = 200): Promise<void> {
@@ -86,9 +86,9 @@ async function testRetrievalJobWorker() {
   store.put(did(100), docState(5));
   worker.register(did(100), qid(1));
   await waitFor(() => retrievalEvents.length === 1);
-  assert(retrievalEvents[0].docs.length === 1);
-  assert(retrievalEvents[0].docs[0].docId === did(100));
-  assert(retrievalEvents[0].docs[0].queries.includes(qid(1)));
+  assert(retrievalEvents[0]!.docs.length === 1);
+  assert(retrievalEvents[0]!.docs[0]!.docId === did(100));
+  assert(retrievalEvents[0]!.docs[0]!.queries.includes(qid(1)));
 
   store.put(did(200), docState(7));
   const batchTwo = worker.register(did(200), qid(2));
@@ -100,7 +100,7 @@ async function testRetrievalJobWorker() {
   store.put(did(300), docState(11));
   worker.register(did(300), qid(3));
   await waitFor(() => retrievalEvents.length === 2);
-  assert(retrievalEvents[1].docs.some(doc => doc.queries.includes(qid(3))));
+  assert(retrievalEvents[1]!.docs.some(doc => doc.queries.includes(qid(3))));
   await worker.stop();
 }
 

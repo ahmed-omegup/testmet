@@ -8,7 +8,6 @@ interface QueryInfo { id: QueryId; a: Score; k: bigint; max: Score; currentMatch
 
 interface AddResult {
     matched: QueryId[];
-    joined: QueryId[];
     blocked: QueryId[];
 }
 
@@ -23,28 +22,26 @@ export class DynamicRangeQueries {
     private idToBaseScore: Map<QueryId, bigint> = new Map();
 
     addDocument(value: Score, id: DocId): AddResult {
-        const affected = this.collectQueriesForValue(value);
+        const affected = this.collectQueriesForValue(value, id);
         this.docs.add(value, id);
         this.queries.rangeAddKeysGreaterThan(value, 1n);
 
         const matched: QueryId[] = affected.map(q => q.id);
-        const joined: QueryId[] = [];
         const blocked: QueryId[] = [];
 
         for (const q of affected) {
             if (q.currentMatches < q.k) {
                 q.currentMatches += 1n;
-                joined.push(q.id);
             } else {
                 blocked.push(q.id);
             }
         }
 
-        return { matched, joined, blocked };
+        return { matched, blocked };
     }
 
     removeDocument(value: Score, id: DocId): QueryId[] {
-        const affected = this.collectQueriesForValue(value);
+        const affected = this.collectQueriesForValue(value, id);
         this.docs.remove(value, id);
         this.queries.rangeAddKeysGreaterThan(value, -1n);
         affected.forEach(q => {
@@ -57,7 +54,7 @@ export class DynamicRangeQueries {
     // Add a query (a=minValue, k=numDocs, max=upper bound on value). Returns query id.
     addQuery(a: Score, k: bigint, max = Number.POSITIVE_INFINITY): QueryId {
         const id = this.nextId++;
-        const effectiveScore = this.docs.rank(a) + k;
+        const effectiveScore = this.docs.rank(a, null) + k;
         this.queries.insert(a, id, effectiveScore, max);
         // We need to store baseScore used at the node for deletion. Compute it by re-deriving via a targeted lookup.
         // Easiest: store as effectiveScore minus current accumulated add at position a.
@@ -98,8 +95,8 @@ export class DynamicRangeQueries {
 
     // Retrieve all queries (ids) that currently cover value v.
     // If you want full (a,k), map over ids via getQueryInfo.
-    getQueriesCovering(v: Score): QueryId[] {
-        return this.collectQueriesForValue(v).map(q => q.id);
+    getQueriesCovering(v: Score, docId: DocId | null): QueryId[] {
+        return this.collectQueriesForValue(v, docId).map(q => q.id);
     }
 
     getQueryInfo(id: QueryId): QueryInfo | undefined { return this.idToQuery.get(id); }
@@ -116,8 +113,8 @@ export class DynamicRangeQueries {
         }
     }
 
-    private collectQueriesForValue(v: Score): QueryInfo[] {
-        const cutoff = this.docs.rank(v);
+    private collectQueriesForValue(v: Score, docId: DocId | null): QueryInfo[] {
+        const cutoff = this.docs.rank(v, docId);
         const out: QueryInfo[] = [];
         this.queries.collectForValue(
             v,
@@ -136,7 +133,7 @@ export class DynamicRangeQueries {
 
     private countDocsInRange(min: Score, max: Score): bigint {
         const upper = this.docs.countAtMost(max);
-        const lower = this.docs.rank(min);
+        const lower = this.docs.rank(min, null);
         const diff = upper - lower;
         return diff < 0n ? 0n : diff;
     }
@@ -160,14 +157,14 @@ export class DynamicRangeQueries {
 
     private docForQueryAt(info: QueryInfo, offset: bigint): DocId | null {
         if (offset < 0n) return null;
-        const startRank = this.docs.rank(info.a);
+        const startRank = this.docs.rank(info.a, null);
         const tuple = this.docs.getAtRank(startRank + offset);
         if (!tuple) return null;
-        const [score, ids, position] = tuple;
+        const [score, id, position] = tuple;
         if (score > info.max) return null;
         const index = Number(position);
         assert(Number.isSafeInteger(index), 'doc index exceeds safe integer range');
-        return ids[index] ?? null;
+        return id ?? null;
     }
 
 }

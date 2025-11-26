@@ -4,7 +4,7 @@ export type Nullable<T> = T | null;
 export interface DocsIndex {
     add(score: Score, id: DocId): void
     remove(score: Score, id: DocId): void
-    rank(score: Score): bigint
+    rank(score: Score, id: DocId | null): bigint
     countAtMost(score: Score): bigint
-    getAtRank(rank: bigint): null | [score: Score, ids: DocId[], position: bigint]
+    getAtRank(rank: bigint): null | [score: Score, id: DocId | null, position: bigint]
 }
