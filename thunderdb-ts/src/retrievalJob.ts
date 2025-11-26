@@ -59,7 +59,7 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
     return removed;
   }
 
-  async resolveDoc(docId: DocId, batchHint?: BatchNumber): Promise<boolean> {
+  resolveDoc(docId: DocId, batchHint?: BatchNumber): boolean {
     const source = this.pickSource(docId, batchHint);
     if (!source) return false;
     source.map.delete(docId);

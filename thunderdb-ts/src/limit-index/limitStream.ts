@@ -14,6 +14,100 @@ export interface LimitStreamOptions<DocState extends DocStateDom> {
   docStore?: LmdbDocStore<DocState>;
 }
 
+
+const handleChange = <DocState extends DocStateDom>(
+  item: DocChange<DocState>,
+  queries: DynamicRangeQueries,
+  getScore: (state: DocState) => Score,
+  emit: (e: DownstreamEvent<DocState>) => void,
+  options: LimitStreamOptions<DocState> = {}
+) => {
+  const { id, old, new: next } = item;
+  const oldScore = old ? getScore(old) : null;
+  const retrievalJob = options.retrievalJob;
+  const docStore = options.docStore;
+
+  const notifyRetrieval = () => {
+    if (retrievalJob) {
+      retrievalJob.resolveDoc(id);
+    }
+  };
+
+  if (docStore) {
+    if (next) docStore.put(id, next);
+    else docStore.delete(id);
+  }
+
+  const matchesOld: QueryId[] = [];
+  const matchesNew: QueryId[] = [];
+  const evictions: Array<[QueryId, DocId]> = [];
+  const blockedCandidates: QueryId[] = [];
+
+  if (oldScore !== null) {
+    if (next && oldScore === getScore(next)) {
+      const covering = queries.getQueriesCovering(oldScore);
+      emit({
+        kind: 'match',
+        docId: id,
+        old,
+        new: next,
+        matchesOld: covering,
+        matchesNew: covering,
+        evictions: [],
+      });
+      notifyRetrieval();
+      return;
+    }
+    const removed = queries.removeDocument(oldScore, id);
+    matchesOld.push(...removed);
+  }
+  if (next) {
+    const { matched, blocked } = queries.addDocument(getScore(next), id);
+    matchesNew.push(...matched);
+    blockedCandidates.push(...blocked);
+  }
+
+  const matchesOldSet = new Set(matchesOld);
+  const matchesNewSet = new Set(matchesNew);
+
+  // Gap filling: queries that lost this doc should pull the next best candidate.
+  const lostQueries = new Set<QueryId>();
+  for (const q of matchesOld) {
+    if (!matchesNewSet.has(q)) lostQueries.add(q);
+  }
+  for (const q of lostQueries) {
+    const replacement = queries.fillGap(q);
+    if (replacement && retrievalJob) {
+      retrievalJob.register(replacement, q);
+    }
+  }
+
+  // Evictions: queries that only gained this doc and are already full.
+  const overflowQueries = new Set<QueryId>();
+  for (const q of blockedCandidates) {
+    if (!matchesOldSet.has(q)) overflowQueries.add(q);
+  }
+  for (const q of overflowQueries) {
+    const evictedDoc = queries.pickOverflowDoc(q);
+    if (evictedDoc) {
+      evictions.push([q, evictedDoc]);
+    }
+  }
+
+  if (matchesOld.length || matchesNew.length || evictions.length) {
+    emit({
+      kind: 'match',
+      docId: id,
+      old,
+      new: next,
+      matchesOld,
+      matchesNew,
+      evictions,
+    });
+  }
+  notifyRetrieval();
+}
+
 // Stateless limit stream operator (stores only per-query counts already tracked in DynamicRangeQueries)
 export async function runLimitStream<DocState extends DocStateDom>(
   items: AsyncIterable<StreamItem<DocState>>,
@@ -42,88 +136,7 @@ export async function runLimitStream<DocState extends DocStateDom>(
         break;
       }
       case 'doc-change': {
-        const { id, old, new: next } = item.change;
-        const oldScore = old ? getScore(old) : null;
-
-        const notifyRetrieval = async () => {
-          if (retrievalJob) {
-            await retrievalJob.resolveDoc(id);
-          }
-        };
-
-        if (docStore) {
-          if (next) docStore.put(id, next);
-          else docStore.delete(id);
-        }
-
-        const matchesOld: QueryId[] = [];
-        const matchesNew: QueryId[] = [];
-        const evictions: Array<[QueryId, DocId]> = [];
-        const blockedCandidates: QueryId[] = [];
-
-        if (oldScore !== null) {
-          if (next && oldScore === getScore(next)) {
-            const covering = queries.getQueriesCovering(oldScore);
-            emit({
-              kind: 'match',
-              docId: id,
-              old,
-              new: next,
-              matchesOld: [...covering],
-              matchesNew: [...covering],
-              evictions: [],
-            });
-            await notifyRetrieval();
-            break;
-          }
-          const removed = queries.removeDocument(oldScore, id);
-          matchesOld.push(...removed);
-        }
-        if (next) {
-          const { matched, blocked } = queries.addDocument(getScore(next), id);
-          matchesNew.push(...matched);
-          blockedCandidates.push(...blocked);
-        }
-
-        const matchesOldSet = new Set(matchesOld);
-        const matchesNewSet = new Set(matchesNew);
-
-        // Gap filling: queries that lost this doc should pull the next best candidate.
-        const lostQueries = new Set<QueryId>();
-        for (const q of matchesOld) {
-          if (!matchesNewSet.has(q)) lostQueries.add(q);
-        }
-        for (const q of lostQueries) {
-          const replacement = queries.fillGap(q);
-          if (replacement && retrievalJob) {
-            retrievalJob.register(replacement, q);
-          }
-        }
-
-        // Evictions: queries that only gained this doc and are already full.
-        const overflowQueries = new Set<QueryId>();
-        for (const q of blockedCandidates) {
-          if (!matchesOldSet.has(q)) overflowQueries.add(q);
-        }
-        for (const q of overflowQueries) {
-          const evictedDoc = queries.pickOverflowDoc(q);
-          if (evictedDoc) {
-            evictions.push([q, evictedDoc]);
-          }
-        }
-
-        if (matchesOld.length || matchesNew.length || evictions.length) {
-          emit({
-            kind: 'match',
-            docId: id,
-            old,
-            new: next,
-            matchesOld,
-            matchesNew,
-            evictions,
-          });
-        }
-        await notifyRetrieval();
+        handleChange(item.change, queries, getScore, emit, options); 
         break;
       }
     }
@@ -131,6 +144,6 @@ export async function runLimitStream<DocState extends DocStateDom>(
 }
 
 // Helper to build an async iterable from an array (tests / demos)
-export async function* fromArray<DocState extends DocStateDom>(items: StreamItem<DocState>[]): AsyncIterable<StreamItem<DocState>> {
+export async function* fromIterable<DocState extends DocStateDom>(items: Iterable<StreamItem<DocState>>): AsyncIterable<StreamItem<DocState>> {
   for (const i of items) yield i;
 }

@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 import { performance } from 'node:perf_hooks';
-import { runLimitStream, fromArray, StreamItem } from './limit-index/limitStream';
+import { runLimitStream, StreamItem, fromIterable } from './limit-index/limitStream';
 import { DocStateDom, DocId, Score, QuerySpec, DownstreamEvent } from './limit-index/types';
 import { RetrievalJobWorker } from './retrievalJob';
 import { LmdbDocStore } from './docStore';
@@ -114,25 +114,35 @@ const customerRange = (): [number, number] => {
   return [start, Math.min(config.range, start + width)];
 };
 
-const buildEvents = (): StreamItem<PerfDocState>[] => {
-  const events: StreamItem<PerfDocState>[] = [];
+const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
   let nextDocNumericId = config.documents;
+  const seed_start = performance.now()
 
   // Seed documents
   for (let i = 0; i < config.documents; i++) {
     const id = toDocId(i);
     const state = createDoc(randomScore());
     trackDoc(id, state);
-    events.push({ kind: 'doc-change', change: { id, old: null, new: state } });
+    if( i % 1000 === 0 && i > 0) {
+      const intermediate = performance.now();
+      console.log(`[perf] seeded ${i} documents in ${(intermediate - seed_start).toFixed(2)} ms`);
+    }
+    yield { kind: 'doc-change', change: { id, old: null, new: state } };
   }
+
+  const query_start = performance.now()
+  console.log(`[perf] seeding documents took ${(query_start - seed_start).toFixed(2)} ms`);
 
   // Register queries (customers)
   const limit = BigInt(config.queryLimit);
   for (let i = 0; i < config.customers; i++) {
     const [min, max] = customerRange();
     const spec: QuerySpec = { minScore: toScore(min), maxScore: toScore(max), limit };
-    events.push({ kind: 'query-add', spec });
+    yield { kind: 'query-add', spec };
   }
+
+  const up_start = performance.now()
+  console.log(`[perf] seeding queries took ${(up_start - query_start).toFixed(2)} ms`);
 
   // Periodic updates
   for (let tick = 0; tick < config.duration; tick++) {
@@ -143,7 +153,7 @@ const buildEvents = (): StreamItem<PerfDocState>[] => {
       const old = docStates.get(id) ?? null;
       const updated = createDoc(randomScore());
       updateDoc(id, updated);
-      events.push({ kind: 'doc-change', change: { id, old, new: updated } });
+      yield { kind: 'doc-change', change: { id, old, new: updated } };
     }
 
     // inserts
@@ -151,7 +161,7 @@ const buildEvents = (): StreamItem<PerfDocState>[] => {
       const id = toDocId(nextDocNumericId++);
       const state = createDoc(randomScore());
       trackDoc(id, state);
-      events.push({ kind: 'doc-change', change: { id, old: null, new: state } });
+      yield { kind: 'doc-change', change: { id, old: null, new: state } };
     }
 
     // deletes
@@ -161,11 +171,11 @@ const buildEvents = (): StreamItem<PerfDocState>[] => {
       const old = docStates.get(id) ?? null;
       if (!old) continue;
       removeDoc(id);
-      events.push({ kind: 'doc-change', change: { id, old, new: null } });
+      yield { kind: 'doc-change', change: { id, old, new: null } };
     }
   }
-
-  return events;
+  const end = performance.now();
+  console.log(`[perf] event generation took ${(end - up_start).toFixed(2)} ms`);
 };
 
 const formatNumber = (value: number) => value.toLocaleString('en-US');
@@ -187,7 +197,8 @@ async function main() {
   });
 
   const events = buildEvents();
-  console.log(`[perf] generated ${formatNumber(events.length)} stream items`);
+  const nbEvents = config.duration * (config.updatesPerTick + config.insertsPerTick + config.deletesPerTick) + config.documents + config.customers;
+  console.log(`[perf] generated ${formatNumber(nbEvents)} stream items`);
 
   let matchEvents = 0;
   let evictions = 0;
@@ -197,17 +208,17 @@ async function main() {
   const docStore = config.enableRetrieval ? new LmdbDocStore<PerfDocState>() : undefined;
   const retrievalJob = config.enableRetrieval && docStore
     ? new RetrievalJobWorker<PerfDocState>(
-        ids => docStore.getMany(ids),
-        event => {
-          retrievalBatches += 1;
-          retrievalDocs += event.docs.length;
-        }
-      )
+      ids => docStore.getMany(ids),
+      event => {
+        retrievalBatches += 1;
+        retrievalDocs += event.docs.length;
+      }
+    )
     : undefined;
 
   const start = performance.now();
   await runLimitStream(
-    fromArray(events),
+    fromIterable(events),
     getScore,
     (event: DownstreamEvent<PerfDocState>) => {
       if (event.kind === 'match') {
@@ -234,7 +245,7 @@ async function main() {
   const end = performance.now();
 
   const elapsedMs = end - start;
-  const eventsPerSec = (events.length / (elapsedMs / 1000)).toFixed(2);
+  const eventsPerSec = (nbEvents / (elapsedMs / 1000)).toFixed(2);
 
   console.log('\n[perf] summary');
   console.log(`  duration: ${elapsedMs.toFixed(2)} ms (~${eventsPerSec} events/s)`);
