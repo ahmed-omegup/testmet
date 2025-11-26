@@ -8,7 +8,8 @@ interface QueryInfo { id: QueryId; a: Score; k: bigint; max: Score; currentMatch
 
 interface AddResult {
     matched: QueryId[];
-    evicted: Array<[QueryId, DocId]>;
+    joined: QueryId[];
+    blocked: QueryId[];
 }
 
 const min = (a: bigint, b: bigint) => a < b ? a : b;
@@ -27,18 +28,19 @@ export class DynamicRangeQueries {
         this.queries.rangeAddKeysGreaterThan(value, 1n);
 
         const matched: QueryId[] = affected.map(q => q.id);
-        const evicted: Array<[QueryId, DocId]> = [];
+        const joined: QueryId[] = [];
+        const blocked: QueryId[] = [];
 
         for (const q of affected) {
-            if (q.currentMatches == q.k) {
-                const evictedDoc = this.resolveOverflow(q);
-                evicted.push([q.id, evictedDoc]);
-            } else {
+            if (q.currentMatches < q.k) {
                 q.currentMatches += 1n;
+                joined.push(q.id);
+            } else {
+                blocked.push(q.id);
             }
         }
 
-        return { matched, evicted };
+        return { matched, joined, blocked };
     }
 
     removeDocument(value: Score, id: DocId): QueryId[] {
@@ -133,13 +135,33 @@ export class DynamicRangeQueries {
         return diff < 0n ? 0n : diff;
     }
 
-    private resolveOverflow(q: QueryInfo): DocId {
-        const startRank = this.docs.rank(q.a);
-        let targetRank = startRank + q.k;
-        const [, ids, position] = this.docs.getAtRank(targetRank)!;
-        const evictedId = ids[Number(position)];
-        q.currentMatches = q.k;
-        return evictedId;
+    pickOverflowDoc(id: QueryId): DocId | null {
+        const info = this.idToQuery.get(id);
+        if (!info) return null;
+        if (info.currentMatches < info.k) return null;
+        return this.docForQueryAt(info, info.k);
+    }
+
+    fillGap(id: QueryId): DocId | null {
+        const info = this.idToQuery.get(id);
+        if (!info) return null;
+        if (info.currentMatches >= info.k) return null;
+        const doc = this.docForQueryAt(info, info.currentMatches);
+        if (!doc) return null;
+        info.currentMatches += 1n;
+        return doc;
+    }
+
+    private docForQueryAt(info: QueryInfo, offset: bigint): DocId | null {
+        if (offset < 0n) return null;
+        const startRank = this.docs.rank(info.a);
+        const tuple = this.docs.getAtRank(startRank + offset);
+        if (!tuple) return null;
+        const [score, ids, position] = tuple;
+        if (score > info.max) return null;
+        const index = Number(position);
+        assert(Number.isSafeInteger(index), 'doc index exceeds safe integer range');
+        return ids[index] ?? null;
     }
 
 }

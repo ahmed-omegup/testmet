@@ -59,6 +59,7 @@ export async function runLimitStream<DocState extends DocStateDom>(
         const matchesOld: QueryId[] = [];
         const matchesNew: QueryId[] = [];
         const evictions: Array<[QueryId, DocId]> = [];
+        const blockedCandidates: QueryId[] = [];
 
         if (oldScore !== null) {
           if (next && oldScore === getScore(next)) {
@@ -79,9 +80,36 @@ export async function runLimitStream<DocState extends DocStateDom>(
           matchesOld.push(...removed);
         }
         if (next) {
-          const { matched, evicted } = queries.addDocument(getScore(next), id);
+          const { matched, blocked } = queries.addDocument(getScore(next), id);
           matchesNew.push(...matched);
-          evictions.push(...evicted);
+          blockedCandidates.push(...blocked);
+        }
+
+        const matchesOldSet = new Set(matchesOld);
+        const matchesNewSet = new Set(matchesNew);
+
+        // Gap filling: queries that lost this doc should pull the next best candidate.
+        const lostQueries = new Set<QueryId>();
+        for (const q of matchesOld) {
+          if (!matchesNewSet.has(q)) lostQueries.add(q);
+        }
+        for (const q of lostQueries) {
+          const replacement = queries.fillGap(q);
+          if (replacement && retrievalJob) {
+            retrievalJob.register(replacement, q);
+          }
+        }
+
+        // Evictions: queries that only gained this doc and are already full.
+        const overflowQueries = new Set<QueryId>();
+        for (const q of blockedCandidates) {
+          if (!matchesOldSet.has(q)) overflowQueries.add(q);
+        }
+        for (const q of overflowQueries) {
+          const evictedDoc = queries.pickOverflowDoc(q);
+          if (evictedDoc) {
+            evictions.push([q, evictedDoc]);
+          }
         }
 
         if (matchesOld.length || matchesNew.length || evictions.length) {

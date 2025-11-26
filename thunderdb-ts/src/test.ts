@@ -128,12 +128,42 @@ async function testQueryAddSeedsRetrievals() {
   await worker.stop();
 }
 
+async function testGapFillRegistersRetrievals() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'thunderdb-gap-'));
+  const store = new LmdbDocStore<DemoDocState>(dir);
+  const events: DownstreamEvent<DemoDocState>[] = [];
+  const worker = new RetrievalJobWorker<DemoDocState>(
+    ids => store.getMany(ids),
+    e => events.push(e),
+    { batchIntervalMs: 1 }
+  );
+  const q: QuerySpec = { minScore: score(0), maxScore: score(100), limit: 2n };
+  const items: StreamItem<DemoDocState>[] = [
+    { kind: 'doc-change', change: { id: did(1), old: null, new: docState(10) } },
+    { kind: 'doc-change', change: { id: did(2), old: null, new: docState(20) } },
+    { kind: 'doc-change', change: { id: did(3), old: null, new: docState(30) } },
+    { kind: 'query-add', spec: q },
+    { kind: 'doc-change', change: { id: did(2), old: docState(20), new: null } },
+  ];
+  await runLimitStream(fromArray(items), getScore, e => events.push(e), { retrievalJob: worker, docStore: store });
+  await waitFor(
+    () => events.some(evt => evt.kind === 'retrieval' && (evt as RetrievalEvent<DemoDocState>).docs.some(doc => doc.docId === did(3))),
+    500
+  );
+  const retrievalEvents = events.filter(evt => evt.kind === 'retrieval') as RetrievalEvent<DemoDocState>[];
+  const gapEvent = retrievalEvents.find(evt => evt.docs.some(doc => doc.docId === did(3)));
+  assert(gapEvent, 'expected retrieval event for replacement doc');
+  assert(gapEvent.docs.some(doc => doc.docId === did(3) && doc.queries.includes(qid(1))), 'replacement doc should target query');
+  await worker.stop();
+}
+
 async function main() {
   await testBasic();
   await testLimitPlaceholder();
   await testEvictions();
   await testRetrievalJobWorker();
   await testQueryAddSeedsRetrievals();
+  await testGapFillRegistersRetrievals();
   console.log('Tests passed');
 }
 
