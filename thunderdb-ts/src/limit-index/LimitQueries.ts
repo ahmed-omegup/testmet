@@ -110,6 +110,12 @@ export class DynamicRangeQueries {
         return this.docs.collectRange(info.a, info.max, info.k);
     }
 
+    seedDocuments(entries: Array<{ id: DocId; score: Score }>): void {
+        for (const { id, score } of entries) {
+            this.docs.add(score, id);
+        }
+    }
+
     private collectQueriesForValue(v: Score): QueryInfo[] {
         const cutoff = this.docs.rank(v);
         const out: QueryInfo[] = [];

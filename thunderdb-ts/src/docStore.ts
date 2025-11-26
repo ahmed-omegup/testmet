@@ -22,6 +22,15 @@ export class LmdbDocStore<DocState extends DocStateDom> {
     this.db.putSync(id.toString(), state);
   }
 
+  putMany(entries: ReadonlyArray<[DocId, DocState]>): void {
+    if (entries.length === 0) return;
+    this.db.transactionSync(() => {
+      for (const [id, state] of entries) {
+        this.db.putSync(id.toString(), state);
+      }
+    });
+  }
+
   delete(id: DocId): void {
     this.db.removeSync(id.toString());
   }

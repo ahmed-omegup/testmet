@@ -114,24 +114,34 @@ const customerRange = (): [number, number] => {
   return [start, Math.min(config.range, start + width)];
 };
 
+const SEED_BATCH_SIZE = Number(process.env.PERF_SEED_BATCH ?? 4096);
+
 const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
   let nextDocNumericId = config.documents;
-  const seed_start = performance.now()
+  const seedStart = performance.now();
+  const seedBuffer: Array<{ id: DocId; state: PerfDocState }> = [];
 
-  // Seed documents
+  const flushSeed = () => {
+    if (!seedBuffer.length) return;
+    const batch = seedBuffer.splice(0, seedBuffer.length);
+    return { kind: 'seed-docs', docs: batch } as StreamItem<PerfDocState>;
+  };
+
   for (let i = 0; i < config.documents; i++) {
     const id = toDocId(i);
     const state = createDoc(randomScore());
     trackDoc(id, state);
-    if( i % 1000 === 0 && i > 0) {
-      const intermediate = performance.now();
-      console.log(`[perf] seeded ${i} documents in ${(intermediate - seed_start).toFixed(2)} ms`);
+    seedBuffer.push({ id, state });
+    if (seedBuffer.length >= SEED_BATCH_SIZE) {
+      const event = flushSeed();
+      if (event) yield event;
     }
-    yield { kind: 'doc-change', change: { id, old: null, new: state } };
   }
+  const leftoverSeed = flushSeed();
+  if (leftoverSeed) yield leftoverSeed;
 
-  const query_start = performance.now()
-  console.log(`[perf] seeding documents took ${(query_start - seed_start).toFixed(2)} ms`);
+  const queryStart = performance.now();
+  console.log(`[perf] seeded ${config.documents.toLocaleString('en-US')} documents in ${(queryStart - seedStart).toFixed(2)} ms`);
 
   // Register queries (customers)
   const limit = BigInt(config.queryLimit);
@@ -141,8 +151,8 @@ const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
     yield { kind: 'query-add', spec };
   }
 
-  const up_start = performance.now()
-  console.log(`[perf] seeding queries took ${(up_start - query_start).toFixed(2)} ms`);
+  const upStart = performance.now();
+  console.log(`[perf] seeding queries took ${(upStart - queryStart).toFixed(2)} ms`);
 
   // Periodic updates
   for (let tick = 0; tick < config.duration; tick++) {
@@ -175,7 +185,8 @@ const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
     }
   }
   const end = performance.now();
-  console.log(`[perf] event generation took ${(end - up_start).toFixed(2)} ms`);
+  const nbEvents = config.duration * (config.updatesPerTick + config.insertsPerTick + config.deletesPerTick)
+  console.log(`[perf] ${nbEvents} events processing took ${(end - upStart).toFixed(2)} ms`);
 };
 
 const formatNumber = (value: number) => value.toLocaleString('en-US');
@@ -197,7 +208,9 @@ async function main() {
   });
 
   const events = buildEvents();
-  const nbEvents = config.duration * (config.updatesPerTick + config.insertsPerTick + config.deletesPerTick) + config.documents + config.customers;
+  const seedEventCount = Math.ceil(config.documents / SEED_BATCH_SIZE);
+  const nbEvents = config.duration * (config.updatesPerTick + config.insertsPerTick + config.deletesPerTick)
+    + seedEventCount + config.customers;
   console.log(`[perf] generated ${formatNumber(nbEvents)} stream items`);
 
   let matchEvents = 0;
@@ -217,8 +230,8 @@ async function main() {
     : undefined;
 
   const start = performance.now();
-  await runLimitStream(
-    fromIterable(events),
+  runLimitStream(
+    events,
     getScore,
     (event: DownstreamEvent<PerfDocState>) => {
       if (event.kind === 'match') {

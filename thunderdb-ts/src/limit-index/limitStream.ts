@@ -7,7 +7,8 @@ import { LmdbDocStore } from '../docStore';
 export type StreamItem<DocState extends DocStateDom> =
   | { kind: 'doc-change'; change: DocChange<DocState> }
   | { kind: 'query-add'; spec: QuerySpec }
-  | { kind: 'query-remove'; id: QueryId };
+  | { kind: 'query-remove'; id: QueryId }
+  | { kind: 'seed-docs'; docs: Array<{ id: DocId; state: DocState }> };
 
 export interface LimitStreamOptions<DocState extends DocStateDom> {
   retrievalJob?: RetrievalJobWorker<DocState>;
@@ -25,18 +26,12 @@ const handleChange = <DocState extends DocStateDom>(
   const { id, old, new: next } = item;
   const oldScore = old ? getScore(old) : null;
   const retrievalJob = options.retrievalJob;
-  const docStore = options.docStore;
 
   const notifyRetrieval = () => {
     if (retrievalJob) {
       retrievalJob.resolveDoc(id);
     }
   };
-
-  if (docStore) {
-    if (next) docStore.put(id, next);
-    else docStore.delete(id);
-  }
 
   const matchesOld: QueryId[] = [];
   const matchesNew: QueryId[] = [];
@@ -108,42 +103,70 @@ const handleChange = <DocState extends DocStateDom>(
   notifyRetrieval();
 }
 
-// Stateless limit stream operator (stores only per-query counts already tracked in DynamicRangeQueries)
-export async function runLimitStream<DocState extends DocStateDom>(
-  items: AsyncIterable<StreamItem<DocState>>,
+const handleItem = <DocState extends DocStateDom>(
+  item: StreamItem<DocState>,
+  queries: DynamicRangeQueries,
   getScore: (state: DocState) => Score,
   emit: (e: DownstreamEvent<DocState>) => void,
   options: LimitStreamOptions<DocState> = {}
-): Promise<void> {
-  const queries = new DynamicRangeQueries();
+) => {
   const retrievalJob = options.retrievalJob;
   const docStore = options.docStore;
-  for await (const item of items) {
-    switch (item.kind) {
-      case 'query-add': {
-        const id = queries.addQuery(item.spec.minScore, item.spec.limit, item.spec.maxScore);
-        if (retrievalJob) {
-          const seedDocs = queries.getDocsForQuery(id);
-          if (BigInt(seedDocs.length) !== queries.getQueryInfo(id)?.currentMatches) throw new Error('Inconsistent query state detected when adding query');
-          for (const docId of seedDocs) {
-            retrievalJob.register(docId, id);
-          }
+  switch (item.kind) {
+    case 'query-add': {
+      const id = queries.addQuery(item.spec.minScore, item.spec.limit, item.spec.maxScore);
+      if (retrievalJob) {
+        const seedDocs = queries.getDocsForQuery(id);
+        if (BigInt(seedDocs.length) !== queries.getQueryInfo(id)?.currentMatches) throw new Error('Inconsistent query state detected when adding query');
+        for (const docId of seedDocs) {
+          retrievalJob.register(docId, id);
         }
-        break;
       }
-      case 'query-remove': {
-        queries.removeQuery(item.id);
-        break;
-      }
-      case 'doc-change': {
-        handleChange(item.change, queries, getScore, emit, options); 
-        break;
-      }
+      break;
     }
+    case 'query-remove': {
+      queries.removeQuery(item.id);
+      break;
+    }
+    case 'seed-docs': {
+      if (docStore && item.docs.length) {
+        const entries: Array<[DocId, DocState]> = item.docs.map(doc => [doc.id, doc.state]);
+        docStore.putMany(entries);
+      }
+      queries.seedDocuments(item.docs.map(doc => ({ id: doc.id, score: getScore(doc.state) })));
+      break;
+    }
+    case 'doc-change': {
+      if (docStore) {
+        const { id, new: next } = item.change;
+        if (next) docStore.put(id, next);
+        else docStore.delete(id);
+      }
+      handleChange(item.change, queries, getScore, emit, options);
+      break;
+    }
+  }
+}
+
+
+// Stateless limit stream operator (stores only per-query counts already tracked in DynamicRangeQueries)
+export function runLimitStream<DocState extends DocStateDom>(
+  items: Iterable<StreamItem<DocState>>,
+  getScore: (state: DocState) => Score,
+  emit: (e: DownstreamEvent<DocState>) => void,
+  options: LimitStreamOptions<DocState> = {}
+): void {
+  const queries = new DynamicRangeQueries();
+  for (const item of items) {
+    handleItem(item, queries, getScore, emit, options);
   }
 }
 
 // Helper to build an async iterable from an array (tests / demos)
 export async function* fromIterable<DocState extends DocStateDom>(items: Iterable<StreamItem<DocState>>): AsyncIterable<StreamItem<DocState>> {
   for (const i of items) yield i;
+}
+
+export function fromArray<DocState extends DocStateDom>(items: StreamItem<DocState>[]): AsyncIterable<StreamItem<DocState>> {
+  return fromIterable(items);
 }
