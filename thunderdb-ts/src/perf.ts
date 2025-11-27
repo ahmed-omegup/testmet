@@ -141,7 +141,7 @@ const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
   if (leftoverSeed) yield leftoverSeed;
 
   const queryStart = performance.now();
-  console.log(`[perf] seeded ${config.documents.toLocaleString('en-US')} documents in ${(queryStart - seedStart).toFixed(2)} ms`);
+  if(!debugEvictions) console.log(`[perf] seeded ${config.documents.toLocaleString('en-US')} documents in ${(queryStart - seedStart).toFixed(2)} ms`);
 
   // Register queries (customers)
   const limit = BigInt(config.queryLimit);
@@ -152,7 +152,7 @@ const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
   }
 
   const upStart = performance.now();
-  console.log(`[perf] seeding queries took ${(upStart - queryStart).toFixed(2)} ms`);
+  if(!debugEvictions) if(!debugEvictions) console.log(`[perf] seeding queries took ${(upStart - queryStart).toFixed(2)} ms`);
 
   // Periodic updates
   for (let tick = 0; tick < config.duration; tick++) {
@@ -186,13 +186,13 @@ const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
   }
   const end = performance.now();
   const nbEvents = config.duration * (config.updatesPerTick + config.insertsPerTick + config.deletesPerTick)
-  console.log(`[perf] ${nbEvents} events processing took ${(end - upStart).toFixed(2)} ms`);
+  if(!debugEvictions) if(!debugEvictions) console.log(`[perf] ${nbEvents} events processing took ${(end - upStart).toFixed(2)} ms`);
 };
 
 const formatNumber = (value: number) => value.toLocaleString('en-US');
 
 async function main() {
-  console.log('[perf] configuration:', {
+  if(!debugEvictions) console.log('[perf] configuration:', {
     seed: config.seed,
     documents: config.documents,
     customers: config.customers,
@@ -211,7 +211,7 @@ async function main() {
   const seedEventCount = Math.ceil(config.documents / SEED_BATCH_SIZE);
   const nbEvents = config.duration * (config.updatesPerTick + config.insertsPerTick + config.deletesPerTick)
     + seedEventCount + config.customers;
-  console.log(`[perf] generated ${formatNumber(nbEvents)} stream items`);
+  if(!debugEvictions) console.log(`[perf] generated ${formatNumber(nbEvents)} stream items`);
 
   let matchEvents = 0;
   let evictions = 0;
@@ -242,6 +242,14 @@ async function main() {
     getScore,
     (event: DownstreamEvent<PerfDocState>) => {
       if (debugEvictions) {
+        if(event.kind === 'match') {
+          event.matchesNew.sort()
+          event.evictions.sort()
+          event.matchesOld.sort()
+        }
+        if(event.kind === 'retrieval') {
+          event.docs.sort()
+        }
         console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
       }
       if (event.kind === 'match') {
@@ -262,14 +270,14 @@ async function main() {
   const elapsedMs = end - start;
   const eventsPerSec = (nbEvents / (elapsedMs / 1000)).toFixed(2);
 
-  console.log('\n[perf] summary');
+  if(!debugEvictions) {console.log('\n[perf] summary');
   console.log(`  duration: ${elapsedMs.toFixed(2)} ms (~${eventsPerSec} events/s)`);
   console.log(`  match events: ${formatNumber(matchEvents)} (evictions: ${formatNumber(evictions)})`);
   if (config.enableRetrieval) {
     console.log(`  retrieval batches: ${formatNumber(retrievalBatches)} (docs: ${formatNumber(retrievalDocs)})`);
   } else {
     console.log('  retrieval batches: disabled');
-  }
+  }}
 }
 
 main().catch(err => {
