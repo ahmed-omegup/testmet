@@ -15,6 +15,8 @@ export interface LimitStreamOptions<DocState extends DocStateDom> {
   docStore?: LmdbDocStore<DocState>;
 }
 
+const DEBUG_QUERY_ID = process.env.LIMIT_DEBUG_QUERY ? (BigInt(process.env.LIMIT_DEBUG_QUERY) as QueryId) : null;
+
 
 const handleChange = <DocState extends DocStateDom>(
   item: DocChange<DocState>,
@@ -70,9 +72,24 @@ const handleChange = <DocState extends DocStateDom>(
   for (const q of matchesOld) {
     if (!matchesNewSet.has(q)) lostQueries.add(q);
   }
+  if (DEBUG_QUERY_ID !== null && lostQueries.has(DEBUG_QUERY_ID)) {
+    console.error('[debug lostQueries]', {
+      docId: id.toString(),
+      lostId: DEBUG_QUERY_ID.toString(),
+      matchesOld,
+      matchesNew,
+    });
+  }
   for (const q of lostQueries) {
     const replacement = queries.fillGap(q);
     if (replacement && retrievalJob) {
+      if (DEBUG_QUERY_ID !== null && q === DEBUG_QUERY_ID) {
+        console.error('[debug fillGap replacement]', {
+          docId: id.toString(),
+          queryId: q.toString(),
+          replacement: replacement.toString(),
+        });
+      }
       retrievalJob.register(replacement, q);
     }
   }
@@ -100,6 +117,7 @@ const handleChange = <DocState extends DocStateDom>(
       evictions,
     });
   }
+  queries.debugVerifyState(`handleChange doc=${id.toString()}`);
   notifyRetrieval();
 }
 
