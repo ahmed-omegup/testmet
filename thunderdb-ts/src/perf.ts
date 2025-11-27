@@ -105,11 +105,9 @@ const pickDocId = (rand: () => number): DocId | null => {
 };
 
 const customerRange = (rand: () => number): [number, number] => {
-  const widthSpan = Math.max(1, config.rangeMax - config.rangeMin + 1);
-  const width = config.rangeMin + Math.floor(rand() * widthSpan);
-  const startMax = Math.max(0, config.range - width - 1);
-  const start = startMax > 0 ? Math.floor(rand() * startMax) : 0;
-  return [start, Math.min(config.range, start + width)];
+  const width = 100 + Math.min(rand() * 500);
+  const a = rand() * (config.range - width);
+  return [Math.floor(a), Math.floor(a + width)];
 };
 
 const SEED_BATCH_SIZE = Number(process.env.PERF_SEED_BATCH ?? 4096);
@@ -218,7 +216,9 @@ async function main() {
   let retrievalBatches = 0;
   let retrievalDocs = 0;
 
-  const docStore = config.enableRetrieval ? new LmdbDocStore<PerfDocState>() : undefined;
+  const docStore = config.enableRetrieval
+    ? new LmdbDocStore<PerfDocState>({ durability: 'relaxed' })
+    : undefined;
   const retrievalJob = config.enableRetrieval && docStore
     ? new RetrievalJobWorker<PerfDocState>(
       ids => docStore.getMany(ids),

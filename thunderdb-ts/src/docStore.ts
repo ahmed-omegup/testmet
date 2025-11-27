@@ -4,17 +4,41 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { DocId, DocStateDom } from './limit-index/types';
 
+export type LmdbDurability = 'durable' | 'relaxed';
+
+export interface LmdbDocStoreOptions {
+  directory?: string;
+  durability?: LmdbDurability;
+}
+
+function resolveOptions(input?: string | LmdbDocStoreOptions): { directory: string; durability: LmdbDurability } {
+  const defaultDurability: LmdbDurability = process.env.THUNDERDB_DOCSTORE_DURABILITY === 'relaxed' ? 'relaxed' : 'durable';
+  if (!input || typeof input === 'string') {
+    const directory = input ?? path.join(os.tmpdir(), `thunderdb-docstore-${process.pid}-${Date.now()}`);
+    return { directory, durability: defaultDurability };
+  }
+  return {
+    directory: input.directory ?? path.join(os.tmpdir(), `thunderdb-docstore-${process.pid}-${Date.now()}`),
+    durability: input.durability ?? defaultDurability,
+  };
+}
+
 export class LmdbDocStore<DocState extends DocStateDom> {
   private db: RootDatabase<DocState>;
   private directory: string;
 
-  constructor(dir?: string) {
-    this.directory = dir ?? path.join(os.tmpdir(), `thunderdb-docstore-${process.pid}-${Date.now()}`);
+  constructor(options?: string | LmdbDocStoreOptions) {
+    const resolved = resolveOptions(options);
+    this.directory = resolved.directory;
     fs.mkdirSync(this.directory, { recursive: true });
+    const relaxed = resolved.durability === 'relaxed';
     this.db = open<DocState>({
       path: this.directory,
       compression: true,
       mapSize: 2 * 1024 * 1024 * 1024, // 2 GiB default, adjustable later
+      noSync: relaxed,
+      noMetaSync: relaxed,
+      noMemInit: relaxed,
     });
   }
 
