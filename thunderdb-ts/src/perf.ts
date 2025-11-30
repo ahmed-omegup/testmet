@@ -43,6 +43,7 @@ const remoteWorkerHost = remoteWorkerHostEnv ?? '127.0.0.1';
 const remoteWorkerPort = Number(process.env.PERF_WORKER_PORT ?? 4040);
 const remoteWorkerBatchSize = Math.max(1, Number(process.env.PERF_WORKER_BATCH_SIZE ?? 512));
 const remoteWorkerBatchMs = Math.max(0, Number(process.env.PERF_WORKER_BATCH_MS ?? 4));
+const progressStep = Math.max(1, Number(process.env.PERF_PROGRESS_STEP ?? 10000));
 
 const config: PerfConfig & {
   range: number;
@@ -265,15 +266,21 @@ async function runLocal(
     : undefined;
 
   const start = performance.now();
-  runLimitStream(
-    (function* () {
-      for (const e of events) {
-        if (debugEvictions) {
-          console.log('<<', JSON.stringify(e, (k, v) => typeof v === 'bigint' ? String(v) : v));
-        }
-        yield e;
+  let streamedEvents = 0;
+  const instrumentedEvents = (function* () {
+    for (const e of events) {
+      streamedEvents += 1;
+      if (!debugEvictions && streamedEvents % progressStep === 0) {
+        console.log(`[perf] processed ${formatNumber(streamedEvents)} events (local)`);
       }
-    })(),
+      if (debugEvictions) {
+        console.log('<<', JSON.stringify(e, (k, v) => typeof v === 'bigint' ? String(v) : v));
+      }
+      yield e;
+    }
+  })();
+  runLimitStream(
+    instrumentedEvents,
     getScore,
     (event: DownstreamEvent<PerfDocState>) => {
       if (debugEvictions) {
@@ -367,6 +374,7 @@ async function runRemote(
     await waitFor('run-accepted');
 
     const batch: ReturnType<typeof streamItemToWire>[] = [];
+    let eventsSent = 0;
     let lastFlush = performance.now();
     const flushBatch = async () => {
       if (!batch.length) return;
@@ -377,16 +385,25 @@ async function runRemote(
 
     for (const item of events) {
       batch.push(streamItemToWire(item));
+      eventsSent += 1;
+      if (!debugEvictions && eventsSent % progressStep === 0) {
+        console.log(`[perf] sent ${formatNumber(eventsSent)} events to worker`);
+      }
       const now = remoteWorkerBatchMs > 0 ? performance.now() : 0;
       if (batch.length >= remoteWorkerBatchSize || (remoteWorkerBatchMs > 0 && now - lastFlush >= remoteWorkerBatchMs)) {
         await flushBatch();
       }
     }
+    if (eventsSent && eventsSent % progressStep !== 0 && !debugEvictions) {
+      console.log(`[perf] sent ${formatNumber(eventsSent)} events to worker`);
+    }
     await flushBatch();
+    console.log('batch flushed');
     await writeMessage(socket, { type: 'end' });
 
     while (true) {
       const message = await awaitMessage();
+      console.log('message received', message);
       if (message.type === 'summary') {
         return message.summary;
       }

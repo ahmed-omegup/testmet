@@ -21,6 +21,8 @@ const PROTOCOL_VERSION = 1;
 const DEFAULT_PORT = Number(process.env.WORKER_PORT ?? 4040);
 const DEFAULT_HOST = process.env.WORKER_HOST ?? '0.0.0.0';
 const DOCSTORE_DURABILITY: LmdbDurability = process.env.THUNDERDB_DOCSTORE_DURABILITY === 'relaxed' ? 'relaxed' : 'durable';
+const WORKER_PROGRESS_STEP = Math.max(1, Number(process.env.WORKER_PROGRESS_STEP ?? 10000));
+const formatNumber = (value: number) => value.toLocaleString('en-US');
 
 type RunState = {
   queue: AsyncStreamQueue;
@@ -109,6 +111,16 @@ const handleDownstreamEvent = (state: RunState, event: DownstreamEvent<SocketDoc
   if (event.kind === 'match') {
     state.matchEvents += 1;
     state.evictions += event.evictions.length;
+    return;
+  }
+  state.retrievalBatches += 1;
+  state.retrievalDocs += event.docs.length;
+};
+
+const logWorkerProgressIfNeeded = (state: RunState): void => {
+  if (state.eventsProcessed === 0) return;
+  if (state.eventsProcessed % WORKER_PROGRESS_STEP === 0) {
+    console.log(`[worker] processed ${formatNumber(state.eventsProcessed)} events`);
   }
 };
 
@@ -175,9 +187,11 @@ const startServer = () => {
                 retrievalJob: localState.retrievalJob,
                 docStore: localState.docStore,
               });
+              console.log('[worker] run completed', performance.now() - localState.startTime);
               if (localState.retrievalJob) {
                 await localState.retrievalJob.stop();
               }
+              console.log('[worker] retrieval job stopped', performance.now() - localState.startTime);
               const durationMs = performance.now() - localState.startTime;
               return buildSummary(localState, durationMs);
             } finally {
@@ -196,6 +210,7 @@ const startServer = () => {
             const item = wireToStreamItem(payload.item);
             runState.queue.push(item);
             runState.eventsProcessed += 1;
+            logWorkerProgressIfNeeded(runState);
           } catch (err) {
             sendMessage(socket, { type: 'error', message: 'failed to ingest event' });
           }
@@ -210,11 +225,13 @@ const startServer = () => {
             sendMessage(socket, { type: 'error', message: 'empty event batch' });
             return;
           }
+          console.log('event-batch received', payload.items.length);
           try {
             for (const wireItem of payload.items) {
               const item = wireToStreamItem(wireItem);
               runState.queue.push(item);
               runState.eventsProcessed += 1;
+              logWorkerProgressIfNeeded(runState);
             }
           } catch (err) {
             sendMessage(socket, { type: 'error', message: 'failed to ingest batch' });
@@ -222,6 +239,7 @@ const startServer = () => {
           break;
         }
         case 'end': {
+          console.log('[worker] received end of stream');
           if (!runPromise || !runState) {
             sendMessage(socket, { type: 'error', message: 'no active run' });
             return;
