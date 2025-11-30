@@ -1,13 +1,24 @@
 import dotenv from 'dotenv';
+import net from 'node:net';
+import readline from 'node:readline';
+import { once } from 'node:events';
 import { performance } from 'node:perf_hooks';
-import { runLimitStream, StreamItem, fromIterable } from './limit-index/limitStream';
-import { DocStateDom, DocId, Score, QuerySpec, DownstreamEvent } from './limit-index/types';
+import { runLimitStream, StreamItem } from './limit-index/limitStream';
+import { DocId, Score, QuerySpec, DownstreamEvent } from './limit-index/types';
 import { RetrievalJobWorker } from './retrievalJob';
 import { LmdbDocStore } from './docStore';
+import {
+  ClientMessage,
+  ServerMessage,
+  SocketDocState,
+  streamItemToWire,
+  WorkerRunConfig,
+  WorkerRunSummary,
+} from './socketProtocol';
 
 dotenv.config({ path: process.env.PERF_ENV || '.env' });
 
-type PerfDocState = DocStateDom & { scoreValue: Score };
+type PerfDocState = SocketDocState;
 
 type PerfConfig = {
   seed: number;
@@ -25,6 +36,13 @@ type PerfConfig = {
 };
 
 const debugEvictions = process.env.PERF_DEBUG_EVICS === '1';
+const remoteWorkerHostEnv = process.env.PERF_WORKER_HOST;
+const remoteWorkerToggle = process.env.PERF_REMOTE_WORKER;
+const remoteWorkerEnabled = remoteWorkerToggle === '1' || (remoteWorkerToggle === undefined && Boolean(remoteWorkerHostEnv));
+const remoteWorkerHost = remoteWorkerHostEnv ?? '127.0.0.1';
+const remoteWorkerPort = Number(process.env.PERF_WORKER_PORT ?? 4040);
+const remoteWorkerBatchSize = Math.max(1, Number(process.env.PERF_WORKER_BATCH_SIZE ?? 512));
+const remoteWorkerBatchMs = Math.max(0, Number(process.env.PERF_WORKER_BATCH_MS ?? 4));
 
 const config: PerfConfig & {
   range: number;
@@ -211,15 +229,32 @@ async function main() {
     + seedEventCount + config.customers;
   if(!debugEvictions) console.log(`[perf] generated ${formatNumber(nbEvents)} stream items`);
 
+  const workerConfig: WorkerRunConfig = { enableRetrieval: config.enableRetrieval };
+  let summary: WorkerRunSummary;
+  if (remoteWorkerEnabled) {
+    if(!debugEvictions) console.log(`[perf] using remote worker at ${remoteWorkerHost}:${remoteWorkerPort}`);
+    summary = await runRemote(events, workerConfig, remoteWorkerHost, remoteWorkerPort);
+  } else {
+    summary = await runLocal(events, workerConfig, nbEvents);
+  }
+
+  if(!debugEvictions) logSummary(summary);
+}
+
+async function runLocal(
+  events: Iterable<StreamItem<PerfDocState>>,
+  workerConfig: WorkerRunConfig,
+  nbEvents: number
+): Promise<WorkerRunSummary> {
   let matchEvents = 0;
   let evictions = 0;
   let retrievalBatches = 0;
   let retrievalDocs = 0;
 
-  const docStore = config.enableRetrieval
+  const docStore = workerConfig.enableRetrieval
     ? new LmdbDocStore<PerfDocState>({ durability: 'relaxed' })
     : undefined;
-  const retrievalJob = config.enableRetrieval && docStore
+  const retrievalJob = workerConfig.enableRetrieval && docStore
     ? new RetrievalJobWorker<PerfDocState>(
       ids => docStore.getMany(ids),
       event => {
@@ -236,19 +271,19 @@ async function main() {
         if (debugEvictions) {
           console.log('<<', JSON.stringify(e, (k, v) => typeof v === 'bigint' ? String(v) : v));
         }
-        yield e
+        yield e;
       }
     })(),
     getScore,
     (event: DownstreamEvent<PerfDocState>) => {
       if (debugEvictions) {
         if(event.kind === 'match') {
-          event.matchesNew.sort()
-          event.evictions.sort()
-          event.matchesOld.sort()
+          event.matchesNew.sort();
+          event.evictions.sort();
+          event.matchesOld.sort();
         }
         if(event.kind === 'retrieval') {
-          event.docs.sort()
+          event.docs.sort();
         }
         console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
       }
@@ -265,20 +300,137 @@ async function main() {
   if (retrievalJob) {
     await retrievalJob.stop();
   }
-  const end = performance.now();
+  const durationMs = performance.now() - start;
 
-  const elapsedMs = end - start;
-  const eventsPerSec = (nbEvents / (elapsedMs / 1000)).toFixed(2);
+  return {
+    durationMs,
+    eventsProcessed: nbEvents,
+    matchEvents,
+    evictions,
+    retrievalBatches,
+    retrievalDocs,
+  };
+}
 
-  if(!debugEvictions) {console.log('\n[perf] summary');
-  console.log(`  duration: ${elapsedMs.toFixed(2)} ms (~${eventsPerSec} events/s)`);
-  console.log(`  match events: ${formatNumber(matchEvents)} (evictions: ${formatNumber(evictions)})`);
+async function runRemote(
+  events: Iterable<StreamItem<PerfDocState>>,
+  workerConfig: WorkerRunConfig,
+  host: string,
+  port: number
+): Promise<WorkerRunSummary> {
+  const socket = net.createConnection({ host, port });
+  socket.setEncoding('utf8');
+  socket.on('error', err => {
+    console.error('[perf] worker socket error', err);
+  });
+  const rl = readline.createInterface({ input: socket, crlfDelay: Infinity });
+  const messages = readServerMessages(rl);
+
+  const awaitMessage = async (): Promise<ServerMessage> => {
+    const { value, done } = await messages.next();
+    if (done) throw new Error('worker disconnected');
+    return value;
+  };
+
+  const waitFor = async (type: ServerMessage['type']): Promise<void> => {
+    while (true) {
+      const message = await awaitMessage();
+      if (message.type === 'error') throw new Error(message.message);
+      if (message.type === type) return;
+    }
+  };
+
+  const closeConnection = () => {
+    rl.close();
+    socket.end();
+    socket.destroy();
+  };
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onConnect = () => {
+        socket.off('error', onError);
+        resolve();
+      };
+      const onError = (err: Error) => {
+        socket.off('connect', onConnect);
+        reject(err);
+      };
+      socket.once('connect', onConnect);
+      socket.once('error', onError);
+    });
+
+    await writeMessage(socket, { type: 'hello', role: 'client', version: 1 });
+    await waitFor('hello');
+
+    await writeMessage(socket, { type: 'run', config: workerConfig });
+    await waitFor('run-accepted');
+
+    const batch: ReturnType<typeof streamItemToWire>[] = [];
+    let lastFlush = performance.now();
+    const flushBatch = async () => {
+      if (!batch.length) return;
+      const payload = batch.splice(0, batch.length);
+      await writeMessage(socket, { type: 'event-batch', items: payload });
+      lastFlush = performance.now();
+    };
+
+    for (const item of events) {
+      batch.push(streamItemToWire(item));
+      const now = remoteWorkerBatchMs > 0 ? performance.now() : 0;
+      if (batch.length >= remoteWorkerBatchSize || (remoteWorkerBatchMs > 0 && now - lastFlush >= remoteWorkerBatchMs)) {
+        await flushBatch();
+      }
+    }
+    await flushBatch();
+    await writeMessage(socket, { type: 'end' });
+
+    while (true) {
+      const message = await awaitMessage();
+      if (message.type === 'summary') {
+        return message.summary;
+      }
+      if (message.type === 'error') {
+        throw new Error(message.message);
+      }
+    }
+  } finally {
+    closeConnection();
+  }
+}
+
+function logSummary(summary: WorkerRunSummary): void {
+  const eventsPerSec = summary.durationMs === 0
+    ? 'n/a'
+    : (summary.eventsProcessed / (summary.durationMs / 1000)).toFixed(2);
+  console.log('\n[perf] summary');
+  console.log(`  duration: ${summary.durationMs.toFixed(2)} ms (~${eventsPerSec} events/s)`);
+  console.log(`  match events: ${formatNumber(summary.matchEvents)} (evictions: ${formatNumber(summary.evictions)})`);
   if (config.enableRetrieval) {
-    console.log(`  retrieval batches: ${formatNumber(retrievalBatches)} (docs: ${formatNumber(retrievalDocs)})`);
+    console.log(`  retrieval batches: ${formatNumber(summary.retrievalBatches)} (docs: ${formatNumber(summary.retrievalDocs)})`);
   } else {
     console.log('  retrieval batches: disabled');
-  }}
+  }
 }
+
+async function* readServerMessages(rl: readline.Interface): AsyncGenerator<ServerMessage> {
+  for await (const line of rl) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      yield JSON.parse(trimmed) as ServerMessage;
+    } catch (err) {
+      console.error('[perf] worker emitted invalid json', err);
+    }
+  }
+}
+
+const writeMessage = async (socket: net.Socket, message: ClientMessage): Promise<void> => {
+  if (!socket.writable) throw new Error('worker connection closed');
+  const payload = `${JSON.stringify(message)}\n`;
+  if (socket.write(payload)) return;
+  await once(socket, 'drain');
+};
 
 main().catch(err => {
   console.error('[perf] failed', err);

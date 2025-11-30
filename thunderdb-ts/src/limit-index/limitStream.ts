@@ -180,6 +180,18 @@ export function runLimitStream<DocState extends DocStateDom>(
   }
 }
 
+export async function runLimitStreamAsync<DocState extends DocStateDom>(
+  items: AsyncIterable<StreamItem<DocState>>,
+  getScore: (state: DocState) => Score,
+  emit: (e: DownstreamEvent<DocState>) => void,
+  options: LimitStreamOptions<DocState> = {}
+): Promise<void> {
+  const queries = new DynamicRangeQueries();
+  for await (const item of items) {
+    handleItem(item, queries, getScore, emit, options);
+  }
+}
+
 // Helper to build an async iterable from an array (tests / demos)
 export async function* fromIterable<DocState extends DocStateDom>(items: Iterable<StreamItem<DocState>>): AsyncIterable<StreamItem<DocState>> {
   for (const i of items) yield i;

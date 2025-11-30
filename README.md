@@ -44,6 +44,30 @@ docker compose up --build
 docker compose -f docker-compose-rethink.yml up --build
 ```
 
+### Test ThunderDB (worker + perf)
+Runs the ThunderDB limit-stream worker and the perf harness in separate containers that communicate over a TCP socket.
+
+```bash
+docker compose -f docker-compose-thunderdb.yml up --build
+```
+
+The compose file uses the `oven/bun` image for both services:
+
+- `thunderdb-worker` starts `src/socketWorker.ts` and listens on port `4100` (configurable via `WORKER_PORT`).
+- `thunderdb-perf` launches `src/perf.ts`, generates the event workload, and streams it to the worker over the internal Docker network.
+
+Environment variables prefixed with `PERF_` mirror the existing standalone perf script. Remote execution is enabled via:
+
+```
+PERF_REMOTE_WORKER=1
+PERF_WORKER_HOST=<hostname>
+PERF_WORKER_PORT=<port>
+```
+
+For local development outside of Docker you can run the worker directly (`npm run worker`) and then execute `PERF_REMOTE_WORKER=1 PERF_WORKER_HOST=127.0.0.1 npm run perf`.
+
+The worker honors `THUNDERDB_DOCSTORE_DURABILITY` (`durable` or `relaxed`) to control LMDB sync behavior; the compose file sets it to `relaxed` to match the optimized perf profile.
+
 ### Monitor Resources
 In a separate terminal while tests are running:
 ```bash
