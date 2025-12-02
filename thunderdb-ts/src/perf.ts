@@ -15,6 +15,7 @@ import {
   WorkerRunConfig,
   WorkerRunSummary,
 } from './socketProtocol';
+import { createInProcessWorkerClient } from './transport';
 
 dotenv.config({ path: process.env.PERF_ENV || '.env' });
 
@@ -33,6 +34,7 @@ type PerfConfig = {
   rangeMax: number;
   density: number;
   enableRetrieval: boolean;
+  remoteWorkerEmbedded: boolean;
 };
 
 const debugEvictions = process.env.PERF_DEBUG_EVICS === '1';
@@ -41,7 +43,8 @@ const remoteWorkerToggle = process.env.PERF_REMOTE_WORKER;
 const remoteWorkerEnabled = remoteWorkerToggle === '1' || (remoteWorkerToggle === undefined && Boolean(remoteWorkerHostEnv));
 const remoteWorkerHost = remoteWorkerHostEnv ?? '127.0.0.1';
 const remoteWorkerPort = Number(process.env.PERF_WORKER_PORT ?? 4040);
-const remoteWorkerBatchSize = Math.max(1, Number(process.env.PERF_WORKER_BATCH_SIZE ?? 512));
+const remoteWorkerEmbedded = process.env.PERF_EMBED_WORKER === '1';
+const remoteWorkerBatchSize = Math.max(1, Number(process.env.PERF_WORKER_BATCH_SIZE ?? 40960));
 const remoteWorkerBatchMs = Math.max(0, Number(process.env.PERF_WORKER_BATCH_MS ?? 4));
 const progressStep = Math.max(1, Number(process.env.PERF_PROGRESS_STEP ?? 10000));
 
@@ -67,6 +70,7 @@ const config: PerfConfig & {
   updatesPerTick: 0,
   insertsPerTick: 0,
   deletesPerTick: 0,
+  remoteWorkerEmbedded
 };
 
 config.range = Math.max(1, Math.floor(config.documents / Math.max(1, config.density)));
@@ -209,20 +213,7 @@ const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
 const formatNumber = (value: number) => value.toLocaleString('en-US');
 
 async function main() {
-  if(!debugEvictions) console.log('[perf] configuration:', {
-    seed: config.seed,
-    documents: config.documents,
-    customers: config.customers,
-    duration: config.duration,
-    updateRate: config.updateRate,
-    insertRate: config.insertRate,
-    deleteRate: config.deleteRate,
-    queryLimit: config.queryLimit,
-    rangeMin: config.rangeMin,
-    rangeMax: config.rangeMax,
-    density: config.density,
-    enableRetrieval: config.enableRetrieval,
-  });
+  if(!debugEvictions) console.log('[perf] configuration:', config);
 
   const events = buildEvents();
   const seedEventCount = Math.ceil(config.documents / SEED_BATCH_SIZE);
@@ -233,8 +224,18 @@ async function main() {
   const workerConfig: WorkerRunConfig = { enableRetrieval: config.enableRetrieval };
   let summary: WorkerRunSummary;
   if (remoteWorkerEnabled) {
-    if(!debugEvictions) console.log(`[perf] using remote worker at ${remoteWorkerHost}:${remoteWorkerPort}`);
-    summary = await runRemote(events, workerConfig, remoteWorkerHost, remoteWorkerPort);
+    if (!debugEvictions) {
+      if (remoteWorkerEmbedded) {
+        console.log('[perf] using embedded worker transport');
+      } else {
+        console.log(`[perf] using remote worker at ${remoteWorkerHost}:${remoteWorkerPort}`);
+      }
+    }
+    summary = await runRemote(events, workerConfig, {
+      host: remoteWorkerHost,
+      port: remoteWorkerPort,
+      embedded: remoteWorkerEmbedded,
+    });
   } else {
     summary = await runLocal(events, workerConfig, nbEvents);
   }
@@ -319,24 +320,29 @@ async function runLocal(
   };
 }
 
+interface RemoteConnection {
+  write(message: ClientMessage): Promise<void>;
+  nextMessage(): Promise<ServerMessage>;
+  close(): void;
+}
+
+interface RemoteOptions {
+  host: string;
+  port: number;
+  embedded?: boolean;
+}
+
 async function runRemote(
   events: Iterable<StreamItem<PerfDocState>>,
   workerConfig: WorkerRunConfig,
-  host: string,
-  port: number
+  options: RemoteOptions
 ): Promise<WorkerRunSummary> {
-  const socket = net.createConnection({ host, port });
-  socket.setEncoding('utf8');
-  socket.on('error', err => {
-    console.error('[perf] worker socket error', err);
-  });
-  const rl = readline.createInterface({ input: socket, crlfDelay: Infinity });
-  const messages = readServerMessages(rl);
+  const connection = options.embedded
+    ? createEmbeddedRemoteConnection()
+    : await createTcpRemoteConnection(options.host, options.port);
 
   const awaitMessage = async (): Promise<ServerMessage> => {
-    const { value, done } = await messages.next();
-    if (done) throw new Error('worker disconnected');
-    return value;
+    return connection.nextMessage();
   };
 
   const waitFor = async (type: ServerMessage['type']): Promise<void> => {
@@ -347,30 +353,13 @@ async function runRemote(
     }
   };
 
-  const closeConnection = () => {
-    rl.close();
-    socket.end();
-    socket.destroy();
-  };
+  const write = (message: ClientMessage) => connection.write(message);
 
   try {
-    await new Promise<void>((resolve, reject) => {
-      const onConnect = () => {
-        socket.off('error', onError);
-        resolve();
-      };
-      const onError = (err: Error) => {
-        socket.off('connect', onConnect);
-        reject(err);
-      };
-      socket.once('connect', onConnect);
-      socket.once('error', onError);
-    });
-
-    await writeMessage(socket, { type: 'hello', role: 'client', version: 1 });
+    await write({ type: 'hello', role: 'client', version: 1 });
     await waitFor('hello');
 
-    await writeMessage(socket, { type: 'run', config: workerConfig });
+    await write({ type: 'run', config: workerConfig });
     await waitFor('run-accepted');
 
     const batch: ReturnType<typeof streamItemToWire>[] = [];
@@ -379,7 +368,7 @@ async function runRemote(
     const flushBatch = async () => {
       if (!batch.length) return;
       const payload = batch.splice(0, batch.length);
-      await writeMessage(socket, { type: 'event-batch', items: payload });
+      await write({ type: 'event-batch', items: payload });
       lastFlush = performance.now();
     };
 
@@ -398,12 +387,10 @@ async function runRemote(
       console.log(`[perf] sent ${formatNumber(eventsSent)} events to worker`);
     }
     await flushBatch();
-    console.log('batch flushed');
-    await writeMessage(socket, { type: 'end' });
+    await write({ type: 'end' });
 
     while (true) {
       const message = await awaitMessage();
-      console.log('message received', message);
       if (message.type === 'summary') {
         return message.summary;
       }
@@ -412,7 +399,7 @@ async function runRemote(
       }
     }
   } finally {
-    closeConnection();
+    connection.close();
   }
 }
 
@@ -442,11 +429,105 @@ async function* readServerMessages(rl: readline.Interface): AsyncGenerator<Serve
   }
 }
 
-const writeMessage = async (socket: net.Socket, message: ClientMessage): Promise<void> => {
+class AsyncMessageQueue<T> {
+  private queue: T[] = [];
+  private waiters: Array<{ resolve: (value: T) => void; reject: (err: Error) => void }> = [];
+  private closedError: Error | null = null;
+
+  push(value: T): void {
+    if (this.closedError) return;
+    const waiter = this.waiters.shift();
+    if (waiter) {
+      waiter.resolve(value);
+      return;
+    }
+    this.queue.push(value);
+  }
+
+  close(err?: Error): void {
+    if (this.closedError) return;
+    this.closedError = err ?? new Error('connection closed');
+    while (this.waiters.length) {
+      this.waiters.shift()!.reject(this.closedError);
+    }
+  }
+
+  async next(): Promise<T> {
+    if (this.queue.length) {
+      return this.queue.shift()!;
+    }
+    if (this.closedError) throw this.closedError;
+    return new Promise<T>((resolve, reject) => {
+      this.waiters.push({ resolve, reject });
+    });
+  }
+}
+
+const createEmbeddedRemoteConnection = (): RemoteConnection => {
+  const client = createInProcessWorkerClient();
+  const queue = new AsyncMessageQueue<ServerMessage>();
+
+  client.onLine(line => {
+    try { 
+      queue.push(line);
+    } catch (err) {
+      console.error('[perf] embedded worker emitted invalid json', err);
+    }
+  });
+  client.onClose(() => queue.close(new Error('worker disconnected')));
+  client.onError(err => queue.close(err));
+
+  return {
+    write: async (message: ClientMessage) => {
+      client.send(message);
+    },
+    nextMessage: () => queue.next(),
+    close: () => client.close(),
+  };
+};
+
+const createTcpRemoteConnection = async (host: string, port: number): Promise<RemoteConnection> => {
+  const socket = net.createConnection({ host, port });
+  socket.setEncoding('utf8');
+  socket.on('error', err => {
+    console.error('[perf] worker socket error', err);
+  });
+  const rl = readline.createInterface({ input: socket, crlfDelay: Infinity });
+  const messages = readServerMessages(rl);
+
+  await new Promise<void>((resolve, reject) => {
+    const onConnect = () => {
+      socket.off('error', onError);
+      resolve();
+    };
+    const onError = (err: Error) => {
+      socket.off('connect', onConnect);
+      reject(err);
+    };
+    socket.once('connect', onConnect);
+    socket.once('error', onError);
+  });
+
+  return {
+    write: (message: ClientMessage) => writeSocketMessage(socket, message),
+    nextMessage: async () => {
+      const { value, done } = await messages.next();
+      if (done) throw new Error('worker disconnected');
+      return value;
+    },
+    close: () => {
+      rl.close();
+      socket.end();
+      socket.destroy();
+    },
+  };
+};
+
+const writeSocketMessage = async (socket: net.Socket, message: ClientMessage): Promise<void> => {
   if (!socket.writable) throw new Error('worker connection closed');
   const payload = `${JSON.stringify(message)}\n`;
   if (socket.write(payload)) return;
-  // await once(socket, 'drain');
+  await once(socket, 'drain');
 };
 
 main().catch(err => {

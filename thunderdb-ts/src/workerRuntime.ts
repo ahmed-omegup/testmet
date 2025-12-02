@@ -6,7 +6,6 @@ import { LmdbDocStore, LmdbDurability } from './docStore';
 import { SocketDocState, WorkerRunConfig, WorkerRunSummary } from './socketProtocol';
 
 interface RunState {
-  queue: AsyncStreamQueue;
   docStore?: LmdbDocStore<SocketDocState>;
   retrievalJob?: RetrievalJobWorker<SocketDocState>;
   matchEvents: number;
@@ -17,39 +16,6 @@ interface RunState {
   startTime: number;
 }
 
-class AsyncStreamQueue {
-  private buffer: StreamItem<SocketDocState>[] = [];
-  private waiting: Array<() => void> = [];
-  private closed = false;
-
-  push(item: StreamItem<SocketDocState>): void {
-    if (this.closed) throw new Error('queue already closed');
-    this.buffer.push(item);
-    this.flush();
-  }
-
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this.flush();
-  }
-
-  async *consume(): AsyncIterableIterator<StreamItem<SocketDocState>> {
-    while (true) {
-      if (this.buffer.length) {
-        yield this.buffer.shift()!;
-        continue;
-      }
-      if (this.closed) break;
-      await new Promise<void>(resolve => this.waiting.push(resolve));
-    }
-  }
-
-  private flush(): void {
-    const waiter = this.waiting.shift();
-    if (waiter) waiter();
-  }
-}
 
 const getScore = (state: SocketDocState) => state.scoreValue;
 
@@ -82,7 +48,7 @@ const formatNumber = (value: number) => value.toLocaleString('en-US');
 
 export class WorkerRuntime {
   private runState: RunState | null = null;
-  private runPromise: Promise<WorkerRunSummary> | null = null;
+  private runGenerator: Generator<void, WorkerRunSummary, StreamItem<SocketDocState>> | null = null;
   private readonly docStoreDurability: LmdbDurability;
   private readonly progressStep: number;
   private readonly log: (message: string) => void;
@@ -90,14 +56,12 @@ export class WorkerRuntime {
   constructor(options: WorkerRuntimeOptions = {}) {
     this.docStoreDurability = options.docStoreDurability ?? 'durable';
     this.progressStep = Math.max(1, options.progressStep ?? 10000);
-    this.log = options.log ?? (() => {});
+    this.log = options.log ?? (() => { });
   }
 
   startRun(config: WorkerRunConfig): void {
-    if (this.runPromise) throw new Error('run already in progress');
-    const queue = new AsyncStreamQueue();
+    if (this.runGenerator) throw new Error('run already in progress');
     const runState: RunState = {
-      queue,
       matchEvents: 0,
       evictions: 0,
       retrievalBatches: 0,
@@ -116,28 +80,25 @@ export class WorkerRuntime {
       );
     }
     this.runState = runState;
-    this.runPromise = (async () => {
-      try {
-        await runLimitStreamAsync(queue.consume(), getScore, evt => handleDownstreamEvent(runState, evt), {
-          retrievalJob: runState.retrievalJob,
-          docStore: runState.docStore,
-        });
-        this.log('[worker] run completed');
-        if (runState.retrievalJob) {
-          await runState.retrievalJob.stop();
-          this.log('[worker] retrieval job stopped');
-        }
-        const durationMs = performance.now() - runState.startTime;
-        return buildSummary(runState, durationMs);
-      } finally {
-        queue.close();
+    const that = this;
+    this.runGenerator = (function* () {
+      yield* runLimitStreamAsync(getScore, evt => handleDownstreamEvent(runState, evt), {
+        retrievalJob: runState.retrievalJob,
+        docStore: runState.docStore,
+      });
+      that.log('[worker] run completed');
+      if (runState.retrievalJob) {
+        runState.retrievalJob.stop();
+        that.log('[worker] retrieval job stopped');
       }
+      const durationMs = performance.now() - runState.startTime;
+      return buildSummary(runState, durationMs);
     })();
   }
 
   enqueue(item: StreamItem<SocketDocState>): void {
     const state = this.requireState();
-    state.queue.push(item);
+    this.runGenerator!.next(item);
     state.eventsProcessed += 1;
     this.maybeLogProgress(state);
   }
@@ -145,18 +106,17 @@ export class WorkerRuntime {
   enqueueBatch(items: Iterable<StreamItem<SocketDocState>>): void {
     const state = this.requireState();
     for (const item of items) {
-      state.queue.push(item);
+      this.runGenerator!.next(item);
       state.eventsProcessed += 1;
       this.maybeLogProgress(state);
     }
   }
 
-  async finishRun(): Promise<WorkerRunSummary> {
-    const promise = this.requireRunPromise();
-    const state = this.requireState();
-    state.queue.close();
+  finishRun(): WorkerRunSummary {
+    const res = this.runGenerator!.next()
     try {
-      return await promise;
+      if (!res.done) throw new Error('run generator did not complete as expected');
+      return res.value;
     } finally {
       this.clearRun();
     }
@@ -164,7 +124,6 @@ export class WorkerRuntime {
 
   abortRun(): void {
     if (!this.runState) return;
-    this.runState.queue.close();
     this.clearRun();
   }
 
@@ -184,13 +143,8 @@ export class WorkerRuntime {
     return this.runState;
   }
 
-  private requireRunPromise(): Promise<WorkerRunSummary> {
-    if (!this.runPromise) throw new Error('no active run');
-    return this.runPromise;
-  }
-
   private clearRun(): void {
     this.runState = null;
-    this.runPromise = null;
+    this.runGenerator = null;
   }
 }

@@ -180,14 +180,20 @@ export function runLimitStream<DocState extends DocStateDom>(
   }
 }
 
-export async function runLimitStreamAsync<DocState extends DocStateDom>(
-  items: AsyncIterable<StreamItem<DocState>>,
+export function *runLimitStreamAsync<DocState extends DocStateDom>(
   getScore: (state: DocState) => Score,
   emit: (e: DownstreamEvent<DocState>) => void,
   options: LimitStreamOptions<DocState> = {}
-): Promise<void> {
+): Generator<void, void, StreamItem<DocState>> {
   const queries = new DynamicRangeQueries();
-  for await (const item of items) {
+  let i = 0;
+  while (true) {
+    const item = yield;
+    if(!item) break;
+    i++;
+    if (i % 1000 === 0) {
+      console.log(`[limitStream] processed ${i} items`);
+    }
     handleItem(item, queries, getScore, emit, options);
   }
 }

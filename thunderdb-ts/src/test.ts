@@ -2,7 +2,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { runLimitStream, fromArray, StreamItem } from './limit-index/limitStream';
+import { runLimitStream, StreamItem } from './limit-index/limitStream';
 import { QuerySpec, LimitMatchEvent, DocId, Score, DocStateDom, QueryId, DownstreamEvent, RetrievalEvent } from './limit-index/types';
 import { RetrievalJobWorker } from './retrievalJob';
 import { LmdbDocStore } from './docStore';
