@@ -446,7 +446,7 @@ const writeMessage = async (socket: net.Socket, message: ClientMessage): Promise
   if (!socket.writable) throw new Error('worker connection closed');
   const payload = `${JSON.stringify(message)}\n`;
   if (socket.write(payload)) return;
-  await once(socket, 'drain');
+  // await once(socket, 'drain');
 };
 
 main().catch(err => {
