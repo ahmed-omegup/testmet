@@ -5,6 +5,8 @@ import { RetrievalJobWorker } from './retrievalJob';
 import { LmdbDocStore, LmdbDurability } from './docStore';
 import { SocketDocState, WorkerRunSummary } from './socketProtocol';
 
+const debugEvictions = process.env.PERF_DEBUG_EVICS === '1';
+
 interface RunState {
   docStore?: LmdbDocStore<SocketDocState>;
   retrievalJob?: RetrievalJobWorker<SocketDocState>;
@@ -20,6 +22,17 @@ interface RunState {
 const getScore = (state: SocketDocState) => state.scoreValue;
 
 const handleDownstreamEvent = (state: RunState, event: DownstreamEvent<SocketDocState>): void => {
+  if (debugEvictions) {
+    if (event.kind === 'match') {
+      event.matchesNew.sort();
+      event.evictions.sort();
+      event.matchesOld.sort();
+    }
+    if (event.kind === 'retrieval') {
+      event.docs.sort();
+    }
+    console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
+  }
   if (event.kind === 'match') {
     state.matchEvents += 1;
     state.evictions += event.evictions.length;
@@ -90,22 +103,19 @@ export class WorkerRuntime {
       }
       return buildSummary(runState, performance.now());
     })();
+    this.runGenerator.next()
   }
 
   hello(): void {
     this.runState.startTime = performance.now();
   }
 
-  enqueue(item: StreamItem<SocketDocState>): void {
-    const state = this.requireState();
-    this.runGenerator!.next(item);
-    state.eventsProcessed += 1;
-    this.maybeLogProgress(state);
-  }
-
   enqueueBatch(items: Iterable<StreamItem<SocketDocState>>): void {
     const state = this.requireState();
     for (const item of items) {
+      if (debugEvictions) {
+        console.log('<<', JSON.stringify(item, (k, v) => typeof v === 'bigint' ? String(v) : v));
+      }
       this.runGenerator!.next(item);
       state.eventsProcessed += 1;
       this.maybeLogProgress(state);

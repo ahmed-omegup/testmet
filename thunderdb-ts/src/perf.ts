@@ -48,8 +48,6 @@ const remoteWorkerEnabled = remoteWorkerToggle === '1' || (remoteWorkerToggle ==
 const remoteWorkerHost = remoteWorkerHostEnv ?? '127.0.0.1';
 const remoteWorkerPort = Number(process.env.PERF_WORKER_PORT ?? 4040);
 const remoteWorkerEmbedded = process.env.PERF_EMBED_WORKER === '1';
-const remoteWorkerBatchSize = Math.max(1, Number(process.env.PERF_WORKER_BATCH_SIZE ?? 40960));
-const remoteWorkerBatchMs = Math.max(0, Number(process.env.PERF_WORKER_BATCH_MS ?? 4));
 const progressStep = Math.max(1, Number(process.env.PERF_PROGRESS_STEP ?? 10000));
 
 const config: PerfConfig & {
@@ -388,14 +386,6 @@ async function runRemote(
 
   const awaitMessage = async (): Promise<ServerMessage> => {
     return connection.nextMessage();
-  };
-
-  const waitFor = async (type: ServerMessage['type']): Promise<void> => {
-    while (true) {
-      const message = await awaitMessage();
-      if (message.type === 'error') throw new Error(message.message);
-      if (message.type === type) return;
-    }
   };
 
   const write = (message: ClientMessage) => connection.write(message);

@@ -9,6 +9,7 @@ export type ErrorHandler = (error: Error) => void;
 const PROTOCOL_VERSION = 1;
 const DOCSTORE_DURABILITY: LmdbDurability = process.env.THUNDERDB_DOCSTORE_DURABILITY === 'relaxed' ? 'relaxed' : 'durable';
 const WORKER_PROGRESS_STEP = Math.max(1, Number(process.env.WORKER_PROGRESS_STEP ?? 10000));
+const debugEvictions = process.env.PERF_DEBUG_EVICS === '1';
 
 export interface LineTransport<Line = string, CoLine = string> {
   send(line: Line): void;
@@ -132,13 +133,15 @@ class InProcessClientTransport<ClientLine, ServerLine> implements InProcessWorke
   }
 }
 
+const log: typeof console.log = debugEvictions ? () => { } : console.log
+
 export const handleTransport = <ClientLine, ServerLine>(transport: LineTransport<ClientLine, ServerLine>, sendMessage: (transport: LineTransport<ClientLine, ServerLine>, message: ServerMessage) => void, parse: (line: ServerLine) => ClientMessage) => {
   let handshakeComplete = false;
   let closing = false;
   const runtime = new WorkerRuntime({
     docStoreDurability: DOCSTORE_DURABILITY,
     progressStep: WORKER_PROGRESS_STEP,
-    log: message => console.log(message),
+    log: message => log(message),
   });
 
   const cleanup = (closeTransport = false) => {
@@ -183,16 +186,17 @@ export const handleTransport = <ClientLine, ServerLine>(transport: LineTransport
           const item = wireToStreamItem(payload.item);
           runtime.enqueueBatch(item);
         } catch (err) {
+          console.error(err)
           sendMessage(transport, { type: 'error', message: 'failed to ingest event' });
         }
         break;
       }
       case 'end': {
-        console.log('[worker] received end of stream');
+        log('[worker] received end of stream');
         try {
-          console.log('[worker] finishing run...');
+          log('[worker] finishing run...');
           const summary = runtime.finishRun();
-          console.log('[worker] run finished');
+          log('[worker] run finished');
           sendMessage(transport, { type: 'summary', summary });
         } catch (err) {
           sendMessage(transport, { type: 'error', message: err instanceof Error ? err.message : 'run failed' });
@@ -215,7 +219,7 @@ export const handleTransport = <ClientLine, ServerLine>(transport: LineTransport
 
 export const createInProcessWorkerClient = (): InProcessWorkerClient<ClientMessage, ServerMessage> => {
 
-  console.log('[worker] starting in-process worker client');
+  log('[worker] starting in-process worker client');
   const bridge = new InProcessBridge<ServerMessage, ClientMessage>();
   const serverTransport = new InProcessServerTransport(bridge);
   const clientTransport = new InProcessClientTransport(bridge);
