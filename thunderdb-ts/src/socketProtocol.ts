@@ -28,29 +28,23 @@ export type WireStreamItem =
   | { kind: 'query-remove'; id: string }
   | { kind: 'seed-docs'; docs: WireDocRef[] };
 
-export interface WorkerRunConfig {
-  enableRetrieval: boolean;
-}
-
 export interface WorkerRunSummary {
   matchEvents: number;
   evictions: number;
   retrievalBatches: number;
   retrievalDocs: number;
-  durationMs: number;
+  endTs: number;
   eventsProcessed: number;
 }
 
 export type ClientMessage =
   | { type: 'hello'; role: 'client'; version: 1 }
-  | { type: 'run'; config: WorkerRunConfig }
   | { type: 'event'; item: WireStreamItem }
   | { type: 'event-batch'; items: WireStreamItem[] }
   | { type: 'end' };
 
 export type ServerMessage =
   | { type: 'hello'; role: 'worker'; version: 1 }
-  | { type: 'run-accepted' }
   | { type: 'summary'; summary: WorkerRunSummary }
   | { type: 'error'; message: string };
 

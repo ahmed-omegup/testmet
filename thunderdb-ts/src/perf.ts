@@ -12,7 +12,6 @@ import {
   ServerMessage,
   SocketDocState,
   streamItemToWire,
-  WorkerRunConfig,
   WorkerRunSummary,
 } from './socketProtocol';
 import { createInProcessWorkerClient } from './transport';
@@ -221,8 +220,8 @@ async function main() {
     + seedEventCount + config.customers;
   if(!debugEvictions) console.log(`[perf] generated ${formatNumber(nbEvents)} stream items`);
 
-  const workerConfig: WorkerRunConfig = { enableRetrieval: config.enableRetrieval };
   let summary: WorkerRunSummary;
+  const start = performance.now();
   if (remoteWorkerEnabled) {
     if (!debugEvictions) {
       if (remoteWorkerEmbedded) {
@@ -231,24 +230,23 @@ async function main() {
         console.log(`[perf] using remote worker at ${remoteWorkerHost}:${remoteWorkerPort}`);
       }
     }
-    summary = await runRemote(events, workerConfig, {
+    summary = await runRemote(events, {
       host: remoteWorkerHost,
       port: remoteWorkerPort,
       embedded: remoteWorkerEmbedded,
     });
   } else {
-    summary = await runLocal(events, workerConfig, nbEvents);
+    summary = await runLocal(events, nbEvents);
   }
 
-  if(!debugEvictions) logSummary(summary);
+  if(!debugEvictions) logSummary(summary, start);
 }
 
 async function runLocal(
   events: Iterable<StreamItem<PerfDocState>>,
-  workerConfig: WorkerRunConfig,
   nbEvents: number
 ): Promise<WorkerRunSummary> {
-  const gen = runEmbed(workerConfig, nbEvents);
+  const gen = runEmbed(nbEvents);
   gen.next();
   for (const e of events) {
     gen.next(e);
@@ -268,7 +266,6 @@ async function runLocal(
 
 
 function *runEmbed(
-  workerConfig: WorkerRunConfig,
   nbEvents: number
 ): Generator<void | Promise<void>, WorkerRunSummary, StreamItem<PerfDocState> | void> {
   let matchEvents = 0;
@@ -276,10 +273,10 @@ function *runEmbed(
   let retrievalBatches = 0;
   let retrievalDocs = 0;
 
-  const docStore = workerConfig.enableRetrieval
+  const docStore = config.enableRetrieval
     ? new LmdbDocStore<PerfDocState>({ durability: 'relaxed' })
     : undefined;
-  const retrievalJob = workerConfig.enableRetrieval && docStore
+  const retrievalJob = config.enableRetrieval && docStore
     ? new RetrievalJobWorker<PerfDocState>(
       ids => docStore.getMany(ids),
       event => {
@@ -336,10 +333,9 @@ function *runEmbed(
   if (retrievalJob) {
     yield retrievalJob.stop();
   }
-  const durationMs = performance.now() - start;
 
   return {
-    durationMs,
+    endTs: performance.now(),
     eventsProcessed: nbEvents,
     matchEvents,
     evictions,
@@ -363,7 +359,6 @@ interface RemoteOptions {
 
 async function runRemote(
   events: Iterable<StreamItem<PerfDocState>>,
-  workerConfig: WorkerRunConfig,
   options: RemoteOptions
 ): Promise<WorkerRunSummary> {
   const connection = options.embedded
@@ -387,9 +382,6 @@ async function runRemote(
   try {
     await write({ type: 'hello', role: 'client', version: 1 });
     await waitFor('hello');
-
-    await write({ type: 'run', config: workerConfig });
-    await waitFor('run-accepted');
 
     const batch: ReturnType<typeof streamItemToWire>[] = [];
     let eventsSent = 0;
@@ -432,12 +424,13 @@ async function runRemote(
   }
 }
 
-function logSummary(summary: WorkerRunSummary): void {
-  const eventsPerSec = summary.durationMs === 0
+function logSummary(summary: WorkerRunSummary, start: number): void {
+  const durationMs = summary.endTs - start;
+  const eventsPerSec = durationMs === 0
     ? 'n/a'
-    : (summary.eventsProcessed / (summary.durationMs / 1000)).toFixed(2);
+    : (summary.eventsProcessed / (durationMs / 1000)).toFixed(2);
   console.log('\n[perf] summary');
-  console.log(`  duration: ${summary.durationMs.toFixed(2)} ms (~${eventsPerSec} events/s)`);
+  console.log(`  duration: ${durationMs.toFixed(2)} ms (~${eventsPerSec} events/s)`);
   console.log(`  match events: ${formatNumber(summary.matchEvents)} (evictions: ${formatNumber(summary.evictions)})`);
   if (config.enableRetrieval) {
     console.log(`  retrieval batches: ${formatNumber(summary.retrievalBatches)} (docs: ${formatNumber(summary.retrievalDocs)})`);

@@ -17,9 +17,14 @@ const getScore = (s: DemoDocState) => s.value;
 
 function collect(items: StreamItem<DemoDocState>[]): LimitMatchEvent<DemoDocState>[] {
   const out: LimitMatchEvent<DemoDocState>[] = [];
-  runLimitStream(items, getScore, e => {
+  const gen = runLimitStream(getScore, e => {
     if (e.kind === 'match') out.push(e);
   });
+  gen.next()
+  for (const item of items) {
+    gen.next(item);
+  }
+  gen.next()
   return out;
 }
 
@@ -119,7 +124,12 @@ async function testQueryAddSeedsRetrievals() {
     { kind: 'doc-change', change: { id: did(2), old: null, new: docState(20) } },
     { kind: 'query-add', spec: q },
   ];
-  runLimitStream(items, getScore, e => events.push(e), { retrievalJob: worker, docStore: store });
+  const gen = runLimitStream(getScore, e => events.push(e), { retrievalJob: worker, docStore: store });
+  gen.next()
+  for (const item of items) {
+    gen.next(item);
+  }
+  gen.next()
   await waitFor(() => events.some(evt => evt.kind === 'retrieval' && (evt as RetrievalEvent<DemoDocState>).docs.length >= 2), 500);
   const retrievalEvents = events.filter(evt => evt.kind === 'retrieval') as RetrievalEvent<DemoDocState>[];
   const docIds = retrievalEvents.flatMap(evt => evt.docs.map(doc => doc.docId.toString()));
@@ -145,7 +155,12 @@ async function testGapFillRegistersRetrievals() {
     { kind: 'query-add', spec: q },
     { kind: 'doc-change', change: { id: did(2), old: docState(20), new: null } },
   ];
-  runLimitStream(items, getScore, e => events.push(e), { retrievalJob: worker, docStore: store });
+  const gen = runLimitStream(getScore, e => events.push(e), { retrievalJob: worker, docStore: store });
+  gen.next()
+  for (const item of items) {
+    gen.next(item);
+  }
+  gen.next()
   await waitFor(
     () => events.some(evt => evt.kind === 'retrieval' && (evt as RetrievalEvent<DemoDocState>).docs.some(doc => doc.docId === did(3))),
     500

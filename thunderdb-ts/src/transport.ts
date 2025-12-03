@@ -144,7 +144,6 @@ export const handleTransport = <ClientLine, ServerLine>(transport: LineTransport
   const cleanup = (closeTransport = false) => {
     if (closing) return;
     closing = true;
-    runtime.abortRun();
     if (closeTransport) transport.close();
   };
 
@@ -178,25 +177,7 @@ export const handleTransport = <ClientLine, ServerLine>(transport: LineTransport
     }
 
     switch (payload.type) {
-      case 'run': {
-        if (runtime.isRunning()) {
-          sendMessage(transport, { type: 'error', message: 'run already in progress' });
-          return;
-        }
-        try {
-          runtime.startRun(payload.config);
-          sendMessage(transport, { type: 'run-accepted' });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : 'failed to start run';
-          sendMessage(transport, { type: 'error', message });
-        }
-        break;
-      }
       case 'event': {
-        if (!runtime.isRunning()) {
-          sendMessage(transport, { type: 'error', message: 'no active run' });
-          return;
-        }
         try {
           const item = wireToStreamItem(payload.item);
           runtime.enqueue(item);
@@ -206,10 +187,6 @@ export const handleTransport = <ClientLine, ServerLine>(transport: LineTransport
         break;
       }
       case 'event-batch': {
-        if (!runtime.isRunning()) {
-          sendMessage(transport, { type: 'error', message: 'no active run' });
-          return;
-        }
         if (!Array.isArray(payload.items) || payload.items.length === 0) {
           sendMessage(transport, { type: 'error', message: 'empty event batch' });
           return;
@@ -224,10 +201,6 @@ export const handleTransport = <ClientLine, ServerLine>(transport: LineTransport
       }
       case 'end': {
         console.log('[worker] received end of stream');
-        if (!runtime.isRunning()) {
-          sendMessage(transport, { type: 'error', message: 'no active run' });
-          return;
-        }
         try {
           console.log('[worker] finishing run...');
           const summary = runtime.finishRun();

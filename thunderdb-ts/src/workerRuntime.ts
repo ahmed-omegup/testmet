@@ -1,9 +1,9 @@
 import { performance } from 'node:perf_hooks';
-import { runLimitStreamAsync, StreamItem } from './limit-index/limitStream';
+import { runLimitStream, StreamItem } from './limit-index/limitStream';
 import { DownstreamEvent } from './limit-index/types';
 import { RetrievalJobWorker } from './retrievalJob';
 import { LmdbDocStore, LmdbDurability } from './docStore';
-import { SocketDocState, WorkerRunConfig, WorkerRunSummary } from './socketProtocol';
+import { SocketDocState, WorkerRunSummary } from './socketProtocol';
 
 interface RunState {
   docStore?: LmdbDocStore<SocketDocState>;
@@ -13,7 +13,6 @@ interface RunState {
   retrievalBatches: number;
   retrievalDocs: number;
   eventsProcessed: number;
-  startTime: number;
 }
 
 
@@ -29,8 +28,8 @@ const handleDownstreamEvent = (state: RunState, event: DownstreamEvent<SocketDoc
   state.retrievalDocs += event.docs.length;
 };
 
-const buildSummary = (state: RunState, durationMs: number): WorkerRunSummary => ({
-  durationMs,
+const buildSummary = (state: RunState, endTs: number): WorkerRunSummary => ({
+  endTs,
   eventsProcessed: state.eventsProcessed,
   matchEvents: state.matchEvents,
   evictions: state.evictions,
@@ -39,6 +38,7 @@ const buildSummary = (state: RunState, durationMs: number): WorkerRunSummary => 
 });
 
 export interface WorkerRuntimeOptions {
+  enableRetrieval?: boolean;
   docStoreDurability?: LmdbDurability;
   progressStep?: number;
   log?: (message: string) => void;
@@ -47,8 +47,8 @@ export interface WorkerRuntimeOptions {
 const formatNumber = (value: number) => value.toLocaleString('en-US');
 
 export class WorkerRuntime {
-  private runState: RunState | null = null;
-  private runGenerator: Generator<void, WorkerRunSummary, StreamItem<SocketDocState>> | null = null;
+  private runState: RunState;
+  private runGenerator: Generator<void, WorkerRunSummary, StreamItem<SocketDocState>>;
   private readonly docStoreDurability: LmdbDurability;
   private readonly progressStep: number;
   private readonly log: (message: string) => void;
@@ -57,19 +57,14 @@ export class WorkerRuntime {
     this.docStoreDurability = options.docStoreDurability ?? 'durable';
     this.progressStep = Math.max(1, options.progressStep ?? 10000);
     this.log = options.log ?? (() => { });
-  }
-
-  startRun(config: WorkerRunConfig): void {
-    if (this.runGenerator) throw new Error('run already in progress');
     const runState: RunState = {
       matchEvents: 0,
       evictions: 0,
       retrievalBatches: 0,
       retrievalDocs: 0,
       eventsProcessed: 0,
-      startTime: performance.now(),
     };
-    if (config.enableRetrieval) {
+    if (options.enableRetrieval) {
       runState.docStore = new LmdbDocStore<SocketDocState>({ durability: this.docStoreDurability });
       runState.retrievalJob = new RetrievalJobWorker<SocketDocState>(
         ids => runState.docStore!.getMany(ids),
@@ -82,7 +77,7 @@ export class WorkerRuntime {
     this.runState = runState;
     const that = this;
     this.runGenerator = (function* () {
-      yield* runLimitStreamAsync(getScore, evt => handleDownstreamEvent(runState, evt), {
+      yield* runLimitStream(getScore, evt => handleDownstreamEvent(runState, evt), {
         retrievalJob: runState.retrievalJob,
         docStore: runState.docStore,
       });
@@ -91,8 +86,7 @@ export class WorkerRuntime {
         runState.retrievalJob.stop();
         that.log('[worker] retrieval job stopped');
       }
-      const durationMs = performance.now() - runState.startTime;
-      return buildSummary(runState, durationMs);
+      return buildSummary(runState, performance.now());
     })();
   }
 
@@ -114,21 +108,8 @@ export class WorkerRuntime {
 
   finishRun(): WorkerRunSummary {
     const res = this.runGenerator!.next()
-    try {
-      if (!res.done) throw new Error('run generator did not complete as expected');
-      return res.value;
-    } finally {
-      this.clearRun();
-    }
-  }
-
-  abortRun(): void {
-    if (!this.runState) return;
-    this.clearRun();
-  }
-
-  isRunning(): boolean {
-    return this.runState !== null;
+    if (!res.done) throw new Error('run generator did not complete as expected');
+    return res.value;
   }
 
   private maybeLogProgress(state: RunState): void {
@@ -141,10 +122,5 @@ export class WorkerRuntime {
   private requireState(): RunState {
     if (!this.runState) throw new Error('no active run');
     return this.runState;
-  }
-
-  private clearRun(): void {
-    this.runState = null;
-    this.runGenerator = null;
   }
 }
