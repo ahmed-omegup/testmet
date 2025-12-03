@@ -9,9 +9,14 @@ import { RetrievalJobWorker } from './retrievalJob';
 import { LmdbDocStore } from './docStore';
 import {
   ClientMessage,
+  fromDocId,
   ServerMessage,
   SocketDocState,
-  streamItemToWire,
+  WireDocChange,
+  WireDocRef,
+  WireQuerySpec,
+  WireStreamItem,
+  wireToStreamItem,
   WorkerRunSummary,
 } from './socketProtocol';
 import { createInProcessWorkerClient } from './transport';
@@ -134,46 +139,58 @@ const customerRange = (rand: () => number): [number, number] => {
 
 const SEED_BATCH_SIZE = Number(process.env.PERF_SEED_BATCH ?? 4096);
 
-const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
+const buildEvents = function* (): Generator<WireStreamItem> {
   const rand = prng(config.seed);
 
   let nextDocNumericId = config.documents;
   const seedStart = performance.now();
-  const seedBuffer: Array<{ id: DocId; state: PerfDocState }> = [];
 
-  const flushSeed = () => {
-    if (!seedBuffer.length) return;
-    const batch = seedBuffer.splice(0, seedBuffer.length);
-    return { kind: 'seed-docs', docs: batch } as StreamItem<PerfDocState>;
-  };
+  const createBuffer = <T, V>(batchSize: number, map: (batch: T[]) => V) => {
+    const buffer: Array<T> = [];
+    function* flush() {
+      if (!buffer.length) return;
+      const batch = buffer.splice(0, buffer.length);
+      yield map(batch)
+    };
+    function* push(data: T) {
+      buffer.push(data);
+      if (buffer.length >= batchSize) {
+        yield* flush();
+      }
+    }
+    return { push, flush }
+  }
+  const { flush: flushSeed, push: pushSeed } = createBuffer<WireDocRef, WireStreamItem>(SEED_BATCH_SIZE, batch => ({ kind: 'seed-docs', docs: batch }))
 
   for (let i = 0; i < config.documents; i++) {
     const id = toDocId(i);
     const state = createDoc(randomScore(rand));
     trackDoc(id, state);
-    seedBuffer.push({ id, state });
-    if (seedBuffer.length >= SEED_BATCH_SIZE) {
-      const event = flushSeed();
-      if (event) yield event;
-    }
+    yield* pushSeed({ id: fromDocId(id), state });
   }
-  const leftoverSeed = flushSeed();
-  if (leftoverSeed) yield leftoverSeed;
+  yield* flushSeed();
 
   const queryStart = performance.now();
-  if(!debugEvictions) console.log(`[perf] seeded ${config.documents.toLocaleString('en-US')} documents in ${(queryStart - seedStart).toFixed(2)} ms`);
+  if (!debugEvictions) console.log(`[perf] seeded ${config.documents.toLocaleString('en-US')} documents in ${(queryStart - seedStart).toFixed(2)} ms`);
 
   // Register queries (customers)
   const limit = BigInt(config.queryLimit);
+  const adds = createBuffer<WireQuerySpec, WireStreamItem>(config.customers, batch => ({
+    kind: 'query-adds', specs: batch
+  }))
   for (let i = 0; i < config.customers; i++) {
     const [min, max] = customerRange(rand);
-    const spec: QuerySpec = { minScore: toScore(min), maxScore: toScore(max), limit };
-    yield { kind: 'query-add', spec };
+    const spec: WireQuerySpec = { minScore: toScore(min), maxScore: toScore(max), limit: limit.toString() };
+    yield* adds.push(spec)
   }
+  yield* adds.flush()
 
   const upStart = performance.now();
-  if(!debugEvictions) if(!debugEvictions) console.log(`[perf] seeding queries took ${(upStart - queryStart).toFixed(2)} ms`);
+  if (!debugEvictions) if (!debugEvictions) console.log(`[perf] seeding queries took ${(upStart - queryStart).toFixed(2)} ms`);
 
+  const updates = createBuffer<WireDocChange, WireStreamItem>(SEED_BATCH_SIZE, batch => ({
+    kind: 'doc-changes', changes: batch
+  }))
   // Periodic updates
   for (let tick = 0; tick < config.duration; tick++) {
     // updates
@@ -183,7 +200,7 @@ const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
       const old = docStates.get(id) ?? null;
       const updated = createDoc(randomScore(rand));
       updateDoc(id, updated);
-      yield { kind: 'doc-change', change: { id, old, new: updated } };
+      yield* updates.push({ id: fromDocId(id), old, new: updated });
     }
 
     // inserts
@@ -191,7 +208,7 @@ const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
       const id = toDocId(nextDocNumericId++);
       const state = createDoc(randomScore(rand));
       trackDoc(id, state);
-      yield { kind: 'doc-change', change: { id, old: null, new: state } };
+      yield* updates.push({ id: fromDocId(id), old: null, new: state });
     }
 
     // deletes
@@ -201,24 +218,25 @@ const buildEvents = function* (): Generator<StreamItem<PerfDocState>> {
       const old = docStates.get(id) ?? null;
       if (!old) continue;
       removeDoc(id);
-      yield { kind: 'doc-change', change: { id, old, new: null } };
+      yield* updates.push({ id: fromDocId(id), old, new: null });
     }
   }
+  yield* updates.flush()
   const end = performance.now();
   const nbEvents = config.duration * (config.updatesPerTick + config.insertsPerTick + config.deletesPerTick)
-  if(!debugEvictions) if(!debugEvictions) console.log(`[perf] ${nbEvents} events processing took ${(end - upStart).toFixed(2)} ms`);
+  if (!debugEvictions) if (!debugEvictions) console.log(`[perf] ${nbEvents} events processing took ${(end - upStart).toFixed(2)} ms`);
 };
 
 const formatNumber = (value: number) => value.toLocaleString('en-US');
 
 async function main() {
-  if(!debugEvictions) console.log('[perf] configuration:', config);
+  if (!debugEvictions) console.log('[perf] configuration:', config);
 
   const events = buildEvents();
   const seedEventCount = Math.ceil(config.documents / SEED_BATCH_SIZE);
   const nbEvents = config.duration * (config.updatesPerTick + config.insertsPerTick + config.deletesPerTick)
     + seedEventCount + config.customers;
-  if(!debugEvictions) console.log(`[perf] generated ${formatNumber(nbEvents)} stream items`);
+  if (!debugEvictions) console.log(`[perf] generated ${formatNumber(nbEvents)} stream items`);
 
   let summary: WorkerRunSummary;
   const start = performance.now();
@@ -236,10 +254,12 @@ async function main() {
       embedded: remoteWorkerEmbedded,
     });
   } else {
-    summary = await runLocal(events, nbEvents);
+    summary = await runLocal((function* () {
+      for (const e of events) yield* wireToStreamItem(e)
+    })(), nbEvents);
   }
 
-  if(!debugEvictions) logSummary(summary, start);
+  if (!debugEvictions) logSummary(summary, start);
 }
 
 async function runLocal(
@@ -257,7 +277,7 @@ async function runLocal(
   }
   await p.value;
   const result = gen.next();
-  if(!result.done) {
+  if (!result.done) {
     throw new Error('expected generator to be done');
   }
   return result.value;
@@ -265,7 +285,7 @@ async function runLocal(
 
 
 
-function *runEmbed(
+function* runEmbed(
   nbEvents: number
 ): Generator<void | Promise<void>, WorkerRunSummary, StreamItem<PerfDocState> | void> {
   let matchEvents = 0;
@@ -292,12 +312,12 @@ function *runEmbed(
     getScore,
     (event: DownstreamEvent<PerfDocState>) => {
       if (debugEvictions) {
-        if(event.kind === 'match') {
+        if (event.kind === 'match') {
           event.matchesNew.sort();
           event.evictions.sort();
           event.matchesOld.sort();
         }
-        if(event.kind === 'retrieval') {
+        if (event.kind === 'retrieval') {
           event.docs.sort();
         }
         console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
@@ -314,20 +334,20 @@ function *runEmbed(
   );
   gen.next();
   while (true) {
-      const e = yield;
-      if(!e) {
-        gen.next();
-        break;
-      }
+    const e = yield;
+    if (!e) {
+      gen.next();
+      break;
+    }
 
-      streamedEvents += 1;
-      if (!debugEvictions && streamedEvents % progressStep === 0) {
-        console.log(`[perf] processed ${formatNumber(streamedEvents)} events (local)`);
-      }
-      if (debugEvictions) {
-        console.log('<<', JSON.stringify(e, (k, v) => typeof v === 'bigint' ? String(v) : v));
-      }
-      gen.next(e);
+    streamedEvents += 1;
+    if (!debugEvictions && streamedEvents % progressStep === 0) {
+      console.log(`[perf] processed ${formatNumber(streamedEvents)} events (local)`);
+    }
+    if (debugEvictions) {
+      console.log('<<', JSON.stringify(e, (k, v) => typeof v === 'bigint' ? String(v) : v));
+    }
+    gen.next(e);
   }
 
   if (retrievalJob) {
@@ -341,6 +361,7 @@ function *runEmbed(
     evictions,
     retrievalBatches,
     retrievalDocs,
+    startTs: start,
   };
 }
 
@@ -358,7 +379,7 @@ interface RemoteOptions {
 }
 
 async function runRemote(
-  events: Iterable<StreamItem<PerfDocState>>,
+  events: Iterable<WireStreamItem>,
   options: RemoteOptions
 ): Promise<WorkerRunSummary> {
   const connection = options.embedded
@@ -381,33 +402,19 @@ async function runRemote(
 
   try {
     await write({ type: 'hello', role: 'client', version: 1 });
-    await waitFor('hello');
 
-    const batch: ReturnType<typeof streamItemToWire>[] = [];
     let eventsSent = 0;
-    let lastFlush = performance.now();
-    const flushBatch = async () => {
-      if (!batch.length) return;
-      const payload = batch.splice(0, batch.length);
-      await write({ type: 'event-batch', items: payload });
-      lastFlush = performance.now();
-    };
 
     for (const item of events) {
-      batch.push(streamItemToWire(item));
+      await write({ type: 'event', item });
       eventsSent += 1;
       if (!debugEvictions && eventsSent % progressStep === 0) {
         console.log(`[perf] sent ${formatNumber(eventsSent)} events to worker`);
-      }
-      const now = remoteWorkerBatchMs > 0 ? performance.now() : 0;
-      if (batch.length >= remoteWorkerBatchSize || (remoteWorkerBatchMs > 0 && now - lastFlush >= remoteWorkerBatchMs)) {
-        await flushBatch();
       }
     }
     if (eventsSent && eventsSent % progressStep !== 0 && !debugEvictions) {
       console.log(`[perf] sent ${formatNumber(eventsSent)} events to worker`);
     }
-    await flushBatch();
     await write({ type: 'end' });
 
     while (true) {
@@ -425,7 +432,7 @@ async function runRemote(
 }
 
 function logSummary(summary: WorkerRunSummary, start: number): void {
-  const durationMs = summary.endTs - start;
+  const durationMs = summary.endTs - (summary.startTs ?? start);
   const eventsPerSec = durationMs === 0
     ? 'n/a'
     : (summary.eventsProcessed / (durationMs / 1000)).toFixed(2);
@@ -490,7 +497,7 @@ const createEmbeddedRemoteConnection = (): RemoteConnection => {
   const queue = new AsyncMessageQueue<ServerMessage>();
 
   client.onLine(line => {
-    try { 
+    try {
       queue.push(line);
     } catch (err) {
       console.error('[perf] embedded worker emitted invalid json', err);

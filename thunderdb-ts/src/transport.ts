@@ -167,6 +167,7 @@ export const handleTransport = <ClientLine, ServerLine>(transport: LineTransport
         return;
       }
       handshakeComplete = true;
+      runtime.hello();
       sendMessage(transport, { type: 'hello', role: 'worker', version: PROTOCOL_VERSION });
       return;
     }
@@ -180,22 +181,9 @@ export const handleTransport = <ClientLine, ServerLine>(transport: LineTransport
       case 'event': {
         try {
           const item = wireToStreamItem(payload.item);
-          runtime.enqueue(item);
+          runtime.enqueueBatch(item);
         } catch (err) {
           sendMessage(transport, { type: 'error', message: 'failed to ingest event' });
-        }
-        break;
-      }
-      case 'event-batch': {
-        if (!Array.isArray(payload.items) || payload.items.length === 0) {
-          sendMessage(transport, { type: 'error', message: 'empty event batch' });
-          return;
-        }
-        try {
-          const items = payload.items.map(wireToStreamItem);
-          runtime.enqueueBatch(items);
-        } catch (err) {
-          sendMessage(transport, { type: 'error', message: 'failed to ingest batch' });
         }
         break;
       }

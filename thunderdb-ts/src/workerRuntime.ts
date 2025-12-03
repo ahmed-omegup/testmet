@@ -13,6 +13,7 @@ interface RunState {
   retrievalBatches: number;
   retrievalDocs: number;
   eventsProcessed: number;
+  startTime?: number;
 }
 
 
@@ -30,6 +31,7 @@ const handleDownstreamEvent = (state: RunState, event: DownstreamEvent<SocketDoc
 
 const buildSummary = (state: RunState, endTs: number): WorkerRunSummary => ({
   endTs,
+  startTs: state.startTime ?? 0,
   eventsProcessed: state.eventsProcessed,
   matchEvents: state.matchEvents,
   evictions: state.evictions,
@@ -88,6 +90,10 @@ export class WorkerRuntime {
       }
       return buildSummary(runState, performance.now());
     })();
+  }
+
+  hello(): void {
+    this.runState.startTime = performance.now();
   }
 
   enqueue(item: StreamItem<SocketDocState>): void {

@@ -15,22 +15,21 @@ services:
   thunderdb-perf:
     image: oven/bun:1
     working_dir: /workspace/thunderdb-ts
-    depends_on:
-      - thunderdb-worker
     environment:
       - PERF_REMOTE_WORKER=1
-      - PERF_WORKER_HOST=thunderdb-worker
-      - PERF_WORKER_PORT=4100
-      - PERF_DOCUMENTS=100000
-      - PERF_CUSTOMERS=5000
-      - PERF_DURATION=5
-      - PERF_UPDATE_RATE=0.02
-      - PERF_INSERT_RATE=0.005
-      - PERF_DELETE_RATE=0.005
-      - PERF_QUERY_LIMIT=50
-      - PERF_DENSITY=10
+      - PERF_WORKER_HOST=host.docker.internal
+      - PERF_WORKER_PORT=5050
+      - PERF_DOCUMENTS=1000000
+      - PERF_CUSTOMERS=100000
+      - PERF_DURATION=1
+      - PERF_UPDATE_RATE=0.05
+      - PERF_INSERT_RATE=0.01
+      - PERF_DELETE_RATE=0.01
+      - PERF_DEBUG_EVICS=0
       - PERF_ENABLE_RETRIEVAL=true
     volumes:
       - ./thunderdb-ts:/workspace/thunderdb-ts
     command: >-
       sh -c "bun install --no-save && bun run src/perf.ts"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
