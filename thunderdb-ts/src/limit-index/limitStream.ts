@@ -168,14 +168,15 @@ const handleItem = <DocState extends DocStateDom>(
 
 
 // Stateless limit stream operator (stores only per-query counts already tracked in DynamicRangeQueries)
-export function runLimitStream<DocState extends DocStateDom>(
-  items: Iterable<StreamItem<DocState>>,
+export function *runLimitStream<DocState extends DocStateDom>(
   getScore: (state: DocState) => Score,
   emit: (e: DownstreamEvent<DocState>) => void,
   options: LimitStreamOptions<DocState> = {}
-): void {
+): Generator<void, void, StreamItem<DocState> | void> {
   const queries = new DynamicRangeQueries();
-  for (const item of items) {
+  while (true) {
+    const item = yield;
+    if(!item) break;
     handleItem(item, queries, getScore, emit, options);
   }
 }

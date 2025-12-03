@@ -248,6 +248,29 @@ async function runLocal(
   workerConfig: WorkerRunConfig,
   nbEvents: number
 ): Promise<WorkerRunSummary> {
+  const gen = runEmbed(workerConfig, nbEvents);
+  gen.next();
+  for (const e of events) {
+    gen.next(e);
+  }
+  const p = gen.next();
+  if (p.done || !(p.value instanceof Promise)) {
+    throw new Error('expected final result to be a promise');
+  }
+  await p.value;
+  const result = gen.next();
+  if(!result.done) {
+    throw new Error('expected generator to be done');
+  }
+  return result.value;
+}
+
+
+
+function *runEmbed(
+  workerConfig: WorkerRunConfig,
+  nbEvents: number
+): Generator<void | Promise<void>, WorkerRunSummary, StreamItem<PerfDocState> | void> {
   let matchEvents = 0;
   let evictions = 0;
   let retrievalBatches = 0;
@@ -268,20 +291,7 @@ async function runLocal(
 
   const start = performance.now();
   let streamedEvents = 0;
-  const instrumentedEvents = (function* () {
-    for (const e of events) {
-      streamedEvents += 1;
-      if (!debugEvictions && streamedEvents % progressStep === 0) {
-        console.log(`[perf] processed ${formatNumber(streamedEvents)} events (local)`);
-      }
-      if (debugEvictions) {
-        console.log('<<', JSON.stringify(e, (k, v) => typeof v === 'bigint' ? String(v) : v));
-      }
-      yield e;
-    }
-  })();
-  runLimitStream(
-    instrumentedEvents,
+  const gen = runLimitStream(
     getScore,
     (event: DownstreamEvent<PerfDocState>) => {
       if (debugEvictions) {
@@ -305,8 +315,26 @@ async function runLocal(
       docStore,
     }
   );
+  gen.next();
+  while (true) {
+      const e = yield;
+      if(!e) {
+        gen.next();
+        break;
+      }
+
+      streamedEvents += 1;
+      if (!debugEvictions && streamedEvents % progressStep === 0) {
+        console.log(`[perf] processed ${formatNumber(streamedEvents)} events (local)`);
+      }
+      if (debugEvictions) {
+        console.log('<<', JSON.stringify(e, (k, v) => typeof v === 'bigint' ? String(v) : v));
+      }
+      gen.next(e);
+  }
+
   if (retrievalJob) {
-    await retrievalJob.stop();
+    yield retrievalJob.stop();
   }
   const durationMs = performance.now() - start;
 
@@ -319,6 +347,7 @@ async function runLocal(
     retrievalDocs,
   };
 }
+
 
 interface RemoteConnection {
   write(message: ClientMessage): Promise<void>;
