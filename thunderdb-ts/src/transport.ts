@@ -10,6 +10,7 @@ const PROTOCOL_VERSION = 1;
 const DOCSTORE_DURABILITY: LmdbDurability = process.env.THUNDERDB_DOCSTORE_DURABILITY === 'relaxed' ? 'relaxed' : 'durable';
 const WORKER_PROGRESS_STEP = Math.max(1, Number(process.env.WORKER_PROGRESS_STEP ?? 10000));
 const debugEvictions = process.env.PERF_DEBUG_EVICS === '1';
+const formatNumber = (value: number) => value.toLocaleString('en-US');
 
 export interface LineTransport<Line = string, CoLine = string> {
   send(line: Line): void;
@@ -197,6 +198,8 @@ export const handleTransport = <ClientLine, ServerLine>(transport: LineTransport
           log('[worker] finishing run...');
           const summary = runtime.finishRun();
           log('[worker] run finished');
+          log(`[worker] match events: ${formatNumber(summary.matchEvents)} (evictions: ${formatNumber(summary.evictions)})`);
+          log(`[worker] retrieval batches: ${formatNumber(summary.retrievalBatches)} (docs: ${formatNumber(summary.retrievalDocs)})`);
           sendMessage(transport, { type: 'summary', summary });
         } catch (err) {
           sendMessage(transport, { type: 'error', message: err instanceof Error ? err.message : 'run failed' });

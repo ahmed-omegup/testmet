@@ -23,6 +23,7 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
   constructor(
     private readonly loadDocs: (docIds: DocId[]) => Promise<Map<DocId, DocState>>,
     private readonly emit: (event: RetrievalEvent<DocState>) => void,
+    private readonly log: (...data: unknown[]) => void,
     private readonly options: { batchIntervalMs?: number } = {}
   ) {
     this.loop = this.runLoop();
@@ -74,6 +75,7 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
       }
       if (this.pendingBatch.size === 0) {
         await this.waitForPending();
+        this.log('retrieval-job: woke up for pending docs', this.pendingBatch.size);
         if (this.stopped && this.pendingBatch.size === 0) break;
         continue;
       }
@@ -86,6 +88,7 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
       const docIds = Array.from(this.processingBatch.keys());
       try {
         const docs = await this.loadDocs(docIds);
+        this.log('retrieval-job: loaded docs', docs.size, 'for batch', currentBatchNumber);
         const payload: RetrievalBatchDoc<DocState>[] = [];
         for (const docId of docIds) {
           const entry = this.processingBatch.get(docId);

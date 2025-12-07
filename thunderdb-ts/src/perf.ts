@@ -266,8 +266,11 @@ async function runLocal(
 ): Promise<WorkerRunSummary> {
   const gen = runEmbed(nbEvents);
   gen.next();
+  let i = 0
   for (const e of events) {
     gen.next(e);
+    await new Promise(res => setImmediate(res))
+    if (++i % 1000 === 0) console.log(i)
   }
   const p = gen.next();
   if (p.done || !(p.value instanceof Promise)) {
@@ -298,9 +301,13 @@ function* runEmbed(
     ? new RetrievalJobWorker<PerfDocState>(
       ids => docStore.getMany(ids),
       event => {
+        if (debugEvictions) {
+          console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
+        }
         retrievalBatches += 1;
         retrievalDocs += event.docs.length;
-      }
+      },
+      debugEvictions ? console.log : () => { }
     )
     : undefined;
 

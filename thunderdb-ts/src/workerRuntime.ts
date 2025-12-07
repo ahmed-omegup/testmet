@@ -86,7 +86,8 @@ export class WorkerRuntime {
         event => {
           runState.retrievalBatches += 1;
           runState.retrievalDocs += event.docs.length;
-        }
+        },
+        debugEvictions ? console.log : () => {}
       );
     }
     this.runState = runState;
