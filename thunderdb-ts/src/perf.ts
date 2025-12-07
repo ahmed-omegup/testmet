@@ -4,7 +4,7 @@ import readline from 'node:readline';
 import { once } from 'node:events';
 import { performance } from 'node:perf_hooks';
 import { runLimitStream, StreamItem } from './limit-index/limitStream';
-import { DocId, Score, QuerySpec, DownstreamEvent } from './limit-index/types';
+import { DocId, Score, QuerySpec, LimitMatchEvent, QueryId } from './limit-index/types';
 import { RetrievalJobWorker } from './retrievalJob';
 import { LmdbDocStore } from './docStore';
 import {
@@ -41,6 +41,7 @@ type PerfConfig = {
   remoteWorkerEmbedded: boolean;
 };
 
+const checkQuery = process.env.CHECK_QUERY === '1';
 const debugEvictions = process.env.PERF_DEBUG_EVICS === '1';
 const remoteWorkerHostEnv = process.env.PERF_WORKER_HOST;
 const remoteWorkerToggle = process.env.PERF_REMOTE_WORKER;
@@ -294,6 +295,11 @@ function* runEmbed(
   let retrievalBatches = 0;
   let retrievalDocs = 0;
 
+
+  const docs = checkQuery ? {
+    db: new Map<DocId, PerfDocState>(), queries: new Map<QueryId, [QuerySpec, Map<DocId, PerfDocState | null>]>()
+  } : undefined;
+
   const docStore = config.enableRetrieval
     ? new LmdbDocStore<PerfDocState>({ durability: 'relaxed' })
     : undefined;
@@ -304,6 +310,14 @@ function* runEmbed(
         if (debugEvictions) {
           console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
         }
+        if (docs) {
+          for (const { docId, queries, state } of event.docs) {
+            for (const qId of queries) {
+              const [_, q] = docs.queries.get(qId)!;
+              if (!q.has(docId)) q.set(docId, state);
+            }
+          }
+        }
         retrievalBatches += 1;
         retrievalDocs += event.docs.length;
       },
@@ -312,19 +326,28 @@ function* runEmbed(
 
   const start = performance.now();
   let streamedEvents = 0;
+  const ignore = (qId: QueryId) => {
+    return qId !== 497n
+  }
   const gen = runLimitStream(
     getScore,
-    (event: DownstreamEvent<PerfDocState>) => {
+    (event: LimitMatchEvent<PerfDocState>) => {
       if (debugEvictions) {
-        if (event.kind === 'match') {
-          event.matchesNew.sort();
-          event.evictions.sort();
-          event.matchesOld.sort();
-        }
-        if (event.kind === 'retrieval') {
-          event.docs.sort();
-        }
+        event.matchesNew.sort();
+        event.evictions.sort();
+        event.matchesOld.sort();
         console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
+      }
+      if (docs) {
+        for (const qId of event.matchesOld) {
+          if(!ignore(qId)) docs.queries.get(qId)![1].set(event.docId, null);
+        }
+        for (const qId of event.matchesNew) {
+          if(!ignore(qId)) docs.queries.get(qId)![1].set(event.docId, event.new);
+        }
+        for (const [qId, evicted] of event.evictions) {
+          if(!ignore(qId)) docs.queries.get(qId)![1].delete(evicted);
+        }
       }
       if (event.kind === 'match') {
         matchEvents += 1;
@@ -337,6 +360,7 @@ function* runEmbed(
     }
   );
   gen.next();
+  let qid = 0n;
   while (true) {
     const e = yield;
     if (!e) {
@@ -351,11 +375,63 @@ function* runEmbed(
     if (debugEvictions) {
       console.log('<<', JSON.stringify(e, (k, v) => typeof v === 'bigint' ? String(v) : v));
     }
+    if (docs) {
+      if (e.kind === 'doc-change') {
+        const { id, new: next } = e.change;
+        if (next) {
+          docs.db.set(id, next);
+        } else {
+          docs.db.delete(id);
+        }
+      } else if (e.kind === 'seed-docs') {
+        for (const doc of e.docs) {
+          docs.db.set(doc.id, doc.state);
+        }
+      } else if (e.kind === 'query-remove') {
+        // no-op
+      } else if (e.kind === 'query-add') {
+        docs.queries.set(++qid, [e.spec, new Map()]);
+      } else {
+        const _: never = e;
+      }
+    }
     gen.next(e);
   }
 
   if (retrievalJob) {
     yield retrievalJob.stop();
+  }
+
+  if (docs) for (const [qId, [querySpec, query]] of docs.queries) {
+    if (!querySpec) throw new Error('missing query spec');
+    const expectedMatches: Map<DocId, PerfDocState> = new Map();
+    for (const [docId, state] of docs.db) {
+      const score = getScore(state);
+      if (score >= querySpec.minScore && score <= querySpec.maxScore) {
+        expectedMatches.set(docId, state);
+      }
+    }
+    for (const [k, q] of query) {
+      if (q === null) query.delete(k);
+    }
+    const sortedMatches = Array.from(expectedMatches.entries()).sort((a, b) => {
+      return getScore(a[1]) - getScore(b[1]);
+    }).slice(0, Number(querySpec.limit));
+    if (sortedMatches.length !== query.size) {
+      console.log('query spec:', qId, querySpec);
+      console.log('expected matches:', sortedMatches);
+      console.log('actual matches:', Array.from(query.entries()));
+      throw new Error(`mismatched number of query matches: expected ${sortedMatches.length}, got ${query.size}`);
+    }
+    for (const [docId, state] of sortedMatches) {
+      const matchedState = query.get(docId);
+      if (!matchedState) {
+        throw new Error(`missing matched doc ${docId.toString()} ${JSON.stringify(state)}`);
+      }
+      if (getScore(matchedState) !== getScore(state)) {
+        throw new Error(`mismatched state for doc ${docId.toString()}`);
+      }
+    }
   }
 
   return {

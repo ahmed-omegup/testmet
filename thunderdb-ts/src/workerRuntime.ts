@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { runLimitStream, StreamItem } from './limit-index/limitStream';
-import { DownstreamEvent } from './limit-index/types';
+import { LimitMatchEvent } from './limit-index/types';
 import { RetrievalJobWorker } from './retrievalJob';
 import { LmdbDocStore, LmdbDurability } from './docStore';
 import { SocketDocState, WorkerRunSummary } from './socketProtocol';
@@ -21,15 +21,12 @@ interface RunState {
 
 const getScore = (state: SocketDocState) => state.scoreValue;
 
-const handleDownstreamEvent = (state: RunState, event: DownstreamEvent<SocketDocState>): void => {
+const handleLimitMatchEvent = (state: RunState, event: LimitMatchEvent<SocketDocState>): void => {
   if (debugEvictions) {
     if (event.kind === 'match') {
       event.matchesNew.sort();
       event.evictions.sort();
       event.matchesOld.sort();
-    }
-    if (event.kind === 'retrieval') {
-      event.docs.sort();
     }
     console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
   }
@@ -38,8 +35,6 @@ const handleDownstreamEvent = (state: RunState, event: DownstreamEvent<SocketDoc
     state.evictions += event.evictions.length;
     return;
   }
-  state.retrievalBatches += 1;
-  state.retrievalDocs += event.docs.length;
 };
 
 const buildSummary = (state: RunState, endTs: number): WorkerRunSummary => ({
@@ -92,7 +87,7 @@ export class WorkerRuntime {
     this.runState = runState;
     const that = this;
     this.runGenerator = (function* () {
-      yield* runLimitStream(getScore, evt => handleDownstreamEvent(runState, evt), {
+      yield* runLimitStream(getScore, evt => handleLimitMatchEvent(runState, evt), {
         retrievalJob: runState.retrievalJob,
         docStore: runState.docStore,
       });

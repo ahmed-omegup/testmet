@@ -1,4 +1,4 @@
-import { DocStateDom, QuerySpec, LimitMatchEvent, DocChange, Score, QueryId, DocId, DownstreamEvent } from './types';
+import { DocStateDom, QuerySpec, LimitMatchEvent, DocChange, Score, QueryId, DocId } from './types';
 import { DynamicRangeQueries } from './LimitQueries';
 import { RetrievalJobWorker } from '../retrievalJob';
 import { LmdbDocStore } from '../docStore';
@@ -22,7 +22,7 @@ const handleChange = <DocState extends DocStateDom>(
   item: DocChange<DocState>,
   queries: DynamicRangeQueries,
   getScore: (state: DocState) => Score,
-  emit: (e: DownstreamEvent<DocState>) => void,
+  emit: (e: LimitMatchEvent<DocState>) => void,
   options: LimitStreamOptions<DocState> = {}
 ) => {
   const { id, old, new: next } = item;
@@ -125,7 +125,7 @@ const handleItem = <DocState extends DocStateDom>(
   item: StreamItem<DocState>,
   queries: DynamicRangeQueries,
   getScore: (state: DocState) => Score,
-  emit: (e: DownstreamEvent<DocState>) => void,
+  emit: (e: LimitMatchEvent<DocState>) => void,
   options: LimitStreamOptions<DocState> = {}
 ) => {
   const retrievalJob = options.retrievalJob;
@@ -170,7 +170,7 @@ const handleItem = <DocState extends DocStateDom>(
 // Stateless limit stream operator (stores only per-query counts already tracked in DynamicRangeQueries)
 export function *runLimitStream<DocState extends DocStateDom>(
   getScore: (state: DocState) => Score,
-  emit: (e: DownstreamEvent<DocState>) => void,
+  emit: (e: LimitMatchEvent<DocState>) => void,
   options: LimitStreamOptions<DocState> = {}
 ): Generator<void, void, StreamItem<DocState> | void> {
   const queries = new DynamicRangeQueries();
