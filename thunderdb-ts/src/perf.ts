@@ -307,7 +307,6 @@ function* runEmbed(
         retrievalBatches += 1;
         retrievalDocs += event.docs.length;
       },
-      debugEvictions ? console.log : () => { }
     )
     : undefined;
 
