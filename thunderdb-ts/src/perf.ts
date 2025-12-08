@@ -20,6 +20,7 @@ import {
   WorkerRunSummary,
 } from './socketProtocol';
 import { createInProcessWorkerClient } from './transport';
+import { isReadable } from 'node:stream';
 
 dotenv.config({ path: process.env.PERF_ENV || '.env' });
 
@@ -37,7 +38,6 @@ type PerfConfig = {
   rangeMin: number;
   rangeMax: number;
   density: number;
-  enableRetrieval: boolean;
   remoteWorkerEmbedded: boolean;
 };
 
@@ -68,7 +68,6 @@ const config: PerfConfig & {
   rangeMin: Number(process.env.PERF_RANGE_MIN ?? 100),
   rangeMax: Number(process.env.PERF_RANGE_MAX ?? 600),
   density: Number(process.env.PERF_DENSITY ?? 10),
-  enableRetrieval: process.env.PERF_ENABLE_RETRIEVAL !== 'false',
   range: 0,
   updatesPerTick: 0,
   insertsPerTick: 0,
@@ -297,37 +296,34 @@ function* runEmbed(
 
 
   const docs = checkQuery ? {
-    db: new Map<DocId, PerfDocState>(), queries: new Map<QueryId, [QuerySpec, Map<DocId, PerfDocState | null>]>()
+    db: new Map<DocId, PerfDocState>(), queries: new Map<QueryId, [QuerySpec, Map<DocId, PerfDocState>]>()
   } : undefined;
 
-  const docStore = config.enableRetrieval
-    ? new LmdbDocStore<PerfDocState>({ durability: 'relaxed' })
-    : undefined;
-  const retrievalJob = config.enableRetrieval && docStore
-    ? new RetrievalJobWorker<PerfDocState>(
-      ids => docStore.getMany(ids),
-      event => {
-        if (debugEvictions) {
-          console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
-        }
-        if (docs) {
-          for (const { docId, queries, state } of event.docs) {
-            for (const qId of queries) {
-              const [_, q] = docs.queries.get(qId)!;
-              if (!q.has(docId)) q.set(docId, state);
-            }
+  const docStore = new LmdbDocStore<PerfDocState>({ durability: 'relaxed' });
+  const retrievalJob = new RetrievalJobWorker<PerfDocState>(
+    ids => docStore.getMany(ids),
+    event => {
+      if (debugEvictions) {
+        console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
+      }
+      if (docs) {
+        for (const { docId, queries, state } of event.docs) {
+          for (const qId of queries) {
+            if (ignore(qId)) continue;
+            const [_, q] = docs.queries.get(qId)!;
+            if (!q.has(docId)) q.set(docId, { ...state, ret: 1 } as any);
           }
         }
-        retrievalBatches += 1;
-        retrievalDocs += event.docs.length;
-      },
-    )
-    : undefined;
+      }
+      retrievalBatches += 1;
+      retrievalDocs += event.docs.length;
+    },
+  );
 
   const start = performance.now();
   let streamedEvents = 0;
   const ignore = (qId: QueryId) => {
-    return qId !== 497n
+    return (qId & 0xFFn) !== 0xFFn;
   }
   const gen = runLimitStream(
     getScore,
@@ -340,13 +336,16 @@ function* runEmbed(
       }
       if (docs) {
         for (const qId of event.matchesOld) {
-          if(!ignore(qId)) docs.queries.get(qId)![1].set(event.docId, null);
+          if (!ignore(qId)) docs.queries.get(qId)![1].delete(event.docId);
         }
         for (const qId of event.matchesNew) {
-          if(!ignore(qId)) docs.queries.get(qId)![1].set(event.docId, event.new);
+          if (!ignore(qId)) {
+            if (event.new) docs.queries.get(qId)![1].set(event.docId, event.new);
+            else docs.queries.get(qId)![1].delete(event.docId);
+          }
         }
         for (const [qId, evicted] of event.evictions) {
-          if(!ignore(qId)) docs.queries.get(qId)![1].delete(evicted);
+          if (!ignore(qId)) docs.queries.get(qId)![1].delete(evicted);
         }
       }
       if (event.kind === 'match') {
@@ -355,7 +354,7 @@ function* runEmbed(
       }
     },
     {
-      retrievalJob: retrievalJob ?? undefined,
+      retrievalJob: retrievalJob,
       docStore,
     }
   );
@@ -403,6 +402,7 @@ function* runEmbed(
   }
 
   if (docs) for (const [qId, [querySpec, query]] of docs.queries) {
+    if (ignore(qId)) continue;
     if (!querySpec) throw new Error('missing query spec');
     const expectedMatches: Map<DocId, PerfDocState> = new Map();
     for (const [docId, state] of docs.db) {
@@ -511,11 +511,7 @@ function logSummary(summary: WorkerRunSummary, start: number): void {
   console.log('\n[perf] summary');
   console.log(`  duration: ${durationMs.toFixed(2)} ms (~${eventsPerSec} events/s)`);
   console.log(`  match events: ${formatNumber(summary.matchEvents)} (evictions: ${formatNumber(summary.evictions)})`);
-  if (config.enableRetrieval) {
-    console.log(`  retrieval batches: ${formatNumber(summary.retrievalBatches)} (docs: ${formatNumber(summary.retrievalDocs)})`);
-  } else {
-    console.log('  retrieval batches: disabled');
-  }
+  console.log(`  retrieval batches: ${formatNumber(summary.retrievalBatches)} (docs: ${formatNumber(summary.retrievalDocs)})`);
 }
 
 async function* readServerMessages(rl: readline.Interface): AsyncGenerator<ServerMessage> {
