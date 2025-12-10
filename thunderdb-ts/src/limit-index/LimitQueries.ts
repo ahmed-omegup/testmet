@@ -254,6 +254,15 @@ export class DynamicRangeQueries {
         return this.collectQueriesForValue(v, docId).map(q => q.id);
     }
 
+    getQueriesCoveringButNot(
+        includeValue: Score,
+        includeDocId: DocId | null,
+        excludeValue: Score,
+        excludeDocId: DocId | null
+    ): QueryId[] {
+        return this.collectQueriesForDifference(includeValue, includeDocId, excludeValue, excludeDocId).map(q => q.id);
+    }
+
     getQueryInfo(id: QueryId): QueryInfo | undefined { return this.idToQuery.get(id); }
 
     getDocsForQuery(id: QueryId): DocId[] {
@@ -289,6 +298,41 @@ export class DynamicRangeQueries {
             debugConfig
         );
         this.verifyCoveringConsistency(v, docId, out);
+        return out;
+    }
+
+    private collectQueriesForDifference(
+        includeValue: Score,
+        includeDocId: DocId | null,
+        excludeValue: Score,
+        excludeDocId: DocId | null
+    ): QueryInfo[] {
+        const includeCutoff = this.docs.rank(includeValue, includeDocId);
+        const excludeCutoff = this.docs.rank(excludeValue, excludeDocId);
+        const out: QueryInfo[] = [];
+        const debugConfig = (CHECK_INVARIANTS && DEBUG_QUERY_ID !== null) ? {
+            queryId: DEBUG_QUERY_ID,
+            onPrune: (info: Record<string, unknown>) => console.error('[debug collect diff prune]', info),
+        } : undefined;
+        this.queries.collectDifferenceForValue(
+            includeValue,
+            includeCutoff,
+            excludeValue,
+            excludeCutoff,
+            (id) => {
+                const qi = this.idToQuery.get(id);
+                return !!qi && qi.max >= includeValue;
+            },
+            (id) => {
+                const qi = this.idToQuery.get(id);
+                return !!qi && qi.max >= excludeValue;
+            },
+            (id) => {
+                const qi = this.idToQuery.get(id);
+                if (qi) out.push(qi);
+            },
+            debugConfig
+        );
         return out;
     }
 

@@ -15,9 +15,11 @@ class QueriesNode {
 	subtreeMax: bigint | null; // add + max(baseLocalMax, left.subtreeMax, right.subtreeMax)
 	// Track per-node and per-subtree maximum of query.max (upper bound on value coverage)
 	localMaxCap: number = Number.NEGATIVE_INFINITY;
+	localMinCap: number = Number.POSITIVE_INFINITY;
 	subtreeMaxCap: number; // max(localMaxCap, left.subtreeMaxCap, right.subtreeMaxCap)
-	// frequency map to maintain localMaxCap efficiently
-	localMaxFreq: Map<number, number> = new Map();
+	subtreeMinCap: number; // min(localMinCap, left.subtreeMinCap, right.subtreeMinCap)
+	// frequency map to maintain local cap statistics efficiently
+	localCapFreq: Map<number, number> = new Map();
 	l: Nullable<QueriesNode> = null;
 	r: Nullable<QueriesNode> = null;
 	constructor(key: number) {
@@ -26,6 +28,7 @@ class QueriesNode {
 		this.add = 0n;
 		this.subtreeMax = null;
 		this.subtreeMaxCap = Number.NEGATIVE_INFINITY;
+		this.subtreeMinCap = Number.POSITIVE_INFINITY;
 	}
 }
 
@@ -38,9 +41,11 @@ export class QueriesTreap implements QueriesIndex {
 	root: Nullable<QueriesNode> = null;
 
 	private static negInf = Number.NEGATIVE_INFINITY;
+	private static posInf = Number.POSITIVE_INFINITY;
 
 	private static getSubMax(n: Nullable<QueriesNode>): bigint | null { return n ? n.subtreeMax : null; }
 	private static getSubCap(n: Nullable<QueriesNode>): number { return n ? n.subtreeMaxCap : QueriesTreap.negInf; }
+	private static getSubMinCap(n: Nullable<QueriesNode>): number { return n ? n.subtreeMinCap : QueriesTreap.posInf; }
 
 	private static pull(n: QueriesNode): void {
 		// subtreeMax is node.add + max(localBaseMax, left.subtreeMax, right.subtreeMax)
@@ -53,6 +58,9 @@ export class QueriesTreap implements QueriesIndex {
 		const leftCap = QueriesTreap.getSubCap(n.l);
 		const rightCap = QueriesTreap.getSubCap(n.r);
 		n.subtreeMaxCap = Math.max(n.localMaxCap, Math.max(leftCap, rightCap));
+		const leftMinCap = QueriesTreap.getSubMinCap(n.l);
+		const rightMinCap = QueriesTreap.getSubMinCap(n.r);
+		n.subtreeMinCap = Math.min(n.localMinCap, Math.min(leftMinCap, rightMinCap));
 	}
 
 	private static push(n: Nullable<QueriesNode>): void {
@@ -105,9 +113,10 @@ export class QueriesTreap implements QueriesIndex {
 		if (!set) { set = new Set(); n.itemsByScore.set(baseScore, set); }
 		set.add(id);
 		n.baseLocalMax = n.localScores.length ? n.localScores[n.localScores.length - 1]! : null;
-		// update max cap freq
-		n.localMaxFreq.set(maxCap, (n.localMaxFreq.get(maxCap) ?? 0) + 1);
+		// update cap frequency map and associated aggregates
+		n.localCapFreq.set(maxCap, (n.localCapFreq.get(maxCap) ?? 0) + 1);
 		if (maxCap > n.localMaxCap) n.localMaxCap = maxCap;
+		if (maxCap < n.localMinCap) n.localMinCap = maxCap;
 	}
 
 	private removeFromLocal(n: QueriesNode, id: QueryId, baseScore: bigint, maxCap: number): boolean {
@@ -118,18 +127,23 @@ export class QueriesTreap implements QueriesIndex {
 		const idx = this.findOneIndex(n.localScores, baseScore);
 		if (idx >= 0) n.localScores.splice(idx, 1);
 		n.baseLocalMax = n.localScores.length ? n.localScores[n.localScores.length - 1]! : null;
-		// update max cap freq
-		const prev = n.localMaxFreq.get(maxCap) ?? 0;
+		// update cap freq
+		const prev = n.localCapFreq.get(maxCap) ?? 0;
 		if (prev <= 1) {
-			n.localMaxFreq.delete(maxCap);
+			n.localCapFreq.delete(maxCap);
 			if (n.localMaxCap === maxCap) {
 				// recompute current localMaxCap
 				let m = QueriesTreap.negInf;
-				for (const cap of n.localMaxFreq.keys()) if (cap > m) m = cap;
+				for (const cap of n.localCapFreq.keys()) if (cap > m) m = cap;
 				n.localMaxCap = m;
 			}
+			if (n.localMinCap === maxCap) {
+				let m = QueriesTreap.posInf;
+				for (const cap of n.localCapFreq.keys()) if (cap < m) m = cap;
+				n.localMinCap = m;
+			}
 		} else {
-			n.localMaxFreq.set(maxCap, prev - 1);
+			n.localCapFreq.set(maxCap, prev - 1);
 		}
 		return true;
 	}
@@ -214,6 +228,30 @@ export class QueriesTreap implements QueriesIndex {
 		this._collectTraverse(this.root, 0n, cutoff, v, isAllowed, visit, debug);
 	}
 
+	collectDifferenceForValue(
+		includeValue: number,
+		includeCutoff: bigint,
+		excludeValue: number,
+		excludeCutoff: bigint,
+		includeAllowed: (id: QueryId) => boolean,
+		excludeAllowed: (id: QueryId) => boolean,
+		visit: (id: QueryId) => void,
+		debug?: CollectDebugConfig
+	): void {
+		this._collectTraverseDifference(
+			this.root,
+			0n,
+			includeCutoff,
+			excludeCutoff,
+			includeValue,
+			excludeValue,
+			includeAllowed,
+			excludeAllowed,
+			visit,
+			debug
+		);
+	}
+
 	private _collectTraverse(n: Nullable<QueriesNode>, accAdd: bigint, cutoff: bigint, v: number, isAllowed: (id: QueryId) => boolean, visit: (id: QueryId) => void, debug?: CollectDebugConfig): void {
 		if (!n) return;
 		if (n.subtreeMaxCap < v) {
@@ -248,6 +286,168 @@ export class QueriesTreap implements QueriesIndex {
 				for (const id of set) if (isAllowed(id)) visit(id);
 			}
 			while (i < n.localScores.length && n.localScores[i] === base) i++;
+		}
+	}
+
+	private _collectTraverseDifference(
+		n: Nullable<QueriesNode>,
+		accAdd: bigint,
+		includeCutoff: bigint,
+		excludeCutoff: bigint,
+		includeValue: number,
+		excludeValue: number,
+		includeAllowed: (id: QueryId) => boolean,
+		excludeAllowed: (id: QueryId) => boolean,
+		visit: (id: QueryId) => void,
+		debug?: CollectDebugConfig
+	): void {
+		if (!n) return;
+		if (n.subtreeMaxCap < includeValue) {
+			this.debugPrune('maxCap', n, accAdd, includeCutoff, includeValue, debug);
+			return;
+		}
+		const effSubMax = (n.subtreeMax === null) ? null : n.subtreeMax + accAdd;
+		if (effSubMax === null || effSubMax <= includeCutoff) {
+			this.debugPrune('subtreeMax', n, accAdd, includeCutoff, includeValue, debug);
+			return;
+		}
+		const accForChildren = accAdd + n.add;
+		const accHere = accForChildren + n.localAdd;
+		if (n.key > includeValue) {
+			this._collectTraverseDifference(
+				n.l,
+				accForChildren,
+				includeCutoff,
+				excludeCutoff,
+				includeValue,
+				excludeValue,
+				includeAllowed,
+				excludeAllowed,
+				visit,
+				debug
+			);
+			return;
+		}
+		this._collectTraverseDifference(
+			n.l,
+			accForChildren,
+			includeCutoff,
+			excludeCutoff,
+			includeValue,
+			excludeValue,
+			includeAllowed,
+			excludeAllowed,
+			visit,
+			debug
+		);
+		this.visitLocalQueriesDifference(
+			n,
+			accHere,
+			includeCutoff,
+			excludeCutoff,
+			includeValue,
+			excludeValue,
+			includeAllowed,
+			excludeAllowed,
+			visit
+		);
+		this._collectTraverseDifference(
+			n.r,
+			accForChildren,
+			includeCutoff,
+			excludeCutoff,
+			includeValue,
+			excludeValue,
+			includeAllowed,
+			excludeAllowed,
+			visit,
+			debug
+		);
+	}
+
+	private visitLocalQueriesDifference(
+		n: QueriesNode,
+		accHere: bigint,
+		includeCutoff: bigint,
+		excludeCutoff: bigint,
+		includeValue: number,
+		excludeValue: number,
+		includeAllowed: (id: QueryId) => boolean,
+		excludeAllowed: (id: QueryId) => boolean,
+		visit: (id: QueryId) => void
+	): void {
+		if (!n.localScores.length) return;
+		if (n.key > includeValue) return;
+		const thresholdInclude = includeCutoff - accHere;
+		const thresholdExclude = excludeCutoff - accHere;
+		const startIdx = this.upperBound(n.localScores, thresholdInclude + 1n);
+		if (startIdx >= n.localScores.length) return;
+		const allExcludeOutOfRange = n.localMaxCap < excludeValue;
+		const allExcludeInRange = n.localMinCap >= excludeValue;
+		if (allExcludeOutOfRange) {
+			this.iterateLocalRange(n, startIdx, n.localScores.length, includeAllowed, visit);
+			return;
+		}
+		let middleIdx = startIdx;
+		if (thresholdExclude >= thresholdInclude) {
+			middleIdx = this.upperBound(n.localScores, thresholdExclude + 1n);
+		}
+		if (middleIdx > startIdx) {
+			this.iterateLocalRange(n, startIdx, Math.min(middleIdx, n.localScores.length), includeAllowed, visit);
+		}
+		if (allExcludeInRange) return;
+		const rangeStart = (thresholdExclude >= thresholdInclude) ? Math.min(middleIdx, n.localScores.length) : startIdx;
+		this.iterateRangeWithExcludeCheck(
+			n,
+			rangeStart,
+			n.localScores.length,
+			includeAllowed,
+			excludeAllowed,
+			thresholdExclude,
+			visit
+		);
+	}
+
+	private iterateLocalRange(
+		n: QueriesNode,
+		start: number,
+		end: number,
+		includeAllowed: (id: QueryId) => boolean,
+		visit: (id: QueryId) => void
+	): void {
+		let i = start;
+		while (i < end) {
+			const base = n.localScores[i]!;
+			const set = n.itemsByScore.get(base);
+			if (set) {
+				for (const id of set) if (includeAllowed(id)) visit(id);
+			}
+			while (i < end && n.localScores[i] === base) i++;
+		}
+	}
+
+	private iterateRangeWithExcludeCheck(
+		n: QueriesNode,
+		start: number,
+		end: number,
+		includeAllowed: (id: QueryId) => boolean,
+		excludeAllowed: (id: QueryId) => boolean,
+		thresholdExclude: bigint,
+		visit: (id: QueryId) => void
+	): void {
+		let i = start;
+		while (i < end) {
+			const base = n.localScores[i]!;
+			const exceedsExclude = base > thresholdExclude;
+			const set = n.itemsByScore.get(base);
+			if (set) {
+				for (const id of set) {
+					if (!includeAllowed(id)) continue;
+					const matchesExclude = exceedsExclude && excludeAllowed(id);
+					if (!matchesExclude) visit(id);
+				}
+			}
+			while (i < end && n.localScores[i] === base) i++;
 		}
 	}
 
