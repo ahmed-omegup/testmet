@@ -70,6 +70,11 @@ const handleChange = <DocState extends DocStateDom>(
   for (const q of matchesOld) {
     if (!matchesNewSet.has(q)) lostQueries.add(q);
   }
+
+  const gainedQueries = new Set<QueryId>();
+  for (const q of matchesNew) {
+    if (!matchesOldSet.has(q)) gainedQueries.add(q);
+  }
   if (DEBUG_QUERY_ID !== null && lostQueries.has(DEBUG_QUERY_ID)) {
     console.error('[debug lostQueries]', {
       docId: id.toString(),
@@ -105,14 +110,17 @@ const handleChange = <DocState extends DocStateDom>(
     }
   }
 
-  if (matchesOld.length || matchesNew.length || evictions.length) {
+  const outputMatchesOld = Array.from(lostQueries);
+  const outputMatchesNew = Array.from(gainedQueries);
+
+  if (outputMatchesOld.length || outputMatchesNew.length || evictions.length) {
     emit({
       kind: 'match',
       docId: id,
       old,
       new: next,
-      matchesOld,
-      matchesNew,
+      matchesOld: outputMatchesOld,
+      matchesNew: outputMatchesNew,
       evictions,
     });
   }
