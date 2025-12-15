@@ -12,7 +12,7 @@ interface AddResult {
 }
 
 const min = (a: bigint, b: bigint) => a < b ? a : b;
-const CHECK_INVARIANTS = process.env.LIMIT_CHECK_INVARIANTS === '1';
+const CHECK_INVARIANTS = true;
 const DEBUG_DOC_ID = process.env.LIMIT_DEBUG_DOC ? (BigInt(process.env.LIMIT_DEBUG_DOC) as DocId) : null;
 const DEBUG_QUERY_ID = process.env.LIMIT_DEBUG_QUERY ? (BigInt(process.env.LIMIT_DEBUG_QUERY) as QueryId) : null;
 

@@ -56,10 +56,12 @@ const fromQueryId = (value: QueryId): string => value.toString();
 const toDocState = (state: WireDocState): SocketDocState => ({ scoreValue: state.scoreValue as Score } as SocketDocState);
 const fromDocState = (state: SocketDocState): WireDocState => ({ scoreValue: Number(state.scoreValue) });
 
+let i = 1
 const toQuerySpec = (spec: WireQuerySpec): QuerySpec => ({
   minScore: spec.minScore as Score,
   maxScore: spec.maxScore as Score,
   limit: BigInt(spec.limit),
+  id: i++,
 });
 
 

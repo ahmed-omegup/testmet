@@ -58,13 +58,13 @@ const config: PerfConfig & {
   deletesPerTick: number;
 } = {
   seed: Number(process.env.PERF_SEED ?? 42),
-  documents: Number(process.env.PERF_DOCUMENTS ?? 100000),
-  customers: Number(process.env.PERF_CUSTOMERS ?? 10000),
+  documents: Number(process.env.PERF_DOCUMENTS ?? 1000),
+  customers: Number(process.env.PERF_CUSTOMERS ?? 1000),
   duration: Number(process.env.PERF_DURATION ?? 5),
   updateRate: Number(process.env.PERF_UPDATE_RATE ?? 0.05),
   insertRate: Number(process.env.PERF_INSERT_RATE ?? 0.01),
   deleteRate: Number(process.env.PERF_DELETE_RATE ?? 0.01),
-  queryLimit: Number(process.env.PERF_QUERY_LIMIT ?? 50),
+  queryLimit: Number(process.env.PERF_QUERY_LIMIT ?? 200),
   rangeMin: Number(process.env.PERF_RANGE_MIN ?? 100),
   rangeMax: Number(process.env.PERF_RANGE_MAX ?? 600),
   density: Number(process.env.PERF_DENSITY ?? 10),
@@ -107,7 +107,7 @@ const trackDoc = (id: DocId, state: PerfDocState) => {
 };
 
 const updateDoc = (id: DocId, state: PerfDocState) => {
-  docStates.set(id, state);
+  docStates.set(id, {scoreValue: docStates.get(id)!.scoreValue + 1 });
 };
 
 const removeDoc = (id: DocId) => {
@@ -184,7 +184,7 @@ const buildEvents = function* (): Generator<WireStreamItem> {
   yield* adds.flush()
 
   const upStart = performance.now();
-  if (!debugEvictions) if (!debugEvictions) console.log(`[perf] seeding queries took ${(upStart - queryStart).toFixed(2)} ms`);
+  if (!debugEvictions) console.log(`[perf] seeding queries took ${(upStart - queryStart).toFixed(2)} ms`);
 
   const updates = createBuffer<WireDocChange, WireStreamItem>(SEED_BATCH_SIZE, batch => ({
     kind: 'doc-changes', changes: batch
@@ -222,7 +222,7 @@ const buildEvents = function* (): Generator<WireStreamItem> {
   yield* updates.flush()
   const end = performance.now();
   const nbEvents = config.duration * (config.updatesPerTick + config.insertsPerTick + config.deletesPerTick)
-  if (!debugEvictions) if (!debugEvictions) console.log(`[perf] ${nbEvents} events processing took ${(end - upStart).toFixed(2)} ms`);
+  if (!debugEvictions) console.log(`[perf] ${nbEvents} events processing took ${(end - upStart).toFixed(2)} ms`);
 };
 
 const formatNumber = (value: number) => value.toLocaleString('en-US');
@@ -299,6 +299,8 @@ function* runEmbed(
     db: new Map<DocId, PerfDocState>(), queries: new Map<QueryId, [QuerySpec, Map<DocId, PerfDocState>]>()
   } : undefined;
 
+  (global as any)['docs'] = docs
+
   const docStore = new LmdbDocStore<PerfDocState>({ durability: 'relaxed' });
   const retrievalJob = new RetrievalJobWorker<PerfDocState>(
     ids => docStore.getMany(ids),
@@ -323,15 +325,15 @@ function* runEmbed(
   const start = performance.now();
   let streamedEvents = 0;
   const ignore = (qId: QueryId) => {
-    return (qId & 0xFFn) !== 0xFFn;
+    return false
   }
   const gen = runLimitStream(
     getScore,
     (event: LimitMatchEvent<PerfDocState>) => {
       if (debugEvictions) {
-        event.matchesNew.sort();
-        event.evictions.sort();
-        event.matchesOld.sort();
+        // event.matchesNew.sort();
+        // event.evictions.sort();
+        // event.matchesOld.sort();
         console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
       }
       if (docs) {

@@ -13,6 +13,7 @@ export interface QuerySpec {
   minScore: Score;
   maxScore: Score;
   limit: bigint;
+  id?: number
 }
 
 export interface LimitMatchEvent<DocState extends DocStateDom> {
