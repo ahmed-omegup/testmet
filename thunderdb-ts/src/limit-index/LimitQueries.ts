@@ -23,6 +23,10 @@ export class DynamicRangeQueries {
     private idToQuery: Map<QueryId, QueryInfo> = new Map();
     // baseScore stored at insertion for fast removal
     private idToBaseScore: Map<QueryId, bigint> = new Map();
+    // gap-filling bookkeeping: docs that have been selected as gap-fillers
+    // and are still pending retrieval, grouped by query and by doc
+    private pendingByQuery: Map<QueryId, Set<DocId>> = new Map();
+    private pendingByDoc: Map<DocId, Set<QueryId>> = new Map();
 
     private verifyCurrentMatches(context: string): void {
         if (!CHECK_INVARIANTS) return;
@@ -240,6 +244,18 @@ export class DynamicRangeQueries {
         if (baseScore === undefined) return false;
         this.queries.remove(info.a, id, baseScore, info.max);
         this.idToBaseScore.delete(id);
+        // Clear any pending gap-fillers associated with this query
+        const pendingDocs = this.pendingByQuery.get(id);
+        if (pendingDocs) {
+            for (const docId of pendingDocs) {
+                const qs = this.pendingByDoc.get(docId);
+                if (qs) {
+                    qs.delete(id);
+                    if (qs.size === 0) this.pendingByDoc.delete(docId);
+                }
+            }
+            this.pendingByQuery.delete(id);
+        }
         this.idToQuery.delete(id);
         return true;
     }
@@ -311,12 +327,45 @@ export class DynamicRangeQueries {
         if (!info) return null;
         if (info.currentMatches >= info.k) return null;
         this.debugQueryEvent(`fillGap attempt query=${id.toString()}`, info);
-        const doc = this.docForQueryAt(info, info.currentMatches);
-        if (!doc) {
-            this.debugQueryEvent(`fillGap miss query=${id.toString()}`, info);
-            return null;
+        // We may already have outstanding gap-fill requests for this query.
+        // Skip any candidate docs that are already pending for this query so
+        // we don't register the same (doc,query) pair multiple times while a
+        // previous retrieval is still in flight.
+
+        let offset = info.currentMatches;
+        let doc: DocId | null = null;
+        while (true) {
+            const candidate = this.docForQueryAt(info, offset);
+            if (!candidate) {
+                this.debugQueryEvent(`fillGap miss query=${id.toString()}`, info);
+                return null;
+            }
+            const pending = this.pendingByQuery.get(id);
+            if (!pending || !pending.has(candidate)) {
+                doc = candidate;
+                break;
+            }
+            offset += 1n;
         }
+
         info.currentMatches += 1n;
+
+        // Mark this doc as pending for this query so subsequent gap fills
+        // will skip it until the retrieval completes.
+        let byQuery = this.pendingByQuery.get(id);
+        if (!byQuery) {
+            byQuery = new Set<DocId>();
+            this.pendingByQuery.set(id, byQuery);
+        }
+        byQuery.add(doc);
+
+        let byDoc = this.pendingByDoc.get(doc);
+        if (!byDoc) {
+            byDoc = new Set<QueryId>();
+            this.pendingByDoc.set(doc, byDoc);
+        }
+        byDoc.add(id);
+
         this.debugQueryEvent(`fillGap query=${id.toString()}`, info);
         this.verifySingleQuery(info, `fillGap query=${id.toString()}`);
         return doc;
@@ -332,6 +381,21 @@ export class DynamicRangeQueries {
         const index = Number(position);
         assert(Number.isSafeInteger(index), 'doc index exceeds safe integer range');
         return id ?? null;
+    }
+
+    // Called when we finish processing a retrieval for docId (i.e. once the
+    // corresponding doc-change has been applied) so that future gap-fills can
+    // consider this doc again if needed.
+    resolvePendingForDoc(docId: DocId): void {
+        const qs = this.pendingByDoc.get(docId);
+        if (!qs) return;
+        for (const qId of qs) {
+            const pendingDocs = this.pendingByQuery.get(qId);
+            if (!pendingDocs) continue;
+            pendingDocs.delete(docId);
+            if (pendingDocs.size === 0) this.pendingByQuery.delete(qId);
+        }
+        this.pendingByDoc.delete(docId);
     }
 
 }

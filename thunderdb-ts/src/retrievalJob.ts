@@ -3,6 +3,7 @@ import { DocId, QueryId, DocStateDom, RetrievalEvent, RetrievalBatchDoc } from '
 interface BatchEntry {
   queries: Set<QueryId>;
 }
+const debugEvictions = process.env.PERF_DEBUG_EVICS === '1';
 
 export class RetrievalJobWorker<DocState extends DocStateDom> {
   private pendingBatch = new Map<DocId, BatchEntry>();
@@ -33,8 +34,8 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
   }
 
   register(docId: DocId, queryId: QueryId) {
-    console.log('RetrievalJobWorker: register', { docId, queryId });
-    if(this.processingBatch.get(docId)?.queries.has(queryId)) {
+    if (debugEvictions) console.log('RetrievalJobWorker: register', { docId, queryId });
+    if (this.processingBatch.get(docId)?.queries.has(queryId)) {
       console.log(JSON.stringify(Object.fromEntries([...(global as any)['docs'].queries.get(queryId)[1]]), undefined, 2));
       throw new Error('Cannot register a doc that is currently being processed');
     }

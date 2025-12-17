@@ -30,6 +30,9 @@ const handleChange = <DocState extends DocStateDom>(
   const retrievalJob = options.retrievalJob;
 
   const notifyRetrieval = () => {
+    // Retrieval for this doc has completed; clear any in-flight gap-fill
+    // bookkeeping before telling the retrieval job to drop its tracking.
+    queries.resolvePendingForDoc(id);
     retrievalJob.resolveDoc(id);
   };
 
