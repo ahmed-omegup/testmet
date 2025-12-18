@@ -180,8 +180,20 @@ export class DynamicRangeQueries {
 
         const matched: QueryId[] = affected.map(q => q.id);
         const blocked: QueryId[] = [];
+        const pendingForDoc = this.pendingByDoc.get(id);
 
         for (const q of affected) {
+            if (pendingForDoc && pendingForDoc.has(q.id)) {
+                // This doc was already counted for this query while a gap-fill retrieval was pending.
+                pendingForDoc.delete(q.id);
+                if (pendingForDoc.size === 0) this.pendingByDoc.delete(id);
+                const pendingDocs = this.pendingByQuery.get(q.id);
+                if (pendingDocs) {
+                    pendingDocs.delete(id);
+                    if (pendingDocs.size === 0) this.pendingByQuery.delete(q.id);
+                }
+                continue;
+            }
             if (q.currentMatches < q.k) {
                 q.currentMatches += 1n;
                 this.debugQueryEvent(`increment doc=${id.toString()} value=${value}`, q);
@@ -369,6 +381,38 @@ export class DynamicRangeQueries {
         this.debugQueryEvent(`fillGap query=${id.toString()}`, info);
         this.verifySingleQuery(info, `fillGap query=${id.toString()}`);
         return doc;
+    }
+
+    /**
+     * If (docId, queryId) was previously returned from fillGap() (i.e. counted
+     * towards currentMatches but not yet delivered), cancel that pending slot.
+     *
+     * This is required when the would-be replacement doc is later evicted
+     * before delivery; otherwise currentMatches stays inflated and the caller
+     * will never request an alternative replacement.
+     */
+    cancelPendingForQuery(docId: DocId, queryId: QueryId): boolean {
+        const pendingDocs = this.pendingByQuery.get(queryId);
+        if (!pendingDocs || !pendingDocs.has(docId)) return false;
+
+        pendingDocs.delete(docId);
+        if (pendingDocs.size === 0) this.pendingByQuery.delete(queryId);
+
+        const qs = this.pendingByDoc.get(docId);
+        if (qs) {
+            qs.delete(queryId);
+            if (qs.size === 0) this.pendingByDoc.delete(docId);
+        }
+
+        const info = this.idToQuery.get(queryId);
+        if (info) {
+            if (info.currentMatches <= 0n) {
+                throw new Error('Inconsistent query state detected when cancelling pending gap fill');
+            }
+            info.currentMatches -= 1n;
+            this.debugQueryEvent(`cancelPending doc=${docId.toString()} query=${queryId.toString()}`, info);
+        }
+        return true;
     }
 
     private docForQueryAt(info: QueryInfo, offset: bigint): DocId | null {

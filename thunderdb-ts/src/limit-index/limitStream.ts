@@ -104,7 +104,14 @@ const handleChange = <DocState extends DocStateDom>(
     const evictedDoc = queries.pickOverflowDoc(q);
     if (evictedDoc) {
       evictions.push([q, evictedDoc]);
+      const cancelledPending = queries.cancelPendingForQuery(evictedDoc, q);
       retrievalJob.cancel(evictedDoc, q);
+      if (cancelledPending) {
+        const replacement = queries.fillGap(q);
+        if (replacement && retrievalJob) {
+          retrievalJob.register(replacement, q);
+        }
+      }
     }
   }
 

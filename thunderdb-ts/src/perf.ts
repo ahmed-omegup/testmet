@@ -42,6 +42,12 @@ type PerfConfig = {
 };
 
 const checkQuery = process.env.CHECK_QUERY === '1';
+const traceDocId = process.env.PERF_TRACE_DOC ? (BigInt(process.env.PERF_TRACE_DOC) as DocId) : null;
+const traceJsonReplacer = (_: string, value: unknown) => typeof value === 'bigint' ? value.toString() : value;
+const traceDocEvent = (phase: string, payload: Record<string, unknown>) => {
+  if (traceDocId === null) return;
+  console.log(`[perf-trace doc=${traceDocId.toString()}] ${phase} ${JSON.stringify(payload, traceJsonReplacer)}`);
+};
 const debugEvictions = process.env.PERF_DEBUG_EVICS === '1';
 const remoteWorkerHostEnv = process.env.PERF_WORKER_HOST;
 const remoteWorkerToggle = process.env.PERF_REMOTE_WORKER;
@@ -107,6 +113,8 @@ const trackDoc = (id: DocId, state: PerfDocState) => {
 };
 
 const updateDoc = (id: DocId, state: PerfDocState) => {
+  // Keep the authoritative state identical to the events we emit so future
+  // changes use the correct "old" snapshot.
   docStates.set(id, {scoreValue: docStates.get(id)!.scoreValue + 1 });
 };
 
@@ -186,8 +194,12 @@ const buildEvents = function* (): Generator<WireStreamItem> {
   const upStart = performance.now();
   if (!debugEvictions) console.log(`[perf] seeding queries took ${(upStart - queryStart).toFixed(2)} ms`);
 
-  const updates = createBuffer<WireDocChange, WireStreamItem>(SEED_BATCH_SIZE, batch => ({
-    kind: 'doc-changes', changes: batch
+    const updates = createBuffer<WireDocChange, WireStreamItem>(SEED_BATCH_SIZE, batch => ({
+    kind: 'doc-changes',
+    // IMPORTANT: preserve generation order. Sorting by score can reorder multiple
+    // updates for the same doc within a batch, making the embedded old/new
+    // snapshots inconsistent when applied sequentially.
+    changes: batch
   }))
   // Periodic updates
   for (let tick = 0; tick < config.duration; tick++) {
@@ -308,6 +320,16 @@ function* runEmbed(
       if (debugEvictions) {
         console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
       }
+      if (traceDocId !== null) {
+        const tracedDoc = event.docs.find(doc => doc.docId === traceDocId);
+        if (tracedDoc) {
+          traceDocEvent('retrieval', {
+            batchDocs: event.docs.length,
+            queries: tracedDoc.queries.map(q => q.toString()),
+            score: Number(getScore(tracedDoc.state)),
+          });
+        }
+      }
       if (docs) {
         for (const { docId, queries, state } of event.docs) {
           for (const qId of queries) {
@@ -335,6 +357,24 @@ function* runEmbed(
         // event.evictions.sort();
         // event.matchesOld.sort();
         console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
+      }
+      if (traceDocId !== null) {
+        if (event.docId === traceDocId) {
+          traceDocEvent('match-event', {
+            matchesNew: event.matchesNew.map(q => q.toString()),
+            matchesOld: event.matchesOld.map(q => q.toString()),
+            evictions: event.evictions.map(([q, doc]) => ({ queryId: q.toString(), docId: doc.toString() })),
+            newScore: event.new ? Number(getScore(event.new)) : null,
+            oldScore: event.old ? Number(getScore(event.old)) : null,
+          });
+        }
+        const evictionHits = event.evictions.filter(([, evictedDoc]) => evictedDoc === traceDocId);
+        if (evictionHits.length) {
+          traceDocEvent('evicted', {
+            byDoc: event.docId.toString(),
+            queries: evictionHits.map(([q]) => q.toString()),
+          });
+        }
       }
       if (docs) {
         for (const qId of event.matchesOld) {
@@ -375,6 +415,23 @@ function* runEmbed(
     }
     if (debugEvictions) {
       console.log('<<', JSON.stringify(e, (k, v) => typeof v === 'bigint' ? String(v) : v));
+    }
+    if (traceDocId !== null) {
+      if (e.kind === 'doc-change' && e.change.id === traceDocId) {
+        const { old, new: next } = e.change;
+        traceDocEvent('doc-change', {
+          changeType: next && old ? 'update' : next ? 'insert' : 'delete',
+          newScore: next ? Number(getScore(next)) : null,
+          oldScore: old ? Number(getScore(old)) : null,
+        });
+      } else if (e.kind === 'seed-docs') {
+        const seeded = e.docs.find(doc => doc.id === traceDocId);
+        if (seeded) {
+          traceDocEvent('seed-doc', {
+            score: Number(getScore(seeded.state)),
+          });
+        }
+      }
     }
     if (docs) {
       if (e.kind === 'doc-change') {
@@ -417,7 +474,10 @@ function* runEmbed(
       if (q === null) query.delete(k);
     }
     const sortedMatches = Array.from(expectedMatches.entries()).sort((a, b) => {
-      return getScore(a[1]) - getScore(b[1]);
+      const scoreDiff = getScore(a[1]) - getScore(b[1]);
+      if (scoreDiff !== 0) return scoreDiff;
+      if (a[0] === b[0]) return 0;
+      return a[0] < b[0] ? -1 : 1;
     }).slice(0, Number(querySpec.limit));
     if (sortedMatches.length !== query.size) {
       const expectedEntries = sortedMatches;
