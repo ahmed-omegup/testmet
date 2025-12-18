@@ -12,6 +12,7 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
   private resolvePending: (() => void) | null = null;
   private loop: Promise<void>;
   private stopped = false;
+  private docDeliveredListener: ((docId: DocId) => void) | null = null;
 
   constructor(
     private readonly loadDocs: (docIds: DocId[]) => Promise<Map<DocId, DocState>>,
@@ -62,6 +63,10 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
     return removedFromProcessing || removedFromPending;
   }
 
+  setDocDeliveredListener(listener: (docId: DocId) => void): void {
+    this.docDeliveredListener = listener;
+  }
+
   private async runLoop(): Promise<void> {
     while (true) {
       if (this.stopped && this.pendingBatch.size === 0) {
@@ -88,6 +93,11 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
         }
         if (payload.length) {
           this.emit({ kind: 'retrieval', docs: payload });
+          if (this.docDeliveredListener) {
+            for (const { docId } of payload) {
+              this.docDeliveredListener(docId);
+            }
+          }
         }
       } catch (err) {
         console.error('retrieval-job: failed to load docs', err);

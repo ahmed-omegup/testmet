@@ -174,6 +174,11 @@ export function* runLimitStream<DocState extends DocStateDom>(
   options: LimitStreamOptions<DocState>
 ): Generator<void, void, StreamItem<DocState> | void> {
   const queries = new DynamicRangeQueries();
+  if (options.retrievalJob?.setDocDeliveredListener) {
+    options.retrievalJob.setDocDeliveredListener(docId => {
+      queries.resolvePendingForDoc(docId);
+    });
+  }
   while (true) {
     const item = yield;
     if (!item) break;

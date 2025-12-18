@@ -420,9 +420,21 @@ function* runEmbed(
       return getScore(a[1]) - getScore(b[1]);
     }).slice(0, Number(querySpec.limit));
     if (sortedMatches.length !== query.size) {
+      const expectedEntries = sortedMatches;
+      const actualEntries = Array.from(query.entries());
+      const expectedIds = new Set(expectedEntries.map(([docId]) => docId.toString()));
+      const actualIds = new Set(actualEntries.map(([docId]) => docId.toString()));
+      const missing = expectedEntries
+        .filter(([docId]) => !actualIds.has(docId.toString()))
+        .map(([docId, state]) => ({ docId, state }));
+      const extra = actualEntries
+        .filter(([docId]) => !expectedIds.has(docId.toString()))
+        .map(([docId, state]) => ({ docId, state }));
       console.log('query spec:', qId, querySpec);
-      console.log('expected matches:', sortedMatches);
-      console.log('actual matches:', Array.from(query.entries()));
+      console.log('expected matches:', expectedEntries);
+      console.log('actual matches:', actualEntries);
+      console.log('missing docs (expected but absent):', missing.slice(0, 20));
+      console.log('extra docs (present but unexpected):', extra.slice(0, 20));
       throw new Error(`mismatched number of query matches: expected ${sortedMatches.length}, got ${query.size}`);
     }
     for (const [docId, state] of sortedMatches) {
