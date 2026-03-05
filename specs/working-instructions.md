@@ -1,6 +1,6 @@
 # Working Instructions (Persistent)
 
-Last updated: 2025-11-15
+Last updated: 2026-03-05
 
 This document persists user instructions and our operating agreements. It is authoritative for how we build, communicate, and evolve the system.
 
@@ -43,3 +43,7 @@ This document persists user instructions and our operating agreements. It is aut
 ## This Instruction (2025-11-15)
 - “Please don’t let me be unaware; make it clear in your instructions. Store every instruction I give.”
   - Actioned: This file created; commitment to update on each new instruction. Transparency rules added above.
+
+## This Instruction (2026-03-05)
+- “Let’s do with Dafny what is already possible; start with docs index; then treap implementation.”
+  - Actioned: added `specs/dafny/DocsIndexModel.dfy` for contract/reference semantics and `specs/dafny/DocsIndexTreap.dfy` for first treap implementation layer with verified checks.

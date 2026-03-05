@@ -64,7 +64,7 @@ const config: PerfConfig & {
   deletesPerTick: number;
 } = {
   seed: Number(process.env.PERF_SEED ?? 42),
-  documents: Number(process.env.PERF_DOCUMENTS ?? 1000),
+  documents: Number(process.env.PERF_DOCUMENTS ?? 10000),
   customers: Number(process.env.PERF_CUSTOMERS ?? 1000),
   duration: Number(process.env.PERF_DURATION ?? 5),
   updateRate: Number(process.env.PERF_UPDATE_RATE ?? 0.05),
