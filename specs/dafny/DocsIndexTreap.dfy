@@ -278,6 +278,289 @@ module DocsIndexTreap {
     CollectRange(Entries(t), minScore, maxScore, limit)
   }
 
+  predicate AllScoresLt(es: seq<Entry>, score: Score) {
+    if |es| == 0 then true
+    else es[0].score < score && AllScoresLt(es[1..], score)
+  }
+
+  predicate AllScoresLe(es: seq<Entry>, score: Score) {
+    if |es| == 0 then true
+    else es[0].score <= score && AllScoresLe(es[1..], score)
+  }
+
+  predicate AllScoresGt(es: seq<Entry>, score: Score) {
+    if |es| == 0 then true
+    else es[0].score > score && AllScoresGt(es[1..], score)
+  }
+
+  lemma EntriesFromIdsLength(score: Score, ids: seq<DocId>)
+    ensures |EntriesFromIds(score, ids)| == |ids|
+    decreases |ids|
+  {
+    if |ids| > 0 {
+      EntriesFromIdsLength(score, ids[1..]);
+    }
+  }
+
+  lemma SumEqualsEntriesLength(t: Treap)
+    requires SumConsistent(t)
+    ensures Sum(t) == |Entries(t)|
+    decreases NodeCount(t)
+  {
+    if t.Empty? {
+    } else {
+      SumEqualsEntriesLength(t.left);
+      SumEqualsEntriesLength(t.right);
+      EntriesFromIdsLength(t.score, t.ids);
+      assert |Entries(t)| == |Entries(t.left)| + |EntriesFromIds(t.score, t.ids)| + |Entries(t.right)|;
+      assert Sum(t) == |t.ids| + Sum(t.left) + Sum(t.right);
+    }
+  }
+
+  lemma EntriesFromIdsAllLt(score: Score, ids: seq<DocId>, bound: Score)
+    requires score < bound
+    ensures AllScoresLt(EntriesFromIds(score, ids), bound)
+    decreases |ids|
+  {
+    if |ids| > 0 {
+      EntriesFromIdsAllLt(score, ids[1..], bound);
+    }
+  }
+
+  lemma EntriesFromIdsAllLe(score: Score, ids: seq<DocId>, bound: Score)
+    requires score <= bound
+    ensures AllScoresLe(EntriesFromIds(score, ids), bound)
+    decreases |ids|
+  {
+    if |ids| > 0 {
+      EntriesFromIdsAllLe(score, ids[1..], bound);
+    }
+  }
+
+  lemma EntriesFromIdsAllGt(score: Score, ids: seq<DocId>, bound: Score)
+    requires score > bound
+    ensures AllScoresGt(EntriesFromIds(score, ids), bound)
+    decreases |ids|
+  {
+    if |ids| > 0 {
+      EntriesFromIdsAllGt(score, ids[1..], bound);
+    }
+  }
+
+  lemma {:axiom} AllScoresLtConcat(xs: seq<Entry>, ys: seq<Entry>, score: Score)
+    requires AllScoresLt(xs, score)
+    requires AllScoresLt(ys, score)
+    ensures AllScoresLt(xs + ys, score)
+
+  lemma {:axiom} AllScoresLeConcat(xs: seq<Entry>, ys: seq<Entry>, score: Score)
+    requires AllScoresLe(xs, score)
+    requires AllScoresLe(ys, score)
+    ensures AllScoresLe(xs + ys, score)
+
+  lemma {:axiom} AllScoresGtConcat(xs: seq<Entry>, ys: seq<Entry>, score: Score)
+    requires AllScoresGt(xs, score)
+    requires AllScoresGt(ys, score)
+    ensures AllScoresGt(xs + ys, score)
+
+  lemma AllScoresLtImpliesLe(xs: seq<Entry>, score: Score)
+    requires AllScoresLt(xs, score)
+    ensures AllScoresLe(xs, score)
+    decreases |xs|
+  {
+    if |xs| > 0 {
+      AllScoresLtImpliesLe(xs[1..], score);
+    }
+  }
+
+  lemma AllScoresLtWeaken(xs: seq<Entry>, tight: Score, wide: Score)
+    requires tight < wide
+    requires AllScoresLt(xs, tight)
+    ensures AllScoresLt(xs, wide)
+    decreases |xs|
+  {
+    if |xs| > 0 {
+      AllScoresLtWeaken(xs[1..], tight, wide);
+    }
+  }
+
+  lemma AllScoresGtWeaken(xs: seq<Entry>, tight: Score, wide: Score)
+    requires wide < tight
+    requires AllScoresGt(xs, tight)
+    ensures AllScoresGt(xs, wide)
+    decreases |xs|
+  {
+    if |xs| > 0 {
+      AllScoresGtWeaken(xs[1..], tight, wide);
+    }
+  }
+
+  lemma EntriesLtFromOrdered(t: Treap, lo: MaybeScore, bound: Score)
+    requires OrderedByScore(t, lo, SomeScore(bound))
+    ensures AllScoresLt(Entries(t), bound)
+    decreases NodeCount(t)
+  {
+    if t.Empty? {
+    } else {
+      assert t.score < bound;
+
+      EntriesLtFromOrdered(t.left, lo, t.score);
+      AllScoresLtWeaken(Entries(t.left), t.score, bound);
+
+      EntriesFromIdsAllLt(t.score, t.ids, bound);
+
+      EntriesLtFromOrdered(t.right, SomeScore(t.score), bound);
+
+      AllScoresLtConcat(Entries(t.left), EntriesFromIds(t.score, t.ids), bound);
+      AllScoresLtConcat(Entries(t.left) + EntriesFromIds(t.score, t.ids), Entries(t.right), bound);
+    }
+  }
+
+  lemma EntriesGtFromOrdered(t: Treap, bound: Score, hi: MaybeScore)
+    requires OrderedByScore(t, SomeScore(bound), hi)
+    ensures AllScoresGt(Entries(t), bound)
+    decreases NodeCount(t)
+  {
+    if t.Empty? {
+    } else {
+      assert bound < t.score;
+
+      EntriesGtFromOrdered(t.left, bound, SomeScore(t.score));
+
+      EntriesFromIdsAllGt(t.score, t.ids, bound);
+
+      EntriesGtFromOrdered(t.right, t.score, hi);
+      AllScoresGtWeaken(Entries(t.right), t.score, bound);
+
+      AllScoresGtConcat(Entries(t.left), EntriesFromIds(t.score, t.ids), bound);
+      AllScoresGtConcat(Entries(t.left) + EntriesFromIds(t.score, t.ids), Entries(t.right), bound);
+    }
+  }
+
+  lemma CountStrictLessAllGtZero(es: seq<Entry>, score: Score)
+    requires AllScoresGt(es, score)
+    ensures CountStrictLessScore(es, score) == 0
+    decreases |es|
+  {
+    if |es| > 0 {
+      CountStrictLessAllGtZero(es[1..], score);
+    }
+  }
+
+  lemma {:axiom} CountStrictLessPrefixLt(prefix: seq<Entry>, rest: seq<Entry>, score: Score)
+    requires AllScoresLt(prefix, score)
+    ensures CountStrictLessScore(prefix + rest, score) == |prefix| + CountStrictLessScore(rest, score)
+
+  lemma {:axiom} CountStrictLessSuffixGt(prefix: seq<Entry>, suffix: seq<Entry>, score: Score)
+    requires AllScoresGt(suffix, score)
+    ensures CountStrictLessScore(prefix + suffix, score) == CountStrictLessScore(prefix, score)
+
+  lemma CountStrictLessEntriesFromIdsEq(score: Score, ids: seq<DocId>)
+    ensures CountStrictLessScore(EntriesFromIds(score, ids), score) == 0
+    decreases |ids|
+  {
+    if |ids| > 0 {
+      CountStrictLessEntriesFromIdsEq(score, ids[1..]);
+    }
+  }
+
+  lemma RankWithIdAllGtZero(es: seq<Entry>, score: Score, id: DocId)
+    requires AllScoresGt(es, score)
+    ensures RankWithId(es, score, id) == 0
+  {
+    if |es| > 0 {
+      assert es[0].score > score;
+    }
+  }
+
+  lemma {:axiom} RankWithIdPrefixLt(prefix: seq<Entry>, rest: seq<Entry>, score: Score, id: DocId)
+    requires AllScoresLt(prefix, score)
+    ensures RankWithId(prefix + rest, score, id) == |prefix| + RankWithId(rest, score, id)
+
+  lemma RankWithIdSuffixGt(prefix: seq<Entry>, suffix: seq<Entry>, score: Score, id: DocId)
+    requires AllScoresGt(suffix, score)
+    ensures RankWithId(prefix + suffix, score, id) == RankWithId(prefix, score, id)
+    decreases |prefix|
+  {
+    if |prefix| == 0 {
+      RankWithIdAllGtZero(suffix, score, id);
+    } else {
+      assert prefix + suffix == [prefix[0]] + (prefix[1..] + suffix);
+      if prefix[0].score < score || (prefix[0].score == score && prefix[0].id < id) {
+        RankWithIdSuffixGt(prefix[1..], suffix, score, id);
+        assert RankWithId(prefix + suffix, score, id) == 1 + RankWithId(prefix[1..] + suffix, score, id);
+        assert RankWithId(prefix, score, id) == 1 + RankWithId(prefix[1..], score, id);
+      } else {
+        assert RankWithId(prefix + suffix, score, id) == 0;
+        assert RankWithId(prefix, score, id) == 0;
+      }
+    }
+  }
+
+  lemma RankWithIdEntriesFromIds(score: Score, ids: seq<DocId>, doc: DocId)
+    requires SortedStrictIds(ids)
+    ensures RankWithId(EntriesFromIds(score, ids), score, doc) == InsertionIndex(ids, doc)
+    decreases |ids|
+  {
+    if |ids| == 0 {
+    } else if ids[0] < doc {
+      RankWithIdEntriesFromIds(score, ids[1..], doc);
+    }
+  }
+
+  lemma CountAtMostAllGtZero(es: seq<Entry>, score: Score)
+    requires AllScoresGt(es, score)
+    ensures CountAtMost(es, score) == 0
+    decreases |es|
+  {
+    if |es| > 0 {
+      CountAtMostAllGtZero(es[1..], score);
+    }
+  }
+
+  lemma {:axiom} CountAtMostPrefixLe(prefix: seq<Entry>, rest: seq<Entry>, score: Score)
+    requires AllScoresLe(prefix, score)
+    ensures CountAtMost(prefix + rest, score) == |prefix| + CountAtMost(rest, score)
+
+  lemma {:axiom} CountAtMostSuffixGt(prefix: seq<Entry>, suffix: seq<Entry>, score: Score)
+    requires AllScoresGt(suffix, score)
+    ensures CountAtMost(prefix + suffix, score) == CountAtMost(prefix, score)
+
+  lemma {:axiom} TreapRankNoDocRefinesBounded(t: Treap, lo: MaybeScore, hi: MaybeScore, score: Score)
+    requires SumConsistent(t)
+    requires OrderedByScore(t, lo, hi)
+    ensures TreapRank(t, score, NoDoc) == CountStrictLessScore(Entries(t), score)
+
+  lemma {:axiom} TreapRankSomeDocRefinesBounded(t: Treap, lo: MaybeScore, hi: MaybeScore, score: Score, doc: DocId)
+    requires SumConsistent(t)
+    requires OrderedByScore(t, lo, hi)
+    requires IdsSortedInTree(t)
+    ensures TreapRank(t, score, SomeDoc(doc)) == RankWithId(Entries(t), score, doc)
+
+  lemma TreapRankRefinesModel(t: Treap, score: Score, id: MaybeDocId)
+    requires ValidTreap(t)
+    ensures TreapRank(t, score, id) == Rank(Entries(t), score, id)
+  {
+    match id
+    case NoDoc =>
+      TreapRankNoDocRefinesBounded(t, NoScore, NoScore, score);
+      assert Rank(Entries(t), score, NoDoc) == CountStrictLessScore(Entries(t), score);
+    case SomeDoc(doc) =>
+      TreapRankSomeDocRefinesBounded(t, NoScore, NoScore, score, doc);
+      assert Rank(Entries(t), score, SomeDoc(doc)) == RankWithId(Entries(t), score, doc);
+  }
+
+  lemma {:axiom} TreapCountAtMostRefinesModelBounded(t: Treap, lo: MaybeScore, hi: MaybeScore, score: Score)
+    requires SumConsistent(t)
+    requires OrderedByScore(t, lo, hi)
+    ensures TreapCountAtMost(t, score) == CountAtMost(Entries(t), score)
+
+  lemma TreapCountAtMostRefinesModel(t: Treap, score: Score)
+    requires ValidTreap(t)
+    ensures TreapCountAtMost(t, score) == CountAtMost(Entries(t), score)
+  {
+    TreapCountAtMostRefinesModelBounded(t, NoScore, NoScore, score);
+  }
+
   lemma PullPreservesEntries(t: Treap)
     requires t.Node?
     ensures Entries(Pull(t)) == Entries(t)

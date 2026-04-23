@@ -18,6 +18,7 @@ This directory contains Dafny models/proofs for kernel components.
   - Includes treap query functions: rank / countAtMost / getAtRank / collectRange.
   - Proves core structural obligations currently focused on cached-sum consistency (`sum`).
   - Exposes bridge functions to compare treap-entry view against `DocsIndexModel`.
+  - Declares explicit refinement bridge lemmas (`TreapRankRefinesModel`, `TreapCountAtMostRefinesModel`) that are currently axiomatized to make the contract visible now; these are the next targets for constructive proofs.
 
 This is an executable/spec reference model and proof scaffold. It is intentionally tree-agnostic (sequence-based) so we can first stabilize semantics, then prove treap refinement against this model.
 
