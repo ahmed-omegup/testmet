@@ -47,3 +47,7 @@ This document persists user instructions and our operating agreements. It is aut
 ## This Instruction (2026-03-05)
 - “Let’s do with Dafny what is already possible; start with docs index; then treap implementation.”
   - Actioned: added `specs/dafny/DocsIndexModel.dfy` for contract/reference semantics and `specs/dafny/DocsIndexTreap.dfy` for first treap implementation layer with verified checks.
+
+## This Instruction (2026-03-05, later)
+- “I meant the whole stack, not just the Doc Index Treap, try to reimplement the whole thunderdb-ts in Dafny, using clear structures and contracts, resolving the current problems in the ts implementation. Don't use similar DocsIndexBench-py, actually I want you to remove that folder you created to test the solution and use instead Dafny alone.”
+  - Actioned: added `specs/dafny/ThunderDbStack.dfy` and `specs/dafny/ThunderDbStackBench.dfy` as the executable whole-stack Dafny worker path and pure-Dafny benchmark harness; removed the temporary Python-target benchmark artifacts from `/tmp`.
