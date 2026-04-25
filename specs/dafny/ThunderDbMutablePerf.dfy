@@ -36,7 +36,7 @@ module ThunderDbMutablePerf {
     {
       var summary := SummaryZero();
       var rng := if seed <= 0 then 1 else seed;
-      var seedDocs: seq<SeedDoc> := [];
+      var seedDocs := new SeedDoc[documents];
       var nextDocId := documents;
       var range := if density == 0 then 1 else documents / density + 1;
 
@@ -48,11 +48,11 @@ module ThunderDbMutablePerf {
       {
         var nextRng, scoreSeed := NextRand(rng);
         rng := nextRng;
-        seedDocs := seedDocs + [SeedDoc(i, DocState(scoreSeed % range))];
+        seedDocs[i] := SeedDoc(i, DocState(scoreSeed % range));
         i := i + 1;
       }
 
-      var seedEvents, ignoredQueryId := engine.ProcessItem(SeedDocsItem(seedDocs));
+      var seedEvents, ignoredQueryId := engine.ProcessItem(SeedDocsItem(seedDocs[..]));
       summary := UpdateSummary(summary, seedEvents);
 
       i := 0;
