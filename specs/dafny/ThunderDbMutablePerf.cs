@@ -12096,14 +12096,21 @@ namespace ThunderDbMutable {
     }
     public void SeedDocs(Dafny.ISequence<ThunderDbStack._ISeedDoc> input)
     {
+      var _docIdsBuilder = new System.Collections.Generic.List<BigInteger>((this.docIds).CloneAsArray());
+      var _seenDocIds = new System.Collections.Generic.HashSet<BigInteger>(_docIdsBuilder);
       BigInteger _0_i;
       _0_i = BigInteger.Zero;
       while ((_0_i) < (new BigInteger((input).Count))) {
-        (this).store = Dafny.Map<BigInteger, BigInteger>.Update(this.store, ((input).Select(_0_i)).dtor_id, ((input).Select(_0_i)).dtor_state);
-        (this).docIds = ThunderDbStack.__default.AppendDocIdIfMissing(this.docIds, ((input).Select(_0_i)).dtor_id);
-        (this).docs = DocsIndexTreap.__default.Add(this.docs, (((input).Select(_0_i)).dtor_state), ((input).Select(_0_i)).dtor_id, ThunderDbStack.__default.PriorityFor((((input).Select(_0_i)).dtor_state), ((input).Select(_0_i)).dtor_id));
+        var _1_seedDoc = (input).Select(_0_i);
+        var _2_docId = (_1_seedDoc).dtor_id;
+        (this).store = Dafny.Map<BigInteger, BigInteger>.Update(this.store, _2_docId, (_1_seedDoc).dtor_state);
+        if (_seenDocIds.Add(_2_docId)) {
+          _docIdsBuilder.Add(_2_docId);
+        }
+        (this).docs = DocsIndexTreap.__default.Add(this.docs, ((_1_seedDoc).dtor_state), _2_docId, ThunderDbStack.__default.PriorityFor(((_1_seedDoc).dtor_state), _2_docId));
         _0_i = (_0_i) + (BigInteger.One);
       }
+      (this).docIds = Dafny.Sequence<BigInteger>.FromArray(_docIdsBuilder.ToArray());
     }
     public void AddQuery(ThunderDbStack._IQuerySpec spec, out BigInteger queryId, out Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events)
     {
@@ -12214,21 +12221,27 @@ namespace ThunderDbMutable {
           Dafny.ISequence<BigInteger> _13_newVisible;
           _13_newVisible = DocsIndexTreap.__default.TreapCollectRange(this.docs, ((_11_state).dtor_spec).dtor_minScore, ((_11_state).dtor_spec).dtor_maxScore, ((_11_state).dtor_spec).dtor_limit);
           (this).queries = Dafny.Map<BigInteger, ThunderDbMutable._IQueryState>.Update(this.queries, _10_qid, ThunderDbMutable.QueryState.create((_11_state).dtor_spec, _13_newVisible, new BigInteger((_13_newVisible).Count), (_11_state).dtor_baseScore));
-          if (ThunderDbStack.__default.ContainsId(_12_oldVisible, id)) {
+          bool _14_oldContainsId;
+          _14_oldContainsId = ThunderDbStack.__default.ContainsId(_12_oldVisible, id);
+          bool _15_newContainsId;
+          _15_newContainsId = ThunderDbStack.__default.ContainsId(_13_newVisible, id);
+          if (_14_oldContainsId) {
             _8_matchesOldBuilder.Add(_10_qid);
           }
-          if (ThunderDbStack.__default.ContainsId(_13_newVisible, id)) {
+          if (_15_newContainsId) {
             _9_matchesNewBuilder.Add(_10_qid);
           }
-          ThunderDbStack._IQueryRuntime _14_oldRuntime;
-          _14_oldRuntime = ThunderDbStack.QueryRuntime.create(_10_qid, (_11_state).dtor_spec, _12_oldVisible);
-          ThunderDbStack._IQueryRuntime _15_newRuntime;
-          _15_newRuntime = ThunderDbStack.QueryRuntime.create(_10_qid, (_11_state).dtor_spec, _13_newVisible);
-          _7_retrievalsBuilder.AddRange(ThunderDbStack.__default.BuildGapRetrievalForQuery(_14_oldRuntime, _15_newRuntime, this.store, id));
-          Dafny.ISequence<BigInteger> _16_evicted;
-          _16_evicted = ThunderDbStack.__default.FirstEvicted(_12_oldVisible, _13_newVisible, id);
-          if (((!(ThunderDbStack.__default.ContainsId(_12_oldVisible, id))) && (ThunderDbStack.__default.ContainsId(_13_newVisible, id))) && ((new BigInteger((_16_evicted).Count)).Sign == 1)) {
-            _6_evictionsBuilder.Add(ThunderDbStack.Eviction.create(_10_qid, (_16_evicted).Select(BigInteger.Zero)));
+          if (_14_oldContainsId && (!_15_newContainsId)) {
+            var _16_oldRuntime = ThunderDbStack.QueryRuntime.create(_10_qid, (_11_state).dtor_spec, _12_oldVisible);
+            var _17_newRuntime = ThunderDbStack.QueryRuntime.create(_10_qid, (_11_state).dtor_spec, _13_newVisible);
+            _7_retrievalsBuilder.AddRange(ThunderDbStack.__default.BuildGapRetrievalForQuery(_16_oldRuntime, _17_newRuntime, this.store, id));
+          }
+          if ((!_14_oldContainsId) && _15_newContainsId) {
+            Dafny.ISequence<BigInteger> _18_evicted;
+            _18_evicted = ThunderDbStack.__default.FirstEvicted(_12_oldVisible, _13_newVisible, id);
+            if ((new BigInteger((_18_evicted).Count)).Sign == 1) {
+              _6_evictionsBuilder.Add(ThunderDbStack.Eviction.create(_10_qid, (_18_evicted).Select(BigInteger.Zero)));
+            }
           }
         }
       }
@@ -12358,8 +12371,9 @@ namespace ThunderDbMutablePerf {
       } else {
         _1_rng = seed;
       }
-      Dafny.ISequence<ThunderDbStack._ISeedDoc> _2_seedDocs;
-      _2_seedDocs = Dafny.Sequence<ThunderDbStack._ISeedDoc>.FromElements();
+      ThunderDbStack._ISeedDoc[] _2_seedDocs;
+      ThunderDbStack._ISeedDoc[] _nw0 = Dafny.ArrayHelpers.InitNewArray1<ThunderDbStack._ISeedDoc>(ThunderDbStack.SeedDoc.Default(), Dafny.Helpers.ToIntChecked(documents, "array size exceeds memory limit"));
+      _2_seedDocs = _nw0;
       BigInteger _3_nextDocId;
       _3_nextDocId = documents;
       BigInteger _4_range;
@@ -12379,14 +12393,14 @@ namespace ThunderDbMutablePerf {
         _6_nextRng = _out0;
         _7_scoreSeed = _out1;
         _1_rng = _6_nextRng;
-        _2_seedDocs = Dafny.Sequence<ThunderDbStack._ISeedDoc>.Concat(_2_seedDocs, Dafny.Sequence<ThunderDbStack._ISeedDoc>.FromElements(ThunderDbStack.SeedDoc.create(_5_i, Dafny.Helpers.EuclideanModulus(_7_scoreSeed, _4_range))));
+        (_2_seedDocs)[(int)((_5_i))] = ThunderDbStack.SeedDoc.create(_5_i, Dafny.Helpers.EuclideanModulus(_7_scoreSeed, _4_range));
         _5_i = (_5_i) + (BigInteger.One);
       }
       Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _8_seedEvents;
       BigInteger _9_ignoredQueryId;
       Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out2;
       BigInteger _out3;
-      (this.engine).ProcessItem(ThunderDbStack.StreamItem.create_SeedDocsItem(_2_seedDocs), out _out2, out _out3);
+      (this.engine).ProcessItem(ThunderDbStack.StreamItem.create_SeedDocsItem(Dafny.Helpers.SeqFromArray(_2_seedDocs)), out _out2, out _out3);
       _8_seedEvents = _out2;
       _9_ignoredQueryId = _out3;
       _0_summary = ThunderDbStack.__default.UpdateSummary(_0_summary, _8_seedEvents);
