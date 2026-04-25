@@ -351,6 +351,17 @@ module ThunderDbMutable {
       ids := this.queryIndex.CollectForValue(value, cutoff);
     }
 
+    method QueryVisible(id: QueryId) returns (visible: seq<DocId>)
+      requires this.Ready()
+      decreases *
+    {
+      if id in this.queries {
+        visible := this.queries[id].visible;
+      } else {
+        visible := [];
+      }
+    }
+
     method SeedDocs(input: seq<SeedDoc>)
       requires this.Ready()
       ensures this.Ready()
@@ -422,17 +433,19 @@ module ThunderDbMutable {
 
       var oldMatches: seq<QueryId> := [];
       var newMatches: seq<QueryId> := [];
+      var queryIndex := this.queryIndex;
 
       if oldState.HasState? {
         oldMatches := this.CollectQueriesForValue(GetScore(oldState.state), id);
         this.docs := Remove(this.docs, GetScore(oldState.state), id);
-        this.queryIndex.RangeAddKeysGreaterThan(GetScore(oldState.state), -1);
+        queryIndex.RangeAddKeysGreaterThan(GetScore(oldState.state), -1);
       }
 
       if newState.HasState? {
-        newMatches := this.CollectQueriesForValue(GetScore(newState.state), id);
-        this.docs := Add(this.docs, GetScore(newState.state), id, PriorityFor(GetScore(newState.state), id));
-        this.queryIndex.RangeAddKeysGreaterThan(GetScore(newState.state), 1);
+        var newScore := GetScore(newState.state);
+        newMatches := this.CollectQueriesForValue(newScore, id);
+        this.docs := Add(this.docs, newScore, id, PriorityFor(newScore, id));
+        queryIndex.RangeAddKeysGreaterThan(newScore, 1);
         this.store := this.store[id := newState.state];
         this.docIds := AppendDocIdIfMissing(this.docIds, id);
       } else {
@@ -441,10 +454,10 @@ module ThunderDbMutable {
       }
 
       var affected := UniqueConcatQueryIds(oldMatches, newMatches);
-      var matchesOld: seq<QueryId> := [];
-      var matchesNew: seq<QueryId> := [];
       var evictions: seq<Eviction> := [];
       var retrievals: seq<RetrievalDoc> := [];
+      var matchesOld: seq<QueryId> := [];
+      var matchesNew: seq<QueryId> := [];
       var i := 0;
       while i < |affected|
         invariant 0 <= i <= |affected|

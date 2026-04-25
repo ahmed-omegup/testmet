@@ -23,10 +23,6 @@ module ThunderDbMutableParity {
     value := nextState;
   }
 
-  function MutableQueryVisible(queries: map<QueryId, QueryState>, id: QueryId): seq<DocId> {
-    if id in queries then queries[id].visible else []
-  }
-
   class MutableParityRunner {
     var engine: MutableEngine
 
@@ -71,6 +67,7 @@ module ThunderDbMutableParity {
       {
         var query := state.queries[i];
         if !(query.id in this.engine.queries) || this.engine.queries[query.id].spec != query.spec || this.engine.queries[query.id].visible != query.visible {
+          var mutableVisible := this.engine.QueryVisible(query.id);
           print "scenario ";
           print name;
           print " query mismatch at op ";
@@ -82,7 +79,7 @@ module ThunderDbMutableParity {
           print "\nfunctional visible=";
           print query.visible;
           print "\nmutable visible=";
-          print MutableQueryVisible(this.engine.queries, query.id);
+          print mutableVisible;
           print "\nfunctional spec=";
           print query.spec;
           print "\nmutable spec=";

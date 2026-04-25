@@ -10,6 +10,12 @@
     <RollForward>Major</RollForward>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <TieredCompilation>false</TieredCompilation>
+  </PropertyGroup>
+
   
   <ItemGroup>
       <Compile Include="/home/asus/work/testmet/specs/dafny/ThunderDbMutablePerf.cs" />
