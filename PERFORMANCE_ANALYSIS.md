@@ -1,5 +1,33 @@
 # Dafny vs TypeScript Performance Gap Analysis
 
+## Update: Current Mutable Engine
+
+The mutable Dafny engine no longer uses the original eager `visible`-sequence recomputation path on document updates.
+
+- `specs/dafny/ThunderDbMutable.dfy` now keeps counter-only `QueryState` and handles updates with the same high-level flow as the TS engine: decrement/increment per-query counts, `fillGap` for lost queries, and overflow selection for newly blocked queries.
+- Gap-fill and overflow candidate selection now use treap rank access directly, and the latest revision derives the query start boundary from `baseScore + AccumulatedAddAtKey(minScore)` instead of recomputing `TreapRank(minScore)`.
+- Behavioral parity was revalidated with `ThunderDbMutableParity.dfy` on both the small and benchmark-like scenarios.
+
+## Current Measurements
+
+Validated release binary timings for the benchmark-like mutable scenario (`800 docs, 120 queries, 30 ticks, 35 updates/tick, 8 inserts/tick, 8 deletes/tick, limit 25, density 10`):
+
+- Historical eager baseline: `1.86s` to `1.95s`
+- Current counter/gap-fill port: `1.30s` to `1.36s`
+- Improvement: about `30%`
+
+Observed summary is unchanged:
+
+- events=`1651`
+- matches=`1502`
+- evictions=`4159`
+- retrievalBatches=`1344`
+- retrievalDocs=`7381`
+
+## Revised Conclusion
+
+The earlier conclusion in this document is outdated. The architectural rewrite did materially reduce runtime while preserving correctness. The remaining gap to TypeScript is still large, but it is no longer accurate to say the mutable Dafny engine "cannot be fixed without redesign" because that redesign has now been implemented in the hot update path.
+
 ## Executive Summary
 Dafny implementation is **~15x slower** than TypeScript (2.0s vs 52ms for equivalent ~1650 event scenario). Root cause is **algorithmic, not implementation detail** - cannot be fixed with micro-optimizations.
 
