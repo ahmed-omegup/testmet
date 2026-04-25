@@ -345,10 +345,8 @@ module ThunderDbStack {
     var store := state.store;
     var docIds := state.docIds;
     var treap := state.treap;
-    match oldState
-    case NoState => {
-    }
-    case HasState(oldDoc) => {
+    if oldState.HasState? {
+      var oldDoc := oldState.state;
       if newState.NoState? {
         store := RemoveStoredDoc(store, id);
         docIds := RemoveDocId(docIds, id);
@@ -356,10 +354,8 @@ module ThunderDbStack {
       treap := Remove(treap, GetScore(oldDoc), id);
     }
 
-    match newState
-    case NoState => {
-    }
-    case HasState(newDoc) => {
+    if newState.HasState? {
+      var newDoc := newState.state;
       store := PutStoredDoc(store, id, newDoc);
       docIds := AppendDocIdIfMissing(docIds, id);
       treap := Add(treap, GetScore(newDoc), id, PriorityFor(GetScore(newDoc), id));
