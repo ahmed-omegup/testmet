@@ -1,4 +1,4 @@
-// Dafny program ThunderDbStackPerf.dfy compiled into C#
+// Dafny program ThunderDbStackInsertCheck.dfy compiled into C#
 // To recompile, you will need the libraries
 //     System.Runtime.Numerics.dll System.Collections.Immutable.dll
 // but the 'dotnet' tool in .NET should pick those up automatically.
@@ -9,173 +9,27 @@ using System;
 using System.Numerics;
 using System.Collections;
 [assembly: DafnyAssembly.DafnySourceAttribute(@"// dafny 4.11.0.0
-// Command-line arguments: run --no-verify ThunderDbStackPerf.dfy
-// ThunderDbStackPerf.dfy
+// Command-line arguments: run --no-verify --allow-warnings ThunderDbStackInsertCheck.dfy
+// ThunderDbStackInsertCheck.dfy
 
 
-module ThunderDbStackPerf {
-  const Modulus: int := 2147483647
-  const Multiplier: int := 48271
-
-  function NextState(state: int): int
-    decreases state
-  {
-    var next: int := state * Multiplier % Modulus;
-    if next <= 0 then
-      next + Modulus
-    else
-      next
-  }
-
-  method NextRand(state: int) returns (nextState: int, value: int)
-    requires state > 0
-    ensures nextState > 0
-    ensures value == nextState
-    decreases state
-  {
-    nextState := NextState(state);
-    value := nextState;
-  }
-
-  method RunScenario(name: string, seed: int, documents: nat, customers: nat, ticks: nat, updatesPerTick: nat, insertsPerTick: nat, deletesPerTick: nat, queryLimit: nat, density: nat)
-    decreases name, seed, documents, customers, ticks, updatesPerTick, insertsPerTick, deletesPerTick, queryLimit, density
+module ThunderDbStackInsertCheck {
+  method {:verify false} Main(_noArgsParameter: seq<seq<char>>)
+    decreases *
   {
     var state := EmptyState();
-    var summary := SummaryZero();
-    var rng := if seed <= 0 then 1 else seed;
-    var seedDocs: seq<SeedDoc> := [];
-    var nextDocId := documents;
-    var range := if density == 0 then 1 else documents / density + 1;
-    var i := 0;
-    while i < documents
-      invariant 0 <= i <= documents
-      invariant rng > 0
-      decreases documents - i
-    {
-      var nextRng, scoreSeed := NextRand(rng);
-      rng := nextRng;
-      seedDocs := seedDocs + [SeedDoc(i, DocState(scoreSeed % range))];
-      i := i + 1;
-    }
-    var nextState, seedEvents, ignoredQueryId := ProcessItem(state, SeedDocsItem(seedDocs));
-    state := nextState;
-    summary := UpdateSummary(summary, seedEvents);
-    i := 0;
-    while i < customers
-      invariant 0 <= i <= customers
-      invariant rng > 0
-      invariant SumConsistent(state.treap)
-      decreases customers - i
-    {
-      var nextRng1, widthSeed := NextRand(rng);
-      rng := nextRng1;
-      var nextRng2, minSeed := NextRand(rng);
-      rng := nextRng2;
-      var width := 1 + widthSeed % (range / 2 + 1);
-      var minScore := minSeed % range;
-      var maxScore := minScore + width;
-      var spec := QuerySpec(minScore, maxScore, queryLimit);
-      var stateAfterAdd, events, queryId := ProcessItem(state, QueryAddItem(spec));
-      state := stateAfterAdd;
-      summary := UpdateSummary(summary, events);
-      i := i + 1;
-    }
-    var tick := 0;
-    while tick < ticks
-      invariant 0 <= tick <= ticks
-      invariant rng > 0
-      invariant SumConsistent(state.treap)
-      decreases ticks - tick
-    {
-      var update := 0;
-      while update < updatesPerTick
-        invariant 0 <= update <= updatesPerTick
-        invariant rng > 0
-        invariant SumConsistent(state.treap)
-        decreases updatesPerTick - update
-      {
-        if |state.docIds| > 0 {
-          var nextRng3, pickSeed := NextRand(rng);
-          rng := nextRng3;
-          var nextRng4, scoreSeed := NextRand(rng);
-          rng := nextRng4;
-          var picked := pickSeed % |state.docIds|;
-          var docId := state.docIds[picked];
-          match LookupState(state.store, docId)
-          case {:split false} NoState() =>
-            {
-            }
-          case {:split false} HasState(docState) =>
-            {
-              var updatedDocState := DocState(scoreSeed % range);
-              var stateAfterUpdate, events, ignoredQueryId2 := ProcessItem(state, DocChangeItem(docId, HasState(docState), HasState(updatedDocState)));
-              state := stateAfterUpdate;
-              summary := UpdateSummary(summary, events);
-            }
-        }
-        update := update + 1;
-      }
-      var insert := 0;
-      while insert < insertsPerTick
-        invariant 0 <= insert <= insertsPerTick
-        invariant rng > 0
-        invariant SumConsistent(state.treap)
-        decreases insertsPerTick - insert
-      {
-        var nextRng5, scoreSeed := NextRand(rng);
-        rng := nextRng5;
-        var newDoc := DocState(scoreSeed % range);
-        var stateAfterInsert, events, ignoredQueryId3 := ProcessItem(state, DocChangeItem(nextDocId, NoState, HasState(newDoc)));
-        state := stateAfterInsert;
-        summary := UpdateSummary(summary, events);
-        nextDocId := nextDocId + 1;
-        insert := insert + 1;
-      }
-      var delete := 0;
-      while delete < deletesPerTick
-        invariant 0 <= delete <= deletesPerTick
-        invariant rng > 0
-        invariant SumConsistent(state.treap)
-        decreases deletesPerTick - delete
-      {
-        if |state.docIds| > 0 {
-          var nextRng6, pickSeed := NextRand(rng);
-          rng := nextRng6;
-          var picked := pickSeed % |state.docIds|;
-          var docId := state.docIds[picked];
-          match LookupState(state.store, docId)
-          case {:split false} NoState() =>
-            {
-            }
-          case {:split false} HasState(docState) =>
-            {
-              var stateAfterDelete, events, ignoredQueryId4 := ProcessItem(state, DocChangeItem(docId, HasState(docState), NoState));
-              state := stateAfterDelete;
-              summary := UpdateSummary(summary, events);
-            }
-        }
-        delete := delete + 1;
-      }
-      tick := tick + 1;
-    }
-    print ""scenario "";
-    print name;
-    print "" done: events="";
-    print summary.eventsProcessed;
-    print "", matches="";
-    print summary.matchEvents;
-    print "", evictions="";
-    print summary.evictions;
-    print "", retrievalBatches="";
-    print summary.retrievalBatches;
-    print "", retrievalDocs="";
-    print summary.retrievalDocs;
+    var next, events, queryId := ProcessItem(state, DocChangeItem(200, NoState, HasState(DocState(0))));
+    print ""store="";
+    print next.store;
+    print ""\ndocIds="";
+    print next.docIds;
+    print ""\nentries="";
+    print Entries(next.treap);
+    print ""\nevents="";
+    print events;
+    print ""\nqueryId="";
+    print queryId;
     print ""\n"";
-  }
-
-  method Main(_noArgsParameter: seq<seq<char>>)
-  {
-    RunScenario(""whole-stack-benchmark-like"", 123, 800, 120, 30, 35, 8, 8, 25, 10);
   }
 
   import opened DocsIndexTreap
@@ -10653,272 +10507,42 @@ namespace ThunderDbStack {
     }
   }
 } // end of namespace ThunderDbStack
-namespace ThunderDbStackPerf {
+namespace ThunderDbStackInsertCheck {
 
   public partial class __default {
-    public static BigInteger NextState(BigInteger state) {
-      BigInteger _0_next = Dafny.Helpers.EuclideanModulus((state) * (ThunderDbStackPerf.__default.Multiplier), ThunderDbStackPerf.__default.Modulus);
-      if ((_0_next).Sign != 1) {
-        return (_0_next) + (ThunderDbStackPerf.__default.Modulus);
-      } else {
-        return _0_next;
-      }
-    }
-    public static void NextRand(BigInteger state, out BigInteger nextState, out BigInteger @value)
-    {
-      nextState = BigInteger.Zero;
-      @value = BigInteger.Zero;
-      nextState = ThunderDbStackPerf.__default.NextState(state);
-      @value = nextState;
-    }
-    public static void RunScenario(Dafny.ISequence<Dafny.Rune> name, BigInteger seed, BigInteger documents, BigInteger customers, BigInteger ticks, BigInteger updatesPerTick, BigInteger insertsPerTick, BigInteger deletesPerTick, BigInteger queryLimit, BigInteger density)
+    public static void _Main(Dafny.ISequence<Dafny.ISequence<Dafny.Rune>> __noArgsParameter)
     {
       ThunderDbStack._IEngineState _0_state;
       _0_state = ThunderDbStack.__default.EmptyState();
-      ThunderDbStack._IWorkerRunSummary _1_summary;
-      _1_summary = ThunderDbStack.__default.SummaryZero();
-      BigInteger _2_rng;
-      if ((seed).Sign != 1) {
-        _2_rng = BigInteger.One;
-      } else {
-        _2_rng = seed;
-      }
-      Dafny.ISequence<ThunderDbStack._ISeedDoc> _3_seedDocs;
-      _3_seedDocs = Dafny.Sequence<ThunderDbStack._ISeedDoc>.FromElements();
-      BigInteger _4_nextDocId;
-      _4_nextDocId = documents;
-      BigInteger _5_range;
-      if ((density).Sign == 0) {
-        _5_range = BigInteger.One;
-      } else {
-        _5_range = (Dafny.Helpers.EuclideanDivision(documents, density)) + (BigInteger.One);
-      }
-      BigInteger _6_i;
-      _6_i = BigInteger.Zero;
-      while ((_6_i) < (documents)) {
-        BigInteger _7_nextRng;
-        BigInteger _8_scoreSeed;
-        BigInteger _out0;
-        BigInteger _out1;
-        ThunderDbStackPerf.__default.NextRand(_2_rng, out _out0, out _out1);
-        _7_nextRng = _out0;
-        _8_scoreSeed = _out1;
-        _2_rng = _7_nextRng;
-        _3_seedDocs = Dafny.Sequence<ThunderDbStack._ISeedDoc>.Concat(_3_seedDocs, Dafny.Sequence<ThunderDbStack._ISeedDoc>.FromElements(ThunderDbStack.SeedDoc.create(_6_i, Dafny.Helpers.EuclideanModulus(_8_scoreSeed, _5_range))));
-        _6_i = (_6_i) + (BigInteger.One);
-      }
-      ThunderDbStack._IEngineState _9_nextState;
-      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _10_seedEvents;
-      BigInteger _11_ignoredQueryId;
-      ThunderDbStack._IEngineState _out2;
-      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out3;
-      BigInteger _out4;
-      ThunderDbStack.__default.ProcessItem(_0_state, ThunderDbStack.StreamItem.create_SeedDocsItem(_3_seedDocs), out _out2, out _out3, out _out4);
-      _9_nextState = _out2;
-      _10_seedEvents = _out3;
-      _11_ignoredQueryId = _out4;
-      _0_state = _9_nextState;
-      _1_summary = ThunderDbStack.__default.UpdateSummary(_1_summary, _10_seedEvents);
-      _6_i = BigInteger.Zero;
-      while ((_6_i) < (customers)) {
-        BigInteger _12_nextRng1;
-        BigInteger _13_widthSeed;
-        BigInteger _out5;
-        BigInteger _out6;
-        ThunderDbStackPerf.__default.NextRand(_2_rng, out _out5, out _out6);
-        _12_nextRng1 = _out5;
-        _13_widthSeed = _out6;
-        _2_rng = _12_nextRng1;
-        BigInteger _14_nextRng2;
-        BigInteger _15_minSeed;
-        BigInteger _out7;
-        BigInteger _out8;
-        ThunderDbStackPerf.__default.NextRand(_2_rng, out _out7, out _out8);
-        _14_nextRng2 = _out7;
-        _15_minSeed = _out8;
-        _2_rng = _14_nextRng2;
-        BigInteger _16_width;
-        _16_width = (BigInteger.One) + (Dafny.Helpers.EuclideanModulus(_13_widthSeed, (Dafny.Helpers.EuclideanDivision(_5_range, new BigInteger(2))) + (BigInteger.One)));
-        BigInteger _17_minScore;
-        _17_minScore = Dafny.Helpers.EuclideanModulus(_15_minSeed, _5_range);
-        BigInteger _18_maxScore;
-        _18_maxScore = (_17_minScore) + (_16_width);
-        ThunderDbStack._IQuerySpec _19_spec;
-        _19_spec = ThunderDbStack.QuerySpec.create(_17_minScore, _18_maxScore, queryLimit);
-        ThunderDbStack._IEngineState _20_stateAfterAdd;
-        Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _21_events;
-        BigInteger _22_queryId;
-        ThunderDbStack._IEngineState _out9;
-        Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out10;
-        BigInteger _out11;
-        ThunderDbStack.__default.ProcessItem(_0_state, ThunderDbStack.StreamItem.create_QueryAddItem(_19_spec), out _out9, out _out10, out _out11);
-        _20_stateAfterAdd = _out9;
-        _21_events = _out10;
-        _22_queryId = _out11;
-        _0_state = _20_stateAfterAdd;
-        _1_summary = ThunderDbStack.__default.UpdateSummary(_1_summary, _21_events);
-        _6_i = (_6_i) + (BigInteger.One);
-      }
-      BigInteger _23_tick;
-      _23_tick = BigInteger.Zero;
-      while ((_23_tick) < (ticks)) {
-        BigInteger _24_update;
-        _24_update = BigInteger.Zero;
-        while ((_24_update) < (updatesPerTick)) {
-          if ((new BigInteger(((_0_state).dtor_docIds).Count)).Sign == 1) {
-            BigInteger _25_nextRng3;
-            BigInteger _26_pickSeed;
-            BigInteger _out12;
-            BigInteger _out13;
-            ThunderDbStackPerf.__default.NextRand(_2_rng, out _out12, out _out13);
-            _25_nextRng3 = _out12;
-            _26_pickSeed = _out13;
-            _2_rng = _25_nextRng3;
-            BigInteger _27_nextRng4;
-            BigInteger _28_scoreSeed;
-            BigInteger _out14;
-            BigInteger _out15;
-            ThunderDbStackPerf.__default.NextRand(_2_rng, out _out14, out _out15);
-            _27_nextRng4 = _out14;
-            _28_scoreSeed = _out15;
-            _2_rng = _27_nextRng4;
-            BigInteger _29_picked;
-            _29_picked = Dafny.Helpers.EuclideanModulus(_26_pickSeed, new BigInteger(((_0_state).dtor_docIds).Count));
-            BigInteger _30_docId;
-            _30_docId = ((_0_state).dtor_docIds).Select(_29_picked);
-            ThunderDbStack._IMaybeDocState _source0 = ThunderDbStack.__default.LookupState((_0_state).dtor_store, _30_docId);
-            {
-              if (_source0.is_NoState) {
-                goto after_match0;
-              }
-            }
-            {
-              BigInteger _31_docState = _source0.dtor_state;
-              {
-                BigInteger _32_updatedDocState;
-                _32_updatedDocState = Dafny.Helpers.EuclideanModulus(_28_scoreSeed, _5_range);
-                ThunderDbStack._IEngineState _33_stateAfterUpdate;
-                Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _34_events;
-                BigInteger _35_ignoredQueryId2;
-                ThunderDbStack._IEngineState _out16;
-                Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out17;
-                BigInteger _out18;
-                ThunderDbStack.__default.ProcessItem(_0_state, ThunderDbStack.StreamItem.create_DocChangeItem(_30_docId, ThunderDbStack.MaybeDocState.create_HasState(_31_docState), ThunderDbStack.MaybeDocState.create_HasState(_32_updatedDocState)), out _out16, out _out17, out _out18);
-                _33_stateAfterUpdate = _out16;
-                _34_events = _out17;
-                _35_ignoredQueryId2 = _out18;
-                _0_state = _33_stateAfterUpdate;
-                _1_summary = ThunderDbStack.__default.UpdateSummary(_1_summary, _34_events);
-              }
-            }
-          after_match0: ;
-          }
-          _24_update = (_24_update) + (BigInteger.One);
-        }
-        BigInteger _36_insert;
-        _36_insert = BigInteger.Zero;
-        while ((_36_insert) < (insertsPerTick)) {
-          BigInteger _37_nextRng5;
-          BigInteger _38_scoreSeed;
-          BigInteger _out19;
-          BigInteger _out20;
-          ThunderDbStackPerf.__default.NextRand(_2_rng, out _out19, out _out20);
-          _37_nextRng5 = _out19;
-          _38_scoreSeed = _out20;
-          _2_rng = _37_nextRng5;
-          BigInteger _39_newDoc;
-          _39_newDoc = Dafny.Helpers.EuclideanModulus(_38_scoreSeed, _5_range);
-          ThunderDbStack._IEngineState _40_stateAfterInsert;
-          Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _41_events;
-          BigInteger _42_ignoredQueryId3;
-          ThunderDbStack._IEngineState _out21;
-          Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out22;
-          BigInteger _out23;
-          ThunderDbStack.__default.ProcessItem(_0_state, ThunderDbStack.StreamItem.create_DocChangeItem(_4_nextDocId, ThunderDbStack.MaybeDocState.create_NoState(), ThunderDbStack.MaybeDocState.create_HasState(_39_newDoc)), out _out21, out _out22, out _out23);
-          _40_stateAfterInsert = _out21;
-          _41_events = _out22;
-          _42_ignoredQueryId3 = _out23;
-          _0_state = _40_stateAfterInsert;
-          _1_summary = ThunderDbStack.__default.UpdateSummary(_1_summary, _41_events);
-          _4_nextDocId = (_4_nextDocId) + (BigInteger.One);
-          _36_insert = (_36_insert) + (BigInteger.One);
-        }
-        BigInteger _43_delete;
-        _43_delete = BigInteger.Zero;
-        while ((_43_delete) < (deletesPerTick)) {
-          if ((new BigInteger(((_0_state).dtor_docIds).Count)).Sign == 1) {
-            BigInteger _44_nextRng6;
-            BigInteger _45_pickSeed;
-            BigInteger _out24;
-            BigInteger _out25;
-            ThunderDbStackPerf.__default.NextRand(_2_rng, out _out24, out _out25);
-            _44_nextRng6 = _out24;
-            _45_pickSeed = _out25;
-            _2_rng = _44_nextRng6;
-            BigInteger _46_picked;
-            _46_picked = Dafny.Helpers.EuclideanModulus(_45_pickSeed, new BigInteger(((_0_state).dtor_docIds).Count));
-            BigInteger _47_docId;
-            _47_docId = ((_0_state).dtor_docIds).Select(_46_picked);
-            ThunderDbStack._IMaybeDocState _source1 = ThunderDbStack.__default.LookupState((_0_state).dtor_store, _47_docId);
-            {
-              if (_source1.is_NoState) {
-                goto after_match1;
-              }
-            }
-            {
-              BigInteger _48_docState = _source1.dtor_state;
-              {
-                ThunderDbStack._IEngineState _49_stateAfterDelete;
-                Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _50_events;
-                BigInteger _51_ignoredQueryId4;
-                ThunderDbStack._IEngineState _out26;
-                Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out27;
-                BigInteger _out28;
-                ThunderDbStack.__default.ProcessItem(_0_state, ThunderDbStack.StreamItem.create_DocChangeItem(_47_docId, ThunderDbStack.MaybeDocState.create_HasState(_48_docState), ThunderDbStack.MaybeDocState.create_NoState()), out _out26, out _out27, out _out28);
-                _49_stateAfterDelete = _out26;
-                _50_events = _out27;
-                _51_ignoredQueryId4 = _out28;
-                _0_state = _49_stateAfterDelete;
-                _1_summary = ThunderDbStack.__default.UpdateSummary(_1_summary, _50_events);
-              }
-            }
-          after_match1: ;
-          }
-          _43_delete = (_43_delete) + (BigInteger.One);
-        }
-        _23_tick = (_23_tick) + (BigInteger.One);
-      }
-      Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("scenario ")).ToVerbatimString(false));
-      Dafny.Helpers.Print((name).ToVerbatimString(false));
-      Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(" done: events=")).ToVerbatimString(false));
-      Dafny.Helpers.Print(((_1_summary).dtor_eventsProcessed));
-      Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(", matches=")).ToVerbatimString(false));
-      Dafny.Helpers.Print(((_1_summary).dtor_matchEvents));
-      Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(", evictions=")).ToVerbatimString(false));
-      Dafny.Helpers.Print(((_1_summary).dtor_evictions));
-      Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(", retrievalBatches=")).ToVerbatimString(false));
-      Dafny.Helpers.Print(((_1_summary).dtor_retrievalBatches));
-      Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(", retrievalDocs=")).ToVerbatimString(false));
-      Dafny.Helpers.Print(((_1_summary).dtor_retrievalDocs));
+      ThunderDbStack._IEngineState _1_next;
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _2_events;
+      BigInteger _3_queryId;
+      ThunderDbStack._IEngineState _out0;
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out1;
+      BigInteger _out2;
+      ThunderDbStack.__default.ProcessItem(_0_state, ThunderDbStack.StreamItem.create_DocChangeItem(new BigInteger(200), ThunderDbStack.MaybeDocState.create_NoState(), ThunderDbStack.MaybeDocState.create_HasState(BigInteger.Zero)), out _out0, out _out1, out _out2);
+      _1_next = _out0;
+      _2_events = _out1;
+      _3_queryId = _out2;
+      Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("store=")).ToVerbatimString(false));
+      Dafny.Helpers.Print(((_1_next).dtor_store));
+      Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\ndocIds=")).ToVerbatimString(false));
+      Dafny.Helpers.Print(((_1_next).dtor_docIds));
+      Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\nentries=")).ToVerbatimString(false));
+      Dafny.Helpers.Print((DocsIndexTreap.__default.Entries((_1_next).dtor_treap)));
+      Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\nevents=")).ToVerbatimString(false));
+      Dafny.Helpers.Print((_2_events));
+      Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\nqueryId=")).ToVerbatimString(false));
+      Dafny.Helpers.Print((_3_queryId));
       Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\n")).ToVerbatimString(false));
     }
-    public static void _Main(Dafny.ISequence<Dafny.ISequence<Dafny.Rune>> __noArgsParameter)
-    {
-      ThunderDbStackPerf.__default.RunScenario(Dafny.Sequence<Dafny.Rune>.UnicodeFromString("whole-stack-benchmark-like"), new BigInteger(123), new BigInteger(800), new BigInteger(120), new BigInteger(30), new BigInteger(35), new BigInteger(8), new BigInteger(8), new BigInteger(25), new BigInteger(10));
-    }
-    public static BigInteger Multiplier { get {
-      return new BigInteger(48271);
-    } }
-    public static BigInteger Modulus { get {
-      return new BigInteger(2147483647);
-    } }
   }
-} // end of namespace ThunderDbStackPerf
+} // end of namespace ThunderDbStackInsertCheck
 namespace _module {
 
 } // end of namespace _module
 class __CallToMain {
   public static void Main(string[] args) {
-    Dafny.Helpers.WithHaltHandling(() => ThunderDbStackPerf.__default._Main(Dafny.Sequence<Dafny.ISequence<Dafny.Rune>>.UnicodeFromMainArguments(args)));
+    Dafny.Helpers.WithHaltHandling(() => ThunderDbStackInsertCheck.__default._Main(Dafny.Sequence<Dafny.ISequence<Dafny.Rune>>.UnicodeFromMainArguments(args)));
   }
 }
