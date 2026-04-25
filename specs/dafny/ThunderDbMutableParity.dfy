@@ -66,7 +66,8 @@ module ThunderDbMutableParity {
         decreases |state.queries| - i
       {
         var query := state.queries[i];
-        if !(query.id in this.engine.queries) || this.engine.queries[query.id].spec != query.spec || this.engine.queries[query.id].visible != query.visible {
+        var mutableVisible := this.engine.QueryVisible(query.id);
+        if !(query.id in this.engine.queries) || this.engine.queries[query.id].spec != query.spec || mutableVisible != query.visible {
           var mutableVisible := this.engine.QueryVisible(query.id);
           print "scenario ";
           print name;

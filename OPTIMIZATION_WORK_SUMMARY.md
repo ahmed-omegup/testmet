@@ -1,5 +1,30 @@
 # Performance Optimization Work Summary
 
+## Update: Implemented Rewrite
+
+This summary originally captured the failed pre-rewrite attempts. The mutable engine has now been rewritten and revalidated.
+
+### Current State
+
+- `specs/dafny/ThunderDbMutable.dfy` now uses counter-only `QueryState(spec, currentMatches, baseScore)`.
+- `ApplyDocChange` no longer recomputes `oldVisible/newVisible` per affected query.
+- The update flow now mirrors the TS design at a high level:
+	- decrement counts for `oldMatches`
+	- increment counts for `newMatches`
+	- `FillGap` for queries that lost the changed doc
+	- `PickOverflowDoc` for newly blocked queries
+- Gap/overflow selection now uses rank lookup plus query-index boundary tracking instead of full visible-list materialization.
+
+### Validated Result
+
+- Parity still passes on both scenarios in `specs/dafny/ThunderDbMutableParity.dfy`.
+- Benchmark-like release runtime improved from roughly `1.86s` to `1.30s` on the same event totals.
+- Observable metrics remain unchanged: events=`1651`, matches=`1502`, evictions=`4159`, retrievalBatches=`1344`, retrievalDocs=`7381`.
+
+### Updated Conclusion
+
+The important lesson from the earlier failed attempts still holds: micro-optimizations alone were not enough. The difference is that the necessary algorithmic rewrite has now been done for the mutable update path, and it produced a real speedup. The remaining work is no longer "find any architectural fix"; it is reducing the still-large constant-factor/runtime gap that remains after the rewrite.
+
 ## Task
 User requested: "ok since you spotted the problem fix it" - implement a fix for the Dafny performance gap identified in previous session (~10.5x slower than TypeScript).
 

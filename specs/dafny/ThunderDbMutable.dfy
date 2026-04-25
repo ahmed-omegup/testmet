@@ -363,6 +363,86 @@ module ThunderDbMutable {
       }
     }
 
+    method CountDocsInRange(spec: QuerySpec) returns (count: nat)
+      requires this.Ready()
+      decreases *
+    {
+      var upper := TreapCountAtMost(this.docs, spec.maxScore);
+      var lower := TreapRank(this.docs, spec.minScore, NoDoc);
+      var diff := if upper >= lower then upper - lower else 0;
+      if diff <= spec.limit {
+        count := diff;
+      } else {
+        count := spec.limit;
+      }
+    }
+
+    method QueryDocAtOffset(state: QueryState, offset: nat) returns (doc: MaybeDocId)
+      requires this.Ready()
+      decreases *
+    {
+      var addAtKey := this.queryIndex.AccumulatedAddAtKey(state.spec.minScore);
+      var effectiveScore := state.baseScore + addAtKey;
+      var startRank := if effectiveScore >= state.spec.limit then effectiveScore - state.spec.limit else 0;
+      match TreapGetAtRank(this.docs, startRank + offset)
+      case Missing => {
+        doc := NoDoc;
+      }
+      case Found(score, id, pos) => {
+        if score <= state.spec.maxScore {
+          doc := SomeDoc(id);
+        } else {
+          doc := NoDoc;
+        }
+      }
+    }
+
+    method FillGap(queryId: QueryId) returns (retrievals: seq<RetrievalDoc>)
+      requires this.Ready()
+      ensures this.Ready()
+      modifies this
+      decreases *
+    {
+      retrievals := [];
+      if queryId in this.queries {
+        var state := this.queries[queryId];
+        if state.currentMatches < state.spec.limit {
+          var candidate := this.QueryDocAtOffset(state, state.currentMatches);
+          match candidate
+          case NoDoc => {
+          }
+          case SomeDoc(docId) => {
+            match LookupState(this.store, docId)
+            case NoState => {
+            }
+            case HasState(docState) => {
+              this.queries := this.queries[queryId := QueryState(state.spec, state.currentMatches + 1, state.baseScore)];
+              retrievals := [RetrievalDoc(docId, docState, [queryId])];
+            }
+          }
+        }
+      }
+    }
+
+    method PickOverflowDoc(queryId: QueryId) returns (doc: seq<DocId>)
+      requires this.Ready()
+      decreases *
+    {
+      doc := [];
+      if queryId in this.queries {
+        var state := this.queries[queryId];
+        if state.currentMatches >= state.spec.limit {
+          var candidate := this.QueryDocAtOffset(state, state.spec.limit);
+          match candidate
+          case NoDoc => {
+          }
+          case SomeDoc(docId) => {
+            doc := [docId];
+          }
+        }
+      }
+    }
+
     method SeedDocs(input: seq<SeedDoc>)
       requires this.Ready()
       ensures this.Ready()
@@ -434,16 +514,26 @@ module ThunderDbMutable {
 
       var oldMatches: seq<QueryId> := [];
       var newMatches: seq<QueryId> := [];
+      var blockedCandidates: seq<QueryId> := [];
       var queryIndex := this.queryIndex;
-      var docsBefore := this.docs;
       
       if oldState.HasState? {
         oldMatches := this.CollectQueriesForValue(GetScore(oldState.state), id);
-      }
-
-      if oldState.HasState? {
         this.docs := Remove(this.docs, GetScore(oldState.state), id);
         queryIndex.RangeAddKeysGreaterThan(GetScore(oldState.state), -1);
+        var oi := 0;
+        while oi < |oldMatches|
+          invariant 0 <= oi <= |oldMatches|
+          invariant SumConsistent(this.docs)
+        {
+          if oldMatches[oi] in this.queries {
+            var state := this.queries[oldMatches[oi]];
+            if state.currentMatches > 0 {
+              this.queries := this.queries[oldMatches[oi] := QueryState(state.spec, state.currentMatches - 1, state.baseScore)];
+            }
+          }
+          oi := oi + 1;
+        }
       }
 
       if newState.HasState? {
@@ -453,12 +543,27 @@ module ThunderDbMutable {
         queryIndex.RangeAddKeysGreaterThan(newScore, 1);
         this.store := this.store[id := newState.state];
         this.docIds := AppendDocIdIfMissing(this.docIds, id);
+
+        var ni := 0;
+        while ni < |newMatches|
+          invariant 0 <= ni <= |newMatches|
+          invariant SumConsistent(this.docs)
+        {
+          if newMatches[ni] in this.queries {
+            var state := this.queries[newMatches[ni]];
+            if state.currentMatches < state.spec.limit {
+              this.queries := this.queries[newMatches[ni] := QueryState(state.spec, state.currentMatches + 1, state.baseScore)];
+            } else {
+              blockedCandidates := blockedCandidates + [newMatches[ni]];
+            }
+          }
+          ni := ni + 1;
+        }
       } else {
         this.store := RemoveStoredDoc(this.store, id);
         this.docIds := RemoveDocId(this.docIds, id);
       }
 
-      var affected := UniqueConcatQueryIds(oldMatches, newMatches);
       var oldMatchMap: map<QueryId, bool> := map[];
       var newMatchMap: map<QueryId, bool> := map[];
       var oi := 0;
@@ -478,40 +583,43 @@ module ThunderDbMutable {
 
       var evictions: seq<Eviction> := [];
       var retrievals: seq<RetrievalDoc> := [];
-      var matchesOld: seq<QueryId> := [];
-      var matchesNew: seq<QueryId> := [];
-      var i := 0;
-      while i < |affected|
-        invariant 0 <= i <= |affected|
+      var matchesOld := oldMatches;
+      var matchesNew := newMatches;
+
+      var lostQueries: seq<QueryId> := [];
+      var li := 0;
+      while li < |oldMatches|
+        invariant 0 <= li <= |oldMatches|
         invariant SumConsistent(this.docs)
       {
-        if affected[i] in this.queries {
-          var state := this.queries[affected[i]];
-          var oldContains := affected[i] in oldMatchMap;
-          var newContains := affected[i] in newMatchMap;
-          var newCount := state.currentMatches;
-          if oldContains {
-            matchesOld := matchesOld + [affected[i]];
-          }
-          if newContains {
-            matchesNew := matchesNew + [affected[i]];
-          }
-
-          if oldContains != newContains {
-            var oldVisible := TreapCollectRange(docsBefore, state.spec.minScore, state.spec.maxScore, state.spec.limit);
-            var newVisible := TreapCollectRange(this.docs, state.spec.minScore, state.spec.maxScore, state.spec.limit);
-            newCount := |newVisible|;
-            var oldRuntime := QueryRuntime(affected[i], state.spec, oldVisible);
-            var newRuntime := QueryRuntime(affected[i], state.spec, newVisible);
-            retrievals := retrievals + BuildGapRetrievalForQuery(oldRuntime, newRuntime, this.store, id);
-            var evicted := FirstEvicted(oldVisible, newVisible, id);
-            if !oldContains && newContains && |evicted| > 0 {
-              evictions := evictions + [Eviction(affected[i], evicted[0])];
-            }
-          }
-          this.queries := this.queries[affected[i] := QueryState(state.spec, newCount, state.baseScore)];
+        if !(oldMatches[li] in newMatchMap) {
+          lostQueries := lostQueries + [oldMatches[li]];
         }
-        i := i + 1;
+        li := li + 1;
+      }
+
+      li := 0;
+      while li < |lostQueries|
+        invariant 0 <= li <= |lostQueries|
+        invariant SumConsistent(this.docs)
+      {
+        var gapRetrievals := this.FillGap(lostQueries[li]);
+        retrievals := retrievals + gapRetrievals;
+        li := li + 1;
+      }
+
+      var bi := 0;
+      while bi < |blockedCandidates|
+        invariant 0 <= bi <= |blockedCandidates|
+        invariant SumConsistent(this.docs)
+      {
+        if !(blockedCandidates[bi] in oldMatchMap) {
+          var evicted := this.PickOverflowDoc(blockedCandidates[bi]);
+          if |evicted| > 0 {
+            evictions := evictions + [Eviction(blockedCandidates[bi], evicted[0])];
+          }
+        }
+        bi := bi + 1;
       }
 
       var payload := MatchPayload(id, oldState, newState, matchesOld, matchesNew, evictions);
