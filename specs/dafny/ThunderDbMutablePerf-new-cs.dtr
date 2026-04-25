@@ -1,0 +1,17 @@
+file_format_version = "1.0"
+dafny_version = "4.11.0.0"
+[options_by_module.DocsIndexModel]
+legacy-module-names = false
+rust-sync = false
+[options_by_module.DocsIndexTreap]
+legacy-module-names = false
+rust-sync = false
+[options_by_module.ThunderDbStack]
+legacy-module-names = false
+rust-sync = false
+[options_by_module.ThunderDbMutable]
+legacy-module-names = false
+rust-sync = false
+[options_by_module.ThunderDbMutablePerf]
+legacy-module-names = false
+rust-sync = false

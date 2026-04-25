@@ -9,7 +9,7 @@ using System;
 using System.Numerics;
 using System.Collections;
 [assembly: DafnyAssembly.DafnySourceAttribute(@"// dafny 4.11.0.0
-// Command-line arguments: translate cs ThunderDbMutablePerf.dfy -o ThunderDbMutablePerf.cs --include-runtime --no-verify --allow-warnings
+// Command-line arguments: translate cs ThunderDbMutablePerf.dfy -o ThunderDbMutablePerf-fresh.cs --include-runtime --no-verify --allow-warnings
 // ThunderDbMutablePerf.dfy
 
 
