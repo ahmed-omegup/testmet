@@ -664,21 +664,9 @@ module ThunderDbMutable {
       var oldMatches: seq<QueryId> := [];
       var newMatches: seq<QueryId> := [];
       var queryIndex := this.queryIndex;
-      var oldVisibleByQuery: map<QueryId, seq<DocId>> := map[];
+      var docsBefore := this.docs;
       if oldState.HasState? {
         oldMatches := this.CollectQueriesForValue(GetScore(oldState.state), id);
-        var j := 0;
-        while j < |oldMatches|
-          invariant 0 <= j <= |oldMatches|
-          decreases |oldMatches| - j
-        {
-          if oldMatches[j] in this.queries {
-            var state := this.queries[oldMatches[j]];
-            var oldVis := TreapCollectRange(this.docs, state.spec.minScore, state.spec.maxScore, state.spec.limit);
-            oldVisibleByQuery := oldVisibleByQuery[oldMatches[j] := oldVis];
-          }
-          j := j + 1;
-        }
       }
       if oldState.HasState? {
         this.docs := Remove(this.docs, GetScore(oldState.state), id);
@@ -687,18 +675,6 @@ module ThunderDbMutable {
       if newState.HasState? {
         var newScore := GetScore(newState.state);
         newMatches := this.CollectQueriesForValue(newScore, id);
-        var j := 0;
-        while j < |newMatches|
-          invariant 0 <= j <= |newMatches|
-          decreases |newMatches| - j
-        {
-          if newMatches[j] in this.queries && newMatches[j] !in oldVisibleByQuery {
-            var state := this.queries[newMatches[j]];
-            var oldVis := TreapCollectRange(this.docs, state.spec.minScore, state.spec.maxScore, state.spec.limit);
-            oldVisibleByQuery := oldVisibleByQuery[newMatches[j] := oldVis];
-          }
-          j := j + 1;
-        }
         this.docs := Add(this.docs, newScore, id, PriorityFor(newScore, id));
         queryIndex.RangeAddKeysGreaterThan(newScore, 1);
         this.store := this.store[id := newState.state];
@@ -708,6 +684,24 @@ module ThunderDbMutable {
         this.docIds := RemoveDocId(this.docIds, id);
       }
       var affected := UniqueConcatQueryIds(oldMatches, newMatches);
+      var oldMatchMap: map<QueryId, bool> := map[];
+      var newMatchMap: map<QueryId, bool> := map[];
+      var oi := 0;
+      while oi < |oldMatches|
+        invariant 0 <= oi <= |oldMatches|
+        decreases |oldMatches| - oi
+      {
+        oldMatchMap := oldMatchMap[oldMatches[oi] := true];
+        oi := oi + 1;
+      }
+      var ni := 0;
+      while ni < |newMatches|
+        invariant 0 <= ni <= |newMatches|
+        decreases |newMatches| - ni
+      {
+        newMatchMap := newMatchMap[newMatches[ni] := true];
+        ni := ni + 1;
+      }
       var evictions: seq<Eviction> := [];
       var retrievals: seq<RetrievalDoc> := [];
       var matchesOld: seq<QueryId> := [];
@@ -720,22 +714,28 @@ module ThunderDbMutable {
       {
         if affected[i] in this.queries {
           var state := this.queries[affected[i]];
-          var oldVisible := if affected[i] in oldVisibleByQuery then oldVisibleByQuery[affected[i]] else [];
-          var newVisible := TreapCollectRange(this.docs, state.spec.minScore, state.spec.maxScore, state.spec.limit);
-          this.queries := this.queries[affected[i] := QueryState(state.spec, |newVisible|, state.baseScore)];
-          if ContainsId(oldVisible, id) {
+          var oldContains := affected[i] in oldMatchMap;
+          var newContains := affected[i] in newMatchMap;
+          var newCount := state.currentMatches;
+          if oldContains {
             matchesOld := matchesOld + [affected[i]];
           }
-          if ContainsId(newVisible, id) {
+          if newContains {
             matchesNew := matchesNew + [affected[i]];
           }
-          var oldRuntime := QueryRuntime(affected[i], state.spec, oldVisible);
-          var newRuntime := QueryRuntime(affected[i], state.spec, newVisible);
-          retrievals := retrievals + BuildGapRetrievalForQuery(oldRuntime, newRuntime, this.store, id);
-          var evicted := FirstEvicted(oldVisible, newVisible, id);
-          if !ContainsId(oldVisible, id) && ContainsId(newVisible, id) && |evicted| > 0 {
-            evictions := evictions + [Eviction(affected[i], evicted[0])];
+          if oldContains != newContains {
+            var oldVisible := TreapCollectRange(docsBefore, state.spec.minScore, state.spec.maxScore, state.spec.limit);
+            var newVisible := TreapCollectRange(this.docs, state.spec.minScore, state.spec.maxScore, state.spec.limit);
+            newCount := |newVisible|;
+            var oldRuntime := QueryRuntime(affected[i], state.spec, oldVisible);
+            var newRuntime := QueryRuntime(affected[i], state.spec, newVisible);
+            retrievals := retrievals + BuildGapRetrievalForQuery(oldRuntime, newRuntime, this.store, id);
+            var evicted := FirstEvicted(oldVisible, newVisible, id);
+            if !oldContains && newContains && |evicted| > 0 {
+              evictions := evictions + [Eviction(affected[i], evicted[0])];
+            }
           }
+          this.queries := this.queries[affected[i] := QueryState(state.spec, newCount, state.baseScore)];
         }
         i := i + 1;
       }
@@ -12194,107 +12194,104 @@ namespace ThunderDbMutable {
       _2_newMatches = Dafny.Sequence<BigInteger>.FromElements();
       ThunderDbMutable.MutableQueryIndex _3_queryIndex;
       _3_queryIndex = this.queryIndex;
-      Dafny.IMap<BigInteger,Dafny.ISequence<BigInteger>> _4_oldVisibleByQuery;
-      _4_oldVisibleByQuery = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements();
+      DocsIndexTreap._ITreap _4_docsBefore;
+      _4_docsBefore = this.docs;
       if ((oldState).is_HasState) {
         Dafny.ISequence<BigInteger> _out1;
         _out1 = (this).CollectQueriesForValue(ThunderDbStack.__default.GetScore((oldState).dtor_state), id);
         _1_oldMatches = _out1;
-        BigInteger _5_j;
-        _5_j = BigInteger.Zero;
-        while ((_5_j) < (new BigInteger((_1_oldMatches).Count))) {
-          if ((this.queries).Contains((_1_oldMatches).Select(_5_j))) {
-            ThunderDbMutable._IQueryState _6_state;
-            _6_state = Dafny.Map<BigInteger, ThunderDbMutable._IQueryState>.Select(this.queries,(_1_oldMatches).Select(_5_j));
-            Dafny.ISequence<BigInteger> _7_oldVis;
-            _7_oldVis = DocsIndexTreap.__default.TreapCollectRange(this.docs, ((_6_state).dtor_spec).dtor_minScore, ((_6_state).dtor_spec).dtor_maxScore, ((_6_state).dtor_spec).dtor_limit);
-            _4_oldVisibleByQuery = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Update(_4_oldVisibleByQuery, (_1_oldMatches).Select(_5_j), _7_oldVis);
-          }
-          _5_j = (_5_j) + (BigInteger.One);
-        }
       }
       if ((oldState).is_HasState) {
         (this).docs = DocsIndexTreap.__default.Remove(this.docs, ThunderDbStack.__default.GetScore((oldState).dtor_state), id);
         (_3_queryIndex).RangeAddKeysGreaterThan(ThunderDbStack.__default.GetScore((oldState).dtor_state), new BigInteger(-1));
       }
       if ((newState).is_HasState) {
-        BigInteger _8_newScore;
-        _8_newScore = ThunderDbStack.__default.GetScore((newState).dtor_state);
+        BigInteger _5_newScore;
+        _5_newScore = ThunderDbStack.__default.GetScore((newState).dtor_state);
         Dafny.ISequence<BigInteger> _out2;
-        _out2 = (this).CollectQueriesForValue(_8_newScore, id);
+        _out2 = (this).CollectQueriesForValue(_5_newScore, id);
         _2_newMatches = _out2;
-        BigInteger _9_j;
-        _9_j = BigInteger.Zero;
-        while ((_9_j) < (new BigInteger((_2_newMatches).Count))) {
-          if (((this.queries).Contains((_2_newMatches).Select(_9_j))) && (!(_4_oldVisibleByQuery).Contains((_2_newMatches).Select(_9_j)))) {
-            ThunderDbMutable._IQueryState _10_state;
-            _10_state = Dafny.Map<BigInteger, ThunderDbMutable._IQueryState>.Select(this.queries,(_2_newMatches).Select(_9_j));
-            Dafny.ISequence<BigInteger> _11_oldVis;
-            _11_oldVis = DocsIndexTreap.__default.TreapCollectRange(this.docs, ((_10_state).dtor_spec).dtor_minScore, ((_10_state).dtor_spec).dtor_maxScore, ((_10_state).dtor_spec).dtor_limit);
-            _4_oldVisibleByQuery = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Update(_4_oldVisibleByQuery, (_2_newMatches).Select(_9_j), _11_oldVis);
-          }
-          _9_j = (_9_j) + (BigInteger.One);
-        }
-        (this).docs = DocsIndexTreap.__default.Add(this.docs, _8_newScore, id, ThunderDbStack.__default.PriorityFor(_8_newScore, id));
-        (_3_queryIndex).RangeAddKeysGreaterThan(_8_newScore, BigInteger.One);
+        (this).docs = DocsIndexTreap.__default.Add(this.docs, _5_newScore, id, ThunderDbStack.__default.PriorityFor(_5_newScore, id));
+        (_3_queryIndex).RangeAddKeysGreaterThan(_5_newScore, BigInteger.One);
         (this).store = Dafny.Map<BigInteger, BigInteger>.Update(this.store, id, (newState).dtor_state);
         (this).docIds = ThunderDbStack.__default.AppendDocIdIfMissing(this.docIds, id);
       } else {
         (this).store = ThunderDbStack.__default.RemoveStoredDoc(this.store, id);
         (this).docIds = ThunderDbStack.__default.RemoveDocId(this.docIds, id);
       }
-      Dafny.ISequence<BigInteger> _12_affected;
-      _12_affected = ThunderDbMutable.__default.UniqueConcatQueryIds(_1_oldMatches, _2_newMatches);
-      Dafny.ISequence<ThunderDbStack._IEviction> _13_evictions;
-      _13_evictions = Dafny.Sequence<ThunderDbStack._IEviction>.FromElements();
-      Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _14_retrievals;
-      _14_retrievals = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements();
-      Dafny.ISequence<BigInteger> _15_matchesOld;
-      _15_matchesOld = Dafny.Sequence<BigInteger>.FromElements();
-      Dafny.ISequence<BigInteger> _16_matchesNew;
-      _16_matchesNew = Dafny.Sequence<BigInteger>.FromElements();
-      BigInteger _17_i;
-      _17_i = BigInteger.Zero;
-      while ((_17_i) < (new BigInteger((_12_affected).Count))) {
-        if ((this.queries).Contains((_12_affected).Select(_17_i))) {
-          ThunderDbMutable._IQueryState _18_state;
-          _18_state = Dafny.Map<BigInteger, ThunderDbMutable._IQueryState>.Select(this.queries,(_12_affected).Select(_17_i));
-          Dafny.ISequence<BigInteger> _19_oldVisible;
-          if ((_4_oldVisibleByQuery).Contains((_12_affected).Select(_17_i))) {
-            _19_oldVisible = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Select(_4_oldVisibleByQuery,(_12_affected).Select(_17_i));
-          } else {
-            _19_oldVisible = Dafny.Sequence<BigInteger>.FromElements();
-          }
-          Dafny.ISequence<BigInteger> _20_newVisible;
-          _20_newVisible = DocsIndexTreap.__default.TreapCollectRange(this.docs, ((_18_state).dtor_spec).dtor_minScore, ((_18_state).dtor_spec).dtor_maxScore, ((_18_state).dtor_spec).dtor_limit);
-          (this).queries = Dafny.Map<BigInteger, ThunderDbMutable._IQueryState>.Update(this.queries, (_12_affected).Select(_17_i), ThunderDbMutable.QueryState.create((_18_state).dtor_spec, new BigInteger((_20_newVisible).Count), (_18_state).dtor_baseScore));
-          if (ThunderDbStack.__default.ContainsId(_19_oldVisible, id)) {
-            _15_matchesOld = Dafny.Sequence<BigInteger>.Concat(_15_matchesOld, Dafny.Sequence<BigInteger>.FromElements((_12_affected).Select(_17_i)));
-          }
-          if (ThunderDbStack.__default.ContainsId(_20_newVisible, id)) {
-            _16_matchesNew = Dafny.Sequence<BigInteger>.Concat(_16_matchesNew, Dafny.Sequence<BigInteger>.FromElements((_12_affected).Select(_17_i)));
-          }
-          ThunderDbStack._IQueryRuntime _21_oldRuntime;
-          _21_oldRuntime = ThunderDbStack.QueryRuntime.create((_12_affected).Select(_17_i), (_18_state).dtor_spec, _19_oldVisible);
-          ThunderDbStack._IQueryRuntime _22_newRuntime;
-          _22_newRuntime = ThunderDbStack.QueryRuntime.create((_12_affected).Select(_17_i), (_18_state).dtor_spec, _20_newVisible);
-          _14_retrievals = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(_14_retrievals, ThunderDbStack.__default.BuildGapRetrievalForQuery(_21_oldRuntime, _22_newRuntime, this.store, id));
-          Dafny.ISequence<BigInteger> _23_evicted;
-          _23_evicted = ThunderDbStack.__default.FirstEvicted(_19_oldVisible, _20_newVisible, id);
-          if (((!(ThunderDbStack.__default.ContainsId(_19_oldVisible, id))) && (ThunderDbStack.__default.ContainsId(_20_newVisible, id))) && ((new BigInteger((_23_evicted).Count)).Sign == 1)) {
-            _13_evictions = Dafny.Sequence<ThunderDbStack._IEviction>.Concat(_13_evictions, Dafny.Sequence<ThunderDbStack._IEviction>.FromElements(ThunderDbStack.Eviction.create((_12_affected).Select(_17_i), (_23_evicted).Select(BigInteger.Zero))));
-          }
-        }
-        _17_i = (_17_i) + (BigInteger.One);
+      Dafny.ISequence<BigInteger> _6_affected;
+      _6_affected = ThunderDbMutable.__default.UniqueConcatQueryIds(_1_oldMatches, _2_newMatches);
+      Dafny.IMap<BigInteger,bool> _7_oldMatchMap;
+      _7_oldMatchMap = Dafny.Map<BigInteger, bool>.FromElements();
+      Dafny.IMap<BigInteger,bool> _8_newMatchMap;
+      _8_newMatchMap = Dafny.Map<BigInteger, bool>.FromElements();
+      BigInteger _9_oi;
+      _9_oi = BigInteger.Zero;
+      while ((_9_oi) < (new BigInteger((_1_oldMatches).Count))) {
+        _7_oldMatchMap = Dafny.Map<BigInteger, bool>.Update(_7_oldMatchMap, (_1_oldMatches).Select(_9_oi), true);
+        _9_oi = (_9_oi) + (BigInteger.One);
       }
-      ThunderDbStack._IMatchPayload _24_payload;
-      _24_payload = ThunderDbStack.MatchPayload.create(id, oldState, newState, _15_matchesOld, _16_matchesNew, _13_evictions);
-      if ((ThunderDbStack.__default.HasAnyMatchChange(_24_payload)) && ((new BigInteger((_14_retrievals).Count)).Sign == 1)) {
-        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_MatchEvent(_24_payload), ThunderDbStack.DownstreamEvent.create_RetrievalEvent(_14_retrievals));
-      } else if (ThunderDbStack.__default.HasAnyMatchChange(_24_payload)) {
-        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_MatchEvent(_24_payload));
-      } else if ((new BigInteger((_14_retrievals).Count)).Sign == 1) {
-        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_RetrievalEvent(_14_retrievals));
+      BigInteger _10_ni;
+      _10_ni = BigInteger.Zero;
+      while ((_10_ni) < (new BigInteger((_2_newMatches).Count))) {
+        _8_newMatchMap = Dafny.Map<BigInteger, bool>.Update(_8_newMatchMap, (_2_newMatches).Select(_10_ni), true);
+        _10_ni = (_10_ni) + (BigInteger.One);
+      }
+      Dafny.ISequence<ThunderDbStack._IEviction> _11_evictions;
+      _11_evictions = Dafny.Sequence<ThunderDbStack._IEviction>.FromElements();
+      Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _12_retrievals;
+      _12_retrievals = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements();
+      Dafny.ISequence<BigInteger> _13_matchesOld;
+      _13_matchesOld = Dafny.Sequence<BigInteger>.FromElements();
+      Dafny.ISequence<BigInteger> _14_matchesNew;
+      _14_matchesNew = Dafny.Sequence<BigInteger>.FromElements();
+      BigInteger _15_i;
+      _15_i = BigInteger.Zero;
+      while ((_15_i) < (new BigInteger((_6_affected).Count))) {
+        if ((this.queries).Contains((_6_affected).Select(_15_i))) {
+          ThunderDbMutable._IQueryState _16_state;
+          _16_state = Dafny.Map<BigInteger, ThunderDbMutable._IQueryState>.Select(this.queries,(_6_affected).Select(_15_i));
+          bool _17_oldContains;
+          _17_oldContains = (_7_oldMatchMap).Contains((_6_affected).Select(_15_i));
+          bool _18_newContains;
+          _18_newContains = (_8_newMatchMap).Contains((_6_affected).Select(_15_i));
+          BigInteger _19_newCount;
+          _19_newCount = (_16_state).dtor_currentMatches;
+          if (_17_oldContains) {
+            _13_matchesOld = Dafny.Sequence<BigInteger>.Concat(_13_matchesOld, Dafny.Sequence<BigInteger>.FromElements((_6_affected).Select(_15_i)));
+          }
+          if (_18_newContains) {
+            _14_matchesNew = Dafny.Sequence<BigInteger>.Concat(_14_matchesNew, Dafny.Sequence<BigInteger>.FromElements((_6_affected).Select(_15_i)));
+          }
+          if ((_17_oldContains) != (_18_newContains)) {
+            Dafny.ISequence<BigInteger> _20_oldVisible;
+            _20_oldVisible = DocsIndexTreap.__default.TreapCollectRange(_4_docsBefore, ((_16_state).dtor_spec).dtor_minScore, ((_16_state).dtor_spec).dtor_maxScore, ((_16_state).dtor_spec).dtor_limit);
+            Dafny.ISequence<BigInteger> _21_newVisible;
+            _21_newVisible = DocsIndexTreap.__default.TreapCollectRange(this.docs, ((_16_state).dtor_spec).dtor_minScore, ((_16_state).dtor_spec).dtor_maxScore, ((_16_state).dtor_spec).dtor_limit);
+            _19_newCount = new BigInteger((_21_newVisible).Count);
+            ThunderDbStack._IQueryRuntime _22_oldRuntime;
+            _22_oldRuntime = ThunderDbStack.QueryRuntime.create((_6_affected).Select(_15_i), (_16_state).dtor_spec, _20_oldVisible);
+            ThunderDbStack._IQueryRuntime _23_newRuntime;
+            _23_newRuntime = ThunderDbStack.QueryRuntime.create((_6_affected).Select(_15_i), (_16_state).dtor_spec, _21_newVisible);
+            _12_retrievals = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(_12_retrievals, ThunderDbStack.__default.BuildGapRetrievalForQuery(_22_oldRuntime, _23_newRuntime, this.store, id));
+            Dafny.ISequence<BigInteger> _24_evicted;
+            _24_evicted = ThunderDbStack.__default.FirstEvicted(_20_oldVisible, _21_newVisible, id);
+            if (((!(_17_oldContains)) && (_18_newContains)) && ((new BigInteger((_24_evicted).Count)).Sign == 1)) {
+              _11_evictions = Dafny.Sequence<ThunderDbStack._IEviction>.Concat(_11_evictions, Dafny.Sequence<ThunderDbStack._IEviction>.FromElements(ThunderDbStack.Eviction.create((_6_affected).Select(_15_i), (_24_evicted).Select(BigInteger.Zero))));
+            }
+          }
+          (this).queries = Dafny.Map<BigInteger, ThunderDbMutable._IQueryState>.Update(this.queries, (_6_affected).Select(_15_i), ThunderDbMutable.QueryState.create((_16_state).dtor_spec, _19_newCount, (_16_state).dtor_baseScore));
+        }
+        _15_i = (_15_i) + (BigInteger.One);
+      }
+      ThunderDbStack._IMatchPayload _25_payload;
+      _25_payload = ThunderDbStack.MatchPayload.create(id, oldState, newState, _13_matchesOld, _14_matchesNew, _11_evictions);
+      if ((ThunderDbStack.__default.HasAnyMatchChange(_25_payload)) && ((new BigInteger((_12_retrievals).Count)).Sign == 1)) {
+        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_MatchEvent(_25_payload), ThunderDbStack.DownstreamEvent.create_RetrievalEvent(_12_retrievals));
+      } else if (ThunderDbStack.__default.HasAnyMatchChange(_25_payload)) {
+        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_MatchEvent(_25_payload));
+      } else if ((new BigInteger((_12_retrievals).Count)).Sign == 1) {
+        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_RetrievalEvent(_12_retrievals));
       } else {
         events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements();
       }

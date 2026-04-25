@@ -435,49 +435,20 @@ module ThunderDbMutable {
       var oldMatches: seq<QueryId> := [];
       var newMatches: seq<QueryId> := [];
       var queryIndex := this.queryIndex;
-
-      // STEP 1: Capture oldVisible for all affected queries BEFORE treap modification
-      var oldVisibleByQuery: map<QueryId, seq<DocId>> := map[];
+      var docsBefore := this.docs;
       
       if oldState.HasState? {
         oldMatches := this.CollectQueriesForValue(GetScore(oldState.state), id);
-        // Capture oldVisible for oldMatches while treap still has the old doc at old score
-        var j := 0;
-        while j < |oldMatches|
-          invariant 0 <= j <= |oldMatches|
-        {
-          if oldMatches[j] in this.queries {
-            var state := this.queries[oldMatches[j]];
-            var oldVis := TreapCollectRange(this.docs, state.spec.minScore, state.spec.maxScore, state.spec.limit);
-            oldVisibleByQuery := oldVisibleByQuery[oldMatches[j] := oldVis];
-          }
-          j := j + 1;
-        }
       }
 
-      // STEP 2: Modify treap - remove old document
       if oldState.HasState? {
         this.docs := Remove(this.docs, GetScore(oldState.state), id);
         queryIndex.RangeAddKeysGreaterThan(GetScore(oldState.state), -1);
       }
 
-      // STEP 3: Before adding new doc, capture oldVisible for newMatches queries
       if newState.HasState? {
         var newScore := GetScore(newState.state);
         newMatches := this.CollectQueriesForValue(newScore, id);
-        // Capture oldVisible for newMatches queries that aren't already captured
-        var j := 0;
-        while j < |newMatches|
-          invariant 0 <= j <= |newMatches|
-        {
-          if newMatches[j] in this.queries && newMatches[j] !in oldVisibleByQuery {
-            var state := this.queries[newMatches[j]];
-            var oldVis := TreapCollectRange(this.docs, state.spec.minScore, state.spec.maxScore, state.spec.limit);
-            oldVisibleByQuery := oldVisibleByQuery[newMatches[j] := oldVis];
-          }
-          j := j + 1;
-        }
-        // NOW add the new doc to treap
         this.docs := Add(this.docs, newScore, id, PriorityFor(newScore, id));
         queryIndex.RangeAddKeysGreaterThan(newScore, 1);
         this.store := this.store[id := newState.state];
@@ -487,8 +458,24 @@ module ThunderDbMutable {
         this.docIds := RemoveDocId(this.docIds, id);
       }
 
-      // STEP 4: Compute newVisible and detect gaps using pre-captured oldVisible
       var affected := UniqueConcatQueryIds(oldMatches, newMatches);
+      var oldMatchMap: map<QueryId, bool> := map[];
+      var newMatchMap: map<QueryId, bool> := map[];
+      var oi := 0;
+      while oi < |oldMatches|
+        invariant 0 <= oi <= |oldMatches|
+      {
+        oldMatchMap := oldMatchMap[oldMatches[oi] := true];
+        oi := oi + 1;
+      }
+      var ni := 0;
+      while ni < |newMatches|
+        invariant 0 <= ni <= |newMatches|
+      {
+        newMatchMap := newMatchMap[newMatches[ni] := true];
+        ni := ni + 1;
+      }
+
       var evictions: seq<Eviction> := [];
       var retrievals: seq<RetrievalDoc> := [];
       var matchesOld: seq<QueryId> := [];
@@ -500,23 +487,29 @@ module ThunderDbMutable {
       {
         if affected[i] in this.queries {
           var state := this.queries[affected[i]];
-          // Get the pre-modification oldVisible from our captured map
-          var oldVisible := if affected[i] in oldVisibleByQuery then oldVisibleByQuery[affected[i]] else [];
-          var newVisible := TreapCollectRange(this.docs, state.spec.minScore, state.spec.maxScore, state.spec.limit);
-          this.queries := this.queries[affected[i] := QueryState(state.spec, |newVisible|, state.baseScore)];
-          if ContainsId(oldVisible, id) {
+          var oldContains := affected[i] in oldMatchMap;
+          var newContains := affected[i] in newMatchMap;
+          var newCount := state.currentMatches;
+          if oldContains {
             matchesOld := matchesOld + [affected[i]];
           }
-          if ContainsId(newVisible, id) {
+          if newContains {
             matchesNew := matchesNew + [affected[i]];
           }
-          var oldRuntime := QueryRuntime(affected[i], state.spec, oldVisible);
-          var newRuntime := QueryRuntime(affected[i], state.spec, newVisible);
-          retrievals := retrievals + BuildGapRetrievalForQuery(oldRuntime, newRuntime, this.store, id);
-          var evicted := FirstEvicted(oldVisible, newVisible, id);
-          if !ContainsId(oldVisible, id) && ContainsId(newVisible, id) && |evicted| > 0 {
-            evictions := evictions + [Eviction(affected[i], evicted[0])];
+
+          if oldContains != newContains {
+            var oldVisible := TreapCollectRange(docsBefore, state.spec.minScore, state.spec.maxScore, state.spec.limit);
+            var newVisible := TreapCollectRange(this.docs, state.spec.minScore, state.spec.maxScore, state.spec.limit);
+            newCount := |newVisible|;
+            var oldRuntime := QueryRuntime(affected[i], state.spec, oldVisible);
+            var newRuntime := QueryRuntime(affected[i], state.spec, newVisible);
+            retrievals := retrievals + BuildGapRetrievalForQuery(oldRuntime, newRuntime, this.store, id);
+            var evicted := FirstEvicted(oldVisible, newVisible, id);
+            if !oldContains && newContains && |evicted| > 0 {
+              evictions := evictions + [Eviction(affected[i], evicted[0])];
+            }
           }
+          this.queries := this.queries[affected[i] := QueryState(state.spec, newCount, state.baseScore)];
         }
         i := i + 1;
       }
