@@ -22,3 +22,6 @@ Current component:
 - `TsRetrievalRuntime.dfy`: pure Dafny state machine for the retrieval batching worker
 - `TsRetrievalLemmas.dfy`: small local facts about the retrieval worker state transitions
 - `TsRetrievalSmoke.dfy`: isolated smoke test for the migrated retrieval component
+- `TsQueriesRuntime.dfy`: pure Dafny model of the TS `QueriesIndex` behavior
+- `TsQueriesLemmas.dfy`: local facts for the query-index state transitions
+- `TsQueriesSmoke.dfy`: isolated smoke test for the migrated query-index component

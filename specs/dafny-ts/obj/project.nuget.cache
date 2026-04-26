@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "DZaXURo27L8=",
+  "dgSpecHash": "nQBapcFGEVA=",
   "success": true,
-  "projectFilePath": "/home/asus/work/testmet/specs/dafny-ts/TsRetrievalSmoke.csproj",
+  "projectFilePath": "/home/asus/work/testmet/specs/dafny-ts/TsQueriesSmoke.csproj",
   "expectedPackageFiles": [
     "/home/asus/.nuget/packages/microsoft.netcore.platforms/1.1.0/microsoft.netcore.platforms.1.1.0.nupkg.sha512",
     "/home/asus/.nuget/packages/microsoft.netcore.targets/1.1.0/microsoft.netcore.targets.1.1.0.nupkg.sha512",
