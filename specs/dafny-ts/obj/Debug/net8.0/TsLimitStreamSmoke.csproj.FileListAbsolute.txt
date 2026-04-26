@@ -1,0 +1,15 @@
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsLimitStreamSmoke.GeneratedMSBuildEditorConfig.editorconfig
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsLimitStreamSmoke.AssemblyInfoInputs.cache
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsLimitStreamSmoke.AssemblyInfo.cs
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsLimitStreamSmoke.csproj.CoreCompileInputs.cache
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsLimitStreamSmoke.sourcelink.json
+/home/asus/work/testmet/specs/dafny-ts/TsLimitStreamSmoke
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsLimitStreamSmoke.dll
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/refint/TsLimitStreamSmoke.dll
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsLimitStreamSmoke.pdb
+/home/asus/work/testmet/specs/dafny-ts/TsLimitStreamSmoke.deps.json
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsLimitStreamSmoke.genruntimeconfig.cache
+/home/asus/work/testmet/specs/dafny-ts/TsLimitStreamSmoke.runtimeconfig.json
+/home/asus/work/testmet/specs/dafny-ts/TsLimitStreamSmoke.dll
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/ref/TsLimitStreamSmoke.dll
+/home/asus/work/testmet/specs/dafny-ts/TsLimitStreamSmoke.pdb

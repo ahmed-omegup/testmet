@@ -954,9 +954,9 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/home/asus/work/testmet/specs/dafny-ts/TsLimitQueriesSmoke.csproj",
-      "projectName": "TsLimitQueriesSmoke",
-      "projectPath": "/home/asus/work/testmet/specs/dafny-ts/TsLimitQueriesSmoke.csproj",
+      "projectUniqueName": "/home/asus/work/testmet/specs/dafny-ts/TsLimitStreamSmoke.csproj",
+      "projectName": "TsLimitStreamSmoke",
+      "projectPath": "/home/asus/work/testmet/specs/dafny-ts/TsLimitStreamSmoke.csproj",
       "packagesPath": "/home/asus/.nuget/packages/",
       "outputPath": "/home/asus/work/testmet/specs/dafny-ts/obj/",
       "projectStyle": "PackageReference",

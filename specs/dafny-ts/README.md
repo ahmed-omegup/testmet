@@ -31,3 +31,6 @@ Current component:
 - `TsLimitQueriesRuntime.dfy`: composed bottom-up port of `LimitQueries.ts`
 - `TsLimitQueriesLemmas.dfy`: local facts for the composed limit-queries state transitions
 - `TsLimitQueriesSmoke.dfy`: isolated smoke test for the migrated `LimitQueries` component
+- `TsLimitStreamRuntime.dfy`: composed bottom-up port of `limitStream.ts`
+- `TsLimitStreamLemmas.dfy`: local facts for the stream orchestration state transitions
+- `TsLimitStreamSmoke.dfy`: isolated smoke test for the migrated `limitStream` component
