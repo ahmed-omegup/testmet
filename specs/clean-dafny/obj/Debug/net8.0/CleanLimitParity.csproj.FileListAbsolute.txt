@@ -1,0 +1,15 @@
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/CleanLimitParity.GeneratedMSBuildEditorConfig.editorconfig
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/CleanLimitParity.AssemblyInfoInputs.cache
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/CleanLimitParity.AssemblyInfo.cs
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/CleanLimitParity.csproj.CoreCompileInputs.cache
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/CleanLimitParity.sourcelink.json
+/home/asus/work/testmet/specs/clean-dafny/CleanLimitParity
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/CleanLimitParity.dll
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/refint/CleanLimitParity.dll
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/CleanLimitParity.pdb
+/home/asus/work/testmet/specs/clean-dafny/CleanLimitParity.deps.json
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/CleanLimitParity.genruntimeconfig.cache
+/home/asus/work/testmet/specs/clean-dafny/CleanLimitParity.runtimeconfig.json
+/home/asus/work/testmet/specs/clean-dafny/CleanLimitParity.dll
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/ref/CleanLimitParity.dll
+/home/asus/work/testmet/specs/clean-dafny/CleanLimitParity.pdb

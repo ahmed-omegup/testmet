@@ -954,9 +954,9 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/home/asus/work/testmet/specs/clean-dafny/CleanPendingSmoke.csproj",
-      "projectName": "CleanPendingSmoke",
-      "projectPath": "/home/asus/work/testmet/specs/clean-dafny/CleanPendingSmoke.csproj",
+      "projectUniqueName": "/home/asus/work/testmet/specs/clean-dafny/CleanLimitParity.csproj",
+      "projectName": "CleanLimitParity",
+      "projectPath": "/home/asus/work/testmet/specs/clean-dafny/CleanLimitParity.csproj",
       "packagesPath": "/home/asus/.nuget/packages/",
       "outputPath": "/home/asus/work/testmet/specs/clean-dafny/obj/",
       "projectStyle": "PackageReference",

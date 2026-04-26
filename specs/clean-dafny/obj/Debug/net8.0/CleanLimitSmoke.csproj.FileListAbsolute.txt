@@ -1,0 +1,15 @@
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/CleanLimitSmoke.GeneratedMSBuildEditorConfig.editorconfig
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/CleanLimitSmoke.AssemblyInfoInputs.cache
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/CleanLimitSmoke.AssemblyInfo.cs
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/CleanLimitSmoke.csproj.CoreCompileInputs.cache
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/CleanLimitSmoke.sourcelink.json
+/home/asus/work/testmet/specs/clean-dafny/CleanLimitSmoke
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/CleanLimitSmoke.dll
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/refint/CleanLimitSmoke.dll
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/CleanLimitSmoke.pdb
+/home/asus/work/testmet/specs/clean-dafny/CleanLimitSmoke.deps.json
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/CleanLimitSmoke.genruntimeconfig.cache
+/home/asus/work/testmet/specs/clean-dafny/CleanLimitSmoke.runtimeconfig.json
+/home/asus/work/testmet/specs/clean-dafny/CleanLimitSmoke.dll
+/home/asus/work/testmet/specs/clean-dafny/obj/Debug/net8.0/ref/CleanLimitSmoke.dll
+/home/asus/work/testmet/specs/clean-dafny/CleanLimitSmoke.pdb

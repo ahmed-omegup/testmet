@@ -14,11 +14,13 @@ Current files:
 - `CleanPendingRuntime.dfy`: minimal pending-registry runtime with grouped retrieval draining by `docId`
 - `CleanPendingLemmas.dfy`: small proof file reserved for pending-registry facts
 - `CleanPendingSmoke.dfy`: executable smoke harness for the pending lifecycle
+- `CleanLimitEngine.dfy`: first clean deferred engine using the treap plus the pending runtime
+- `CleanLimitSmoke.dfy`: executable smoke harness for the clean deferred engine
 
 The intent is to grow this folder in layers:
 
 1. pending lifecycle
-2. query-indexed matching engine
+2. clean deferred engine
 3. whole-stream parity harness
 4. proof/refinement layers
 
