@@ -1,0 +1,15 @@
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsDocsSmoke.GeneratedMSBuildEditorConfig.editorconfig
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsDocsSmoke.AssemblyInfoInputs.cache
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsDocsSmoke.AssemblyInfo.cs
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsDocsSmoke.csproj.CoreCompileInputs.cache
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsDocsSmoke.sourcelink.json
+/home/asus/work/testmet/specs/dafny-ts/TsDocsSmoke
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsDocsSmoke.dll
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/refint/TsDocsSmoke.dll
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsDocsSmoke.pdb
+/home/asus/work/testmet/specs/dafny-ts/TsDocsSmoke.deps.json
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsDocsSmoke.genruntimeconfig.cache
+/home/asus/work/testmet/specs/dafny-ts/TsDocsSmoke.runtimeconfig.json
+/home/asus/work/testmet/specs/dafny-ts/TsDocsSmoke.dll
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/ref/TsDocsSmoke.dll
+/home/asus/work/testmet/specs/dafny-ts/TsDocsSmoke.pdb

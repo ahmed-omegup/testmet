@@ -1,0 +1,15 @@
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsLimitQueriesSmoke.GeneratedMSBuildEditorConfig.editorconfig
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsLimitQueriesSmoke.AssemblyInfoInputs.cache
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsLimitQueriesSmoke.AssemblyInfo.cs
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsLimitQueriesSmoke.csproj.CoreCompileInputs.cache
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsLimitQueriesSmoke.sourcelink.json
+/home/asus/work/testmet/specs/dafny-ts/TsLimitQueriesSmoke
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsLimitQueriesSmoke.dll
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/refint/TsLimitQueriesSmoke.dll
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsLimitQueriesSmoke.pdb
+/home/asus/work/testmet/specs/dafny-ts/TsLimitQueriesSmoke.deps.json
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsLimitQueriesSmoke.genruntimeconfig.cache
+/home/asus/work/testmet/specs/dafny-ts/TsLimitQueriesSmoke.runtimeconfig.json
+/home/asus/work/testmet/specs/dafny-ts/TsLimitQueriesSmoke.dll
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/ref/TsLimitQueriesSmoke.dll
+/home/asus/work/testmet/specs/dafny-ts/TsLimitQueriesSmoke.pdb

@@ -25,3 +25,9 @@ Current component:
 - `TsQueriesRuntime.dfy`: pure Dafny model of the TS `QueriesIndex` behavior
 - `TsQueriesLemmas.dfy`: local facts for the query-index state transitions
 - `TsQueriesSmoke.dfy`: isolated smoke test for the migrated query-index component
+- `TsDocsRuntime.dfy`: pure Dafny model of the TS `DocsIndex` behavior
+- `TsDocsLemmas.dfy`: local facts for the docs-index state transitions
+- `TsDocsSmoke.dfy`: isolated smoke test for the migrated docs-index component
+- `TsLimitQueriesRuntime.dfy`: composed bottom-up port of `LimitQueries.ts`
+- `TsLimitQueriesLemmas.dfy`: local facts for the composed limit-queries state transitions
+- `TsLimitQueriesSmoke.dfy`: isolated smoke test for the migrated `LimitQueries` component
