@@ -31,7 +31,7 @@ module ThunderDbMutablePerf {
       this.engine := new MutableEngine();
     }
 
-    method {:verify false} RunScenario(name: string, seed: int, documents: nat, customers: nat, ticks: nat, updatesPerTick: nat, insertsPerTick: nat, deletesPerTick: nat, queryLimit: nat, density: nat)
+    method {:verify false} RunScenario(name: string, seed: int, documents: nat, customers: nat, ticks: nat, updatesPerTick: nat, insertsPerTick: nat, deletesPerTick: nat, queryLimit: nat, density: nat, drainPerTick: bool)
       decreases *
     {
       var summary := SummaryZero();
@@ -70,9 +70,19 @@ module ThunderDbMutablePerf {
         var minScore := minSeed % range;
         var maxScore := minScore + width;
         var spec := QuerySpec(minScore, maxScore, queryLimit);
-        var events, queryId := engine.ProcessItem(QueryAddItem(spec));
+        var events: seq<DownstreamEvent>;
+        var queryId: QueryId;
+        if drainPerTick {
+          events, queryId := engine.ProcessItemDeferred(QueryAddItem(spec));
+        } else {
+          events, queryId := engine.ProcessItem(QueryAddItem(spec));
+        }
         summary := UpdateSummary(summary, events);
         i := i + 1;
+      }
+      if drainPerTick {
+        var retrievalEvents := engine.DrainPendingRetrievalsGrouped();
+        summary := UpdateSummary(summary, retrievalEvents);
       }
 
       var tick := 0;
@@ -101,7 +111,13 @@ module ThunderDbMutablePerf {
             }
             case HasState(docState) => {
               var updatedDocState := DocState(scoreSeed % range);
-              var events, ignoredQueryId2 := engine.ProcessItem(DocChangeItem(docId, HasState(docState), HasState(updatedDocState)));
+              var events: seq<DownstreamEvent>;
+              var ignoredQueryId2: QueryId;
+              if drainPerTick {
+                events, ignoredQueryId2 := engine.ProcessItemDeferred(DocChangeItem(docId, HasState(docState), HasState(updatedDocState)));
+              } else {
+                events, ignoredQueryId2 := engine.ProcessItem(DocChangeItem(docId, HasState(docState), HasState(updatedDocState)));
+              }
               summary := UpdateSummary(summary, events);
             }
           }
@@ -118,7 +134,13 @@ module ThunderDbMutablePerf {
           var nextRng5, scoreSeed := NextRand(rng);
           rng := nextRng5;
           var newDoc := DocState(scoreSeed % range);
-          var events, ignoredQueryId3 := engine.ProcessItem(DocChangeItem(nextDocId, NoState, HasState(newDoc)));
+          var events: seq<DownstreamEvent>;
+          var ignoredQueryId3: QueryId;
+          if drainPerTick {
+            events, ignoredQueryId3 := engine.ProcessItemDeferred(DocChangeItem(nextDocId, NoState, HasState(newDoc)));
+          } else {
+            events, ignoredQueryId3 := engine.ProcessItem(DocChangeItem(nextDocId, NoState, HasState(newDoc)));
+          }
           summary := UpdateSummary(summary, events);
           nextDocId := nextDocId + 1;
           insert := insert + 1;
@@ -140,14 +162,30 @@ module ThunderDbMutablePerf {
             case NoState => {
             }
             case HasState(docState) => {
-              var events, ignoredQueryId4 := engine.ProcessItem(DocChangeItem(docId, HasState(docState), NoState));
+              var events: seq<DownstreamEvent>;
+              var ignoredQueryId4: QueryId;
+              if drainPerTick {
+                events, ignoredQueryId4 := engine.ProcessItemDeferred(DocChangeItem(docId, HasState(docState), NoState));
+              } else {
+                events, ignoredQueryId4 := engine.ProcessItem(DocChangeItem(docId, HasState(docState), NoState));
+              }
               summary := UpdateSummary(summary, events);
             }
           }
           delete := delete + 1;
         }
 
+        if drainPerTick {
+          var retrievalEvents := engine.DrainPendingRetrievalsGrouped();
+          summary := UpdateSummary(summary, retrievalEvents);
+        }
+
         tick := tick + 1;
+      }
+
+      if drainPerTick {
+        var retrievalEvents := engine.DrainPendingRetrievalsGrouped();
+        summary := UpdateSummary(summary, retrievalEvents);
       }
 
       print "scenario ";
@@ -170,6 +208,8 @@ module ThunderDbMutablePerf {
     decreases *
   {
     var runner := new MutablePerfRunner();
-    runner.RunScenario("whole-stack-benchmark-like-mutable", 123, 800, 120, 30, 35, 8, 8, 25, 10);
+    runner.RunScenario("whole-stack-benchmark-like-mutable", 123, 800, 120, 30, 35, 8, 8, 25, 10, false);
+    runner := new MutablePerfRunner();
+    runner.RunScenario("whole-stack-benchmark-like-mutable-per-tick", 123, 800, 120, 30, 35, 8, 8, 25, 10, true);
   }
 }

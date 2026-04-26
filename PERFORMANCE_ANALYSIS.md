@@ -6,7 +6,28 @@ The mutable Dafny engine no longer uses the original eager `visible`-sequence re
 
 - `specs/dafny/ThunderDbMutable.dfy` now keeps counter-only `QueryState` and handles updates with the same high-level flow as the TS engine: decrement/increment per-query counts, `fillGap` for lost queries, and overflow selection for newly blocked queries.
 - Gap-fill and overflow candidate selection now use treap rank access directly, and the latest revision derives the query start boundary from `baseScore + AccumulatedAddAtKey(minScore)` instead of recomputing `TreapRank(minScore)`.
+- The engine now also has persistent pending registries: `pendingByQuery`, `pendingByDoc`, and an ordered `pendingPairs` queue used by `DrainPendingRetrievals`.
 - Behavioral parity was revalidated with `ThunderDbMutableParity.dfy` on both the small and benchmark-like scenarios.
+
+## Update: Deferred Drain Experiment
+
+The missing TS-style pending lifecycle was partially ported into the mutable engine, then measured in two execution modes:
+
+- Compatibility path: `ProcessItem` still drains pending retrievals immediately after each logical item using the original pair-ordered retrieval shape.
+- Experimental deferred path: `ProcessItemDeferred` leaves pending work queued and the harness drains it once per tick with grouped-by-doc delivery.
+
+Current rebuilt-code results:
+
+- Fast driver immediate: `1510.48 ms`
+- Fast driver grouped per-tick drain: `2120.79 ms`
+- Canonical release harness running both modes: `3.13 s`
+
+The grouped per-tick drain is materially better than the first naive deferred attempt, but it is still slower than the compatibility path and it still does not preserve exact event totals:
+
+- Immediate canonical summary: events=`1651`, matches=`1502`, evictions=`4159`, retrievalBatches=`1344`, retrievalDocs=`7381`
+- Grouped per-tick canonical summary: events=`1683`, matches=`1502`, evictions=`4158`, retrievalBatches=`31`, retrievalDocs=`3203`
+
+That narrows the problem: the deferred path no longer needs another batching rewrite, but it still is not a faithful mirror of the TS retrieval worker lifecycle.
 
 ## Current Measurements
 
@@ -27,6 +48,8 @@ Observed summary is unchanged:
 ## Revised Conclusion
 
 The earlier conclusion in this document is outdated. The architectural rewrite did materially reduce runtime while preserving correctness. The remaining gap to TypeScript is still large, but it is no longer accurate to say the mutable Dafny engine "cannot be fixed without redesign" because that redesign has now been implemented in the hot update path.
+
+The current next constraint is narrower: grouped per-tick deferred delivery reduced the experimental cost, but it still changes retrieval semantics and remains slower than immediate draining. The remaining work is to mirror TS delivery/cancellation timing more faithfully and to reduce the constant-factor cost of the pending bookkeeping itself.
 
 ## Executive Summary
 Dafny implementation is **~15x slower** than TypeScript (2.0s vs 52ms for equivalent ~1650 event scenario). Root cause is **algorithmic, not implementation detail** - cannot be fixed with micro-optimizations.
