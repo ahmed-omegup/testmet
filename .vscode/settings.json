@@ -1,6 +1,8 @@
 {
     "files.exclude": {
         "btree-pubsub": true,
-        "specs/dafny": true
+        "specs/dafny": true,
+        "thunderdb": true,
+        "thunderdb-ts": true
     }
 }
