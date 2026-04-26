@@ -375,6 +375,39 @@ module ThunderDbMutable {
       UniqueConcatQueryIds(AppendQueryIdUnique(left, right[0]), right[1..])
   }
 
+  function RemoveQueryId(ids: seq<QueryId>, id: QueryId): seq<QueryId>
+    decreases ids, id
+  {
+    if |ids| == 0 then
+      []
+    else if ids[0] == id then
+      ids[1..]
+    else
+      [ids[0]] + RemoveQueryId(ids[1..], id)
+  }
+
+  function RemovePendingRetrieval(pending: seq<PendingRetrieval>, docId: DocId, queryId: QueryId): seq<PendingRetrieval>
+    decreases pending, docId, queryId
+  {
+    if |pending| == 0 then
+      []
+    else if pending[0].docId == docId && pending[0].queryId == queryId then
+      pending[1..]
+    else
+      [pending[0]] + RemovePendingRetrieval(pending[1..], docId, queryId)
+  }
+
+  function RemovePendingRetrievalsForDoc(pending: seq<PendingRetrieval>, docId: DocId): seq<PendingRetrieval>
+    decreases pending, docId
+  {
+    if |pending| == 0 then
+      []
+    else if pending[0].docId == docId then
+      RemovePendingRetrievalsForDoc(pending[1..], docId)
+    else
+      [pending[0]] + RemovePendingRetrievalsForDoc(pending[1..], docId)
+  }
+
   function QueryNodeCount(tree: QueryTree): nat
     decreases tree
   {
@@ -586,6 +619,8 @@ module ThunderDbMutable {
 
   datatype QueryState = QueryState(spec: QuerySpec, currentMatches: nat, baseScore: int)
 
+  datatype PendingRetrieval = PendingRetrieval(docId: DocId, queryId: QueryId)
+
   datatype QueryTree = QEmpty | QNode(key: Score, prio: int, add: int, localAdd: int, items: seq<QueryIndexEntry>, subtreeMax: int, localMaxCap: Score, subtreeMaxCap: Score, left: QueryTree, right: QueryTree)
 
   datatype QueryTreePair = QueryTreePair(left: QueryTree, right: QueryTree)
@@ -647,6 +682,10 @@ module ThunderDbMutable {
     var docIds: seq<DocId>
     var queryIndex: MutableQueryIndex
     var queries: map<QueryId, QueryState>
+    var pendingByQuery: map<QueryId, seq<DocId>>
+    var pendingByDoc: map<DocId, seq<QueryId>>
+    var pendingDocs: seq<DocId>
+    var pendingPairs: seq<PendingRetrieval>
     var nextQueryId: QueryId
 
     constructor ()
@@ -654,6 +693,10 @@ module ThunderDbMutable {
       ensures this.store == map[]
       ensures this.docIds == []
       ensures this.queries == map[]
+      ensures this.pendingByQuery == map[]
+      ensures this.pendingByDoc == map[]
+      ensures this.pendingDocs == []
+      ensures this.pendingPairs == []
       ensures this.nextQueryId == 1
       ensures this.Ready()
     {
@@ -662,6 +705,10 @@ module ThunderDbMutable {
       this.docIds := [];
       this.queryIndex := new MutableQueryIndex();
       this.queries := map[];
+      this.pendingByQuery := map[];
+      this.pendingByDoc := map[];
+      this.pendingDocs := [];
+      this.pendingPairs := [];
       this.nextQueryId := 1;
     }
 
@@ -678,6 +725,180 @@ module ThunderDbMutable {
     {
       var cutoff: int := TreapRank(this.docs, value, SomeDoc(docId));
       ids := this.queryIndex.CollectForValue(value, cutoff);
+    }
+
+    method RegisterPendingDocQuery(docId: DocId, queryId: QueryId)
+      requires this.Ready()
+      modifies this
+      ensures this.Ready()
+      decreases *
+    {
+      var docsForQuery := if queryId in this.pendingByQuery then this.pendingByQuery[queryId] else [];
+      docsForQuery := AppendDocIdIfMissing(docsForQuery, docId);
+      this.pendingByQuery := this.pendingByQuery[queryId := docsForQuery];
+      var queriesForDoc := if docId in this.pendingByDoc then this.pendingByDoc[docId] else [];
+      queriesForDoc := AppendQueryIdUnique(queriesForDoc, queryId);
+      this.pendingByDoc := this.pendingByDoc[docId := queriesForDoc];
+      this.pendingDocs := AppendDocIdIfMissing(this.pendingDocs, docId);
+      this.pendingPairs := this.pendingPairs + [PendingRetrieval(docId, queryId)];
+    }
+
+    method RemovePendingDocQuery(docId: DocId, queryId: QueryId) returns (removed: bool)
+      requires this.Ready()
+      modifies this
+      ensures this.Ready()
+      decreases *
+    {
+      removed := false;
+      if queryId in this.pendingByQuery {
+        var docsForQuery := this.pendingByQuery[queryId];
+        if ContainsId(docsForQuery, docId) {
+          removed := true;
+          var nextDocsForQuery := RemoveDocId(docsForQuery, docId);
+          if |nextDocsForQuery| == 0 {
+            this.pendingByQuery := map key: int {:trigger this.pendingByQuery[key]} {:trigger key in this.pendingByQuery} | key in this.pendingByQuery && key != queryId :: this.pendingByQuery[key];
+          } else {
+            this.pendingByQuery := this.pendingByQuery[queryId := nextDocsForQuery];
+          }
+        }
+      }
+      if docId in this.pendingByDoc {
+        var queriesForDoc := this.pendingByDoc[docId];
+        if ContainsQueryId(queriesForDoc, queryId) {
+          var nextQueriesForDoc := RemoveQueryId(queriesForDoc, queryId);
+          if |nextQueriesForDoc| == 0 {
+            this.pendingByDoc := map key: int {:trigger this.pendingByDoc[key]} {:trigger key in this.pendingByDoc} | key in this.pendingByDoc && key != docId :: this.pendingByDoc[key];
+            this.pendingDocs := RemoveDocId(this.pendingDocs, docId);
+          } else {
+            this.pendingByDoc := this.pendingByDoc[docId := nextQueriesForDoc];
+          }
+        }
+      }
+      if removed {
+        this.pendingPairs := RemovePendingRetrieval(this.pendingPairs, docId, queryId);
+      }
+    }
+
+    method ResolvePendingForDoc(docId: DocId)
+      requires this.Ready()
+      modifies this
+      ensures this.Ready()
+      decreases *
+    {
+      if docId in this.pendingByDoc {
+        var queriesForDoc := this.pendingByDoc[docId];
+        var i := 0;
+        while i < |queriesForDoc|
+          invariant 0 <= i <= |queriesForDoc|
+          invariant SumConsistent(this.docs)
+          decreases |queriesForDoc| - i
+        {
+          if queriesForDoc[i] in this.pendingByQuery {
+            var docsForQuery := this.pendingByQuery[queriesForDoc[i]];
+            var nextDocsForQuery := RemoveDocId(docsForQuery, docId);
+            if |nextDocsForQuery| == 0 {
+              this.pendingByQuery := map key: int {:trigger this.pendingByQuery[key]} {:trigger key in this.pendingByQuery} | key in this.pendingByQuery && key != queriesForDoc[i] :: this.pendingByQuery[key];
+            } else {
+              this.pendingByQuery := this.pendingByQuery[queriesForDoc[i] := nextDocsForQuery];
+            }
+          }
+          i := i + 1;
+        }
+        this.pendingByDoc := map key: int {:trigger this.pendingByDoc[key]} {:trigger key in this.pendingByDoc} | key in this.pendingByDoc && key != docId :: this.pendingByDoc[key];
+        this.pendingDocs := RemoveDocId(this.pendingDocs, docId);
+        this.pendingPairs := RemovePendingRetrievalsForDoc(this.pendingPairs, docId);
+      }
+    }
+
+    method CancelPendingForQuery(docId: DocId, queryId: QueryId) returns (cancelled: bool)
+      requires this.Ready()
+      modifies this
+      ensures this.Ready()
+      decreases *
+    {
+      cancelled := this.RemovePendingDocQuery(docId, queryId);
+      if cancelled && queryId in this.queries {
+        var state := this.queries[queryId];
+        if state.currentMatches > 0 {
+          this.queries := this.queries[queryId := QueryState(state.spec, state.currentMatches - 1, state.baseScore)];
+        }
+      }
+    }
+
+    method DrainPendingRetrievals() returns (events: seq<DownstreamEvent>)
+      requires this.Ready()
+      modifies this
+      ensures this.Ready()
+      decreases *
+    {
+      events := [];
+      var queued := this.pendingPairs;
+      var retrievals: seq<RetrievalDoc> := [];
+      var i := 0;
+      while i < |queued|
+        invariant 0 <= i <= |queued|
+        invariant SumConsistent(this.docs)
+        decreases |queued| - i
+      {
+        var docId := queued[i].docId;
+        var queryId := queued[i].queryId;
+        if docId in this.pendingByDoc && ContainsQueryId(this.pendingByDoc[docId], queryId) {
+          match LookupState(this.store, docId)
+          case {:split false} NoState() =>
+            {
+            }
+          case {:split false} HasState(docState) =>
+            {
+              retrievals := retrievals + [RetrievalDoc(docId, docState, [queryId])];
+            }
+        }
+        i := i + 1;
+      }
+      this.pendingByQuery := map[];
+      this.pendingByDoc := map[];
+      this.pendingDocs := [];
+      this.pendingPairs := [];
+      if |retrievals| > 0 {
+        events := [RetrievalEvent(retrievals)];
+      }
+    }
+
+    method DrainPendingRetrievalsGrouped() returns (events: seq<DownstreamEvent>)
+      requires this.Ready()
+      modifies this
+      ensures this.Ready()
+      decreases *
+    {
+      events := [];
+      var queued := this.pendingDocs;
+      var retrievals: seq<RetrievalDoc> := [];
+      var i := 0;
+      while i < |queued|
+        invariant 0 <= i <= |queued|
+        invariant SumConsistent(this.docs)
+        decreases |queued| - i
+      {
+        var docId := queued[i];
+        if docId in this.pendingByDoc {
+          var queriesForDoc := this.pendingByDoc[docId];
+          match LookupState(this.store, docId)
+          case {:split false} NoState() =>
+            {
+            }
+          case {:split false} HasState(docState) =>
+            {
+              retrievals := retrievals + [RetrievalDoc(docId, docState, queriesForDoc)];
+            }
+        }
+        i := i + 1;
+      }
+      this.pendingByQuery := map[];
+      this.pendingByDoc := map[];
+      this.pendingDocs := [];
+      this.pendingPairs := [];
+      if |retrievals| > 0 {
+        events := [RetrievalEvent(retrievals)];
+      }
     }
 
     method QueryVisible(id: QueryId) returns (visible: seq<DocId>)
@@ -738,23 +959,30 @@ module ThunderDbMutable {
       if queryId in this.queries {
         var state := this.queries[queryId];
         if state.currentMatches < state.spec.limit {
-          var candidate := this.QueryDocAtOffset(state, state.currentMatches);
-          match candidate
-          case {:split false} NoDoc() =>
-            {
-            }
-          case {:split false} SomeDoc(docId) =>
-            {
-              match LookupState(this.store, docId)
-              case {:split false} NoState() =>
-                {
-                }
-              case {:split false} HasState(docState) =>
-                {
+          var offset := state.currentMatches;
+          var found := false;
+          while !found
+            invariant SumConsistent(this.docs)
+          {
+            var candidate := this.QueryDocAtOffset(state, offset);
+            match candidate
+            case {:split false} NoDoc() =>
+              {
+                found := true;
+              }
+            case {:split false} SomeDoc(docId) =>
+              {
+                var alreadyPending := queryId in this.pendingByQuery && ContainsId(this.pendingByQuery[queryId], docId);
+                if alreadyPending {
+                  offset := offset + 1;
+                } else {
                   this.queries := this.queries[queryId := QueryState(state.spec, state.currentMatches + 1, state.baseScore)];
-                  retrievals := [RetrievalDoc(docId, docState, [queryId])];
+                  this.RegisterPendingDocQuery(docId, queryId);
+                  retrievals := [];
+                  found := true;
                 }
-            }
+              }
+          }
         }
       }
     }
@@ -799,7 +1027,7 @@ module ThunderDbMutable {
       }
     }
 
-    method AddQuery(spec: QuerySpec) returns (queryId: QueryId, events: seq<DownstreamEvent>)
+    method AddQueryDeferred(spec: QuerySpec) returns (queryId: QueryId, events: seq<DownstreamEvent>)
       requires this.Ready()
       modifies this, this.queryIndex
       ensures this.Ready()
@@ -813,15 +1041,30 @@ module ThunderDbMutable {
       var accAtKey := this.queryIndex.AccumulatedAddAtKey(spec.minScore);
       var baseScore := effectiveScore - accAtKey;
       this.queries := this.queries[queryId := QueryState(spec, |visible|, baseScore)];
-      var retrievals := BuildAddQueryRetrievals(visible, this.store, queryId);
-      if |retrievals| == 0 {
-        events := [];
-      } else {
-        events := [RetrievalEvent(retrievals)];
+      var i := 0;
+      while i < |visible|
+        invariant 0 <= i <= |visible|
+        invariant SumConsistent(this.docs)
+        decreases |visible| - i
+      {
+        this.RegisterPendingDocQuery(visible[i], queryId);
+        i := i + 1;
       }
+      events := [];
     }
 
-    method RemoveQuery(id: QueryId) returns (events: seq<DownstreamEvent>)
+    method AddQuery(spec: QuerySpec) returns (queryId: QueryId, events: seq<DownstreamEvent>)
+      requires this.Ready()
+      modifies this, this.queryIndex
+      ensures this.Ready()
+      decreases *
+    {
+      queryId, events := this.AddQueryDeferred(spec);
+      var retrievalEvents := this.DrainPendingRetrievals();
+      events := events + retrievalEvents;
+    }
+
+    method RemoveQueryDeferred(id: QueryId) returns (events: seq<DownstreamEvent>)
       requires this.Ready()
       modifies this, this.queryIndex
       ensures this.Ready()
@@ -831,11 +1074,34 @@ module ThunderDbMutable {
         var state := this.queries[id];
         this.queryIndex.Remove(state.spec.minScore, id, state.baseScore, state.spec.maxScore);
         this.queries := map key: int {:trigger this.queries[key]} {:trigger key in this.queries} | key in this.queries && key != id :: this.queries[key];
+        if id in this.pendingByQuery {
+          var pendingDocs := this.pendingByQuery[id];
+          var i := 0;
+          while i < |pendingDocs|
+            invariant 0 <= i <= |pendingDocs|
+            invariant SumConsistent(this.docs)
+            decreases |pendingDocs| - i
+          {
+            var ignored := this.RemovePendingDocQuery(pendingDocs[i], id);
+            i := i + 1;
+          }
+        }
       }
       events := [];
     }
 
-    method ApplyDocChange(id: DocId, oldState: MaybeDocState, newState: MaybeDocState)
+    method RemoveQuery(id: QueryId) returns (events: seq<DownstreamEvent>)
+      requires this.Ready()
+      modifies this, this.queryIndex
+      ensures this.Ready()
+      decreases *
+    {
+      events := this.RemoveQueryDeferred(id);
+      var retrievalEvents := this.DrainPendingRetrievals();
+      events := events + retrievalEvents;
+    }
+
+    method ApplyDocChangeDeferred(id: DocId, oldState: MaybeDocState, newState: MaybeDocState)
         returns (events: seq<DownstreamEvent>)
       requires this.Ready()
       modifies this, this.queryIndex
@@ -846,6 +1112,7 @@ module ThunderDbMutable {
       if oldState.HasState? && newState.HasState? && GetScore(oldState.state) == GetScore(newState.state) {
         var covering := this.CollectQueriesForValue(GetScore(oldState.state), id);
         this.store := this.store[id := newState.state];
+        this.ResolvePendingForDoc(id);
         if |covering| > 0 {
           events := [MatchEvent(MatchPayload(id, oldState, newState, covering, covering, []))];
         }
@@ -889,7 +1156,9 @@ module ThunderDbMutable {
         {
           if newMatches[ni] in this.queries {
             var state := this.queries[newMatches[ni]];
-            if state.currentMatches < state.spec.limit {
+            var consumedPending := this.RemovePendingDocQuery(id, newMatches[ni]);
+            if consumedPending {
+            } else if state.currentMatches < state.spec.limit {
               this.queries := this.queries[newMatches[ni] := QueryState(state.spec, state.currentMatches + 1, state.baseScore)];
             } else {
               blockedCandidates := blockedCandidates + [newMatches[ni]];
@@ -955,10 +1224,16 @@ module ThunderDbMutable {
           var evicted := this.PickOverflowDoc(blockedCandidates[bi]);
           if |evicted| > 0 {
             evictions := evictions + [Eviction(blockedCandidates[bi], evicted[0])];
+            var cancelledPending := this.CancelPendingForQuery(evicted[0], blockedCandidates[bi]);
+            if cancelledPending {
+              var replacement := this.FillGap(blockedCandidates[bi]);
+              retrievals := retrievals + replacement;
+            }
           }
         }
         bi := bi + 1;
       }
+      this.ResolvePendingForDoc(id);
       var payload := MatchPayload(id, oldState, newState, matchesOld, matchesNew, evictions);
       if HasAnyMatchChange(payload) && |retrievals| > 0 {
         events := [MatchEvent(payload), RetrievalEvent(retrievals)];
@@ -971,7 +1246,19 @@ module ThunderDbMutable {
       }
     }
 
-    method ProcessItem(item: StreamItem) returns (events: seq<DownstreamEvent>, queryId: QueryId)
+    method ApplyDocChange(id: DocId, oldState: MaybeDocState, newState: MaybeDocState)
+        returns (events: seq<DownstreamEvent>)
+      requires this.Ready()
+      modifies this, this.queryIndex
+      ensures this.Ready()
+      decreases *
+    {
+      events := this.ApplyDocChangeDeferred(id, oldState, newState);
+      var retrievalEvents := this.DrainPendingRetrievals();
+      events := events + retrievalEvents;
+    }
+
+    method ProcessItemDeferred(item: StreamItem) returns (events: seq<DownstreamEvent>, queryId: QueryId)
       requires this.Ready()
       modifies this, this.queryIndex
       ensures this.Ready()
@@ -986,16 +1273,27 @@ module ThunderDbMutable {
         }
       case {:split false} QueryAddItem(spec) =>
         {
-          queryId, events := this.AddQuery(spec);
+          queryId, events := this.AddQueryDeferred(spec);
         }
       case {:split false} QueryRemoveItem(id) =>
         {
-          events := this.RemoveQuery(id);
+          events := this.RemoveQueryDeferred(id);
         }
       case {:split false} DocChangeItem(id, oldState, newState) =>
         {
-          events := this.ApplyDocChange(id, oldState, newState);
+          events := this.ApplyDocChangeDeferred(id, oldState, newState);
         }
+    }
+
+    method ProcessItem(item: StreamItem) returns (events: seq<DownstreamEvent>, queryId: QueryId)
+      requires this.Ready()
+      modifies this, this.queryIndex
+      ensures this.Ready()
+      decreases *
+    {
+      events, queryId := this.ProcessItemDeferred(item);
+      var retrievalEvents := this.DrainPendingRetrievals();
+      events := events + retrievalEvents;
     }
   }
 }
@@ -11583,6 +11881,63 @@ namespace ThunderDbMutable {
         goto TAIL_CALL_START;
       }
     }
+    public static Dafny.ISequence<BigInteger> RemoveQueryId(Dafny.ISequence<BigInteger> ids, BigInteger id)
+    {
+      Dafny.ISequence<BigInteger> _0___accumulator = Dafny.Sequence<BigInteger>.FromElements();
+    TAIL_CALL_START: ;
+      if ((new BigInteger((ids).Count)).Sign == 0) {
+        return Dafny.Sequence<BigInteger>.Concat(_0___accumulator, Dafny.Sequence<BigInteger>.FromElements());
+      } else if (((ids).Select(BigInteger.Zero)) == (id)) {
+        return Dafny.Sequence<BigInteger>.Concat(_0___accumulator, (ids).Drop(BigInteger.One));
+      } else {
+        _0___accumulator = Dafny.Sequence<BigInteger>.Concat(_0___accumulator, Dafny.Sequence<BigInteger>.FromElements((ids).Select(BigInteger.Zero)));
+        Dafny.ISequence<BigInteger> _in0 = (ids).Drop(BigInteger.One);
+        BigInteger _in1 = id;
+        ids = _in0;
+        id = _in1;
+        goto TAIL_CALL_START;
+      }
+    }
+    public static Dafny.ISequence<ThunderDbMutable._IPendingRetrieval> RemovePendingRetrieval(Dafny.ISequence<ThunderDbMutable._IPendingRetrieval> pending, BigInteger docId, BigInteger queryId)
+    {
+      Dafny.ISequence<ThunderDbMutable._IPendingRetrieval> _0___accumulator = Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.FromElements();
+    TAIL_CALL_START: ;
+      if ((new BigInteger((pending).Count)).Sign == 0) {
+        return Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.FromElements());
+      } else if (((((pending).Select(BigInteger.Zero)).dtor_docId) == (docId)) && ((((pending).Select(BigInteger.Zero)).dtor_queryId) == (queryId))) {
+        return Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.Concat(_0___accumulator, (pending).Drop(BigInteger.One));
+      } else {
+        _0___accumulator = Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.FromElements((pending).Select(BigInteger.Zero)));
+        Dafny.ISequence<ThunderDbMutable._IPendingRetrieval> _in0 = (pending).Drop(BigInteger.One);
+        BigInteger _in1 = docId;
+        BigInteger _in2 = queryId;
+        pending = _in0;
+        docId = _in1;
+        queryId = _in2;
+        goto TAIL_CALL_START;
+      }
+    }
+    public static Dafny.ISequence<ThunderDbMutable._IPendingRetrieval> RemovePendingRetrievalsForDoc(Dafny.ISequence<ThunderDbMutable._IPendingRetrieval> pending, BigInteger docId)
+    {
+      Dafny.ISequence<ThunderDbMutable._IPendingRetrieval> _0___accumulator = Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.FromElements();
+    TAIL_CALL_START: ;
+      if ((new BigInteger((pending).Count)).Sign == 0) {
+        return Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.FromElements());
+      } else if ((((pending).Select(BigInteger.Zero)).dtor_docId) == (docId)) {
+        Dafny.ISequence<ThunderDbMutable._IPendingRetrieval> _in0 = (pending).Drop(BigInteger.One);
+        BigInteger _in1 = docId;
+        pending = _in0;
+        docId = _in1;
+        goto TAIL_CALL_START;
+      } else {
+        _0___accumulator = Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.FromElements((pending).Select(BigInteger.Zero)));
+        Dafny.ISequence<ThunderDbMutable._IPendingRetrieval> _in2 = (pending).Drop(BigInteger.One);
+        BigInteger _in3 = docId;
+        pending = _in2;
+        docId = _in3;
+        goto TAIL_CALL_START;
+      }
+    }
     public static BigInteger QueryNodeCount(ThunderDbMutable._IQueryTree tree) {
       if ((tree).is_QEmpty) {
         return BigInteger.Zero;
@@ -11970,6 +12325,70 @@ namespace ThunderDbMutable {
     }
   }
 
+  public interface _IPendingRetrieval {
+    bool is_PendingRetrieval { get; }
+    BigInteger dtor_docId { get; }
+    BigInteger dtor_queryId { get; }
+    _IPendingRetrieval DowncastClone();
+  }
+  public class PendingRetrieval : _IPendingRetrieval {
+    public readonly BigInteger _docId;
+    public readonly BigInteger _queryId;
+    public PendingRetrieval(BigInteger docId, BigInteger queryId) {
+      this._docId = docId;
+      this._queryId = queryId;
+    }
+    public _IPendingRetrieval DowncastClone() {
+      if (this is _IPendingRetrieval dt) { return dt; }
+      return new PendingRetrieval(_docId, _queryId);
+    }
+    public override bool Equals(object other) {
+      var oth = other as ThunderDbMutable.PendingRetrieval;
+      return oth != null && this._docId == oth._docId && this._queryId == oth._queryId;
+    }
+    public override int GetHashCode() {
+      ulong hash = 5381;
+      hash = ((hash << 5) + hash) + 0;
+      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._docId));
+      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._queryId));
+      return (int) hash;
+    }
+    public override string ToString() {
+      string s = "ThunderDbMutable.PendingRetrieval.PendingRetrieval";
+      s += "(";
+      s += Dafny.Helpers.ToString(this._docId);
+      s += ", ";
+      s += Dafny.Helpers.ToString(this._queryId);
+      s += ")";
+      return s;
+    }
+    private static readonly ThunderDbMutable._IPendingRetrieval theDefault = create(BigInteger.Zero, BigInteger.Zero);
+    public static ThunderDbMutable._IPendingRetrieval Default() {
+      return theDefault;
+    }
+    private static readonly Dafny.TypeDescriptor<ThunderDbMutable._IPendingRetrieval> _TYPE = new Dafny.TypeDescriptor<ThunderDbMutable._IPendingRetrieval>(ThunderDbMutable.PendingRetrieval.Default());
+    public static Dafny.TypeDescriptor<ThunderDbMutable._IPendingRetrieval> _TypeDescriptor() {
+      return _TYPE;
+    }
+    public static _IPendingRetrieval create(BigInteger docId, BigInteger queryId) {
+      return new PendingRetrieval(docId, queryId);
+    }
+    public static _IPendingRetrieval create_PendingRetrieval(BigInteger docId, BigInteger queryId) {
+      return create(docId, queryId);
+    }
+    public bool is_PendingRetrieval { get { return true; } }
+    public BigInteger dtor_docId {
+      get {
+        return this._docId;
+      }
+    }
+    public BigInteger dtor_queryId {
+      get {
+        return this._queryId;
+      }
+    }
+  }
+
   public interface _IQueryTree {
     bool is_QEmpty { get; }
     bool is_QNode { get; }
@@ -12291,6 +12710,10 @@ namespace ThunderDbMutable {
       this.docIds = Dafny.Sequence<BigInteger>.Empty;
       this.queryIndex = default(ThunderDbMutable.MutableQueryIndex);
       this.queries = Dafny.Map<BigInteger, ThunderDbMutable._IQueryState>.Empty;
+      this.pendingByQuery = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Empty;
+      this.pendingByDoc = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Empty;
+      this.pendingDocs = Dafny.Sequence<BigInteger>.Empty;
+      this.pendingPairs = Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.Empty;
       this.nextQueryId = BigInteger.Zero;
     }
     public DocsIndexTreap._ITreap docs {get; set;}
@@ -12298,6 +12721,10 @@ namespace ThunderDbMutable {
     public Dafny.ISequence<BigInteger> docIds {get; set;}
     public ThunderDbMutable.MutableQueryIndex queryIndex {get; set;}
     public Dafny.IMap<BigInteger,ThunderDbMutable._IQueryState> queries {get; set;}
+    public Dafny.IMap<BigInteger,Dafny.ISequence<BigInteger>> pendingByQuery {get; set;}
+    public Dafny.IMap<BigInteger,Dafny.ISequence<BigInteger>> pendingByDoc {get; set;}
+    public Dafny.ISequence<BigInteger> pendingDocs {get; set;}
+    public Dafny.ISequence<ThunderDbMutable._IPendingRetrieval> pendingPairs {get; set;}
     public BigInteger nextQueryId {get; set;}
     public void __ctor()
     {
@@ -12308,6 +12735,10 @@ namespace ThunderDbMutable {
       _nw0.__ctor();
       (this).queryIndex = _nw0;
       (this).queries = Dafny.Map<BigInteger, ThunderDbMutable._IQueryState>.FromElements();
+      (this).pendingByQuery = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements();
+      (this).pendingByDoc = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements();
+      (this).pendingDocs = Dafny.Sequence<BigInteger>.FromElements();
+      (this).pendingPairs = Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.FromElements();
       (this).nextQueryId = BigInteger.One;
     }
     public bool Ready() {
@@ -12322,6 +12753,223 @@ namespace ThunderDbMutable {
       _out0 = (this.queryIndex).CollectForValue(@value, _0_cutoff);
       ids = _out0;
       return ids;
+    }
+    public void RegisterPendingDocQuery(BigInteger docId, BigInteger queryId)
+    {
+      Dafny.ISequence<BigInteger> _0_docsForQuery;
+      if ((this.pendingByQuery).Contains(queryId)) {
+        _0_docsForQuery = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Select(this.pendingByQuery,queryId);
+      } else {
+        _0_docsForQuery = Dafny.Sequence<BigInteger>.FromElements();
+      }
+      _0_docsForQuery = ThunderDbStack.__default.AppendDocIdIfMissing(_0_docsForQuery, docId);
+      (this).pendingByQuery = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Update(this.pendingByQuery, queryId, _0_docsForQuery);
+      Dafny.ISequence<BigInteger> _1_queriesForDoc;
+      if ((this.pendingByDoc).Contains(docId)) {
+        _1_queriesForDoc = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Select(this.pendingByDoc,docId);
+      } else {
+        _1_queriesForDoc = Dafny.Sequence<BigInteger>.FromElements();
+      }
+      _1_queriesForDoc = ThunderDbStack.__default.AppendQueryIdUnique(_1_queriesForDoc, queryId);
+      (this).pendingByDoc = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Update(this.pendingByDoc, docId, _1_queriesForDoc);
+      (this).pendingDocs = ThunderDbStack.__default.AppendDocIdIfMissing(this.pendingDocs, docId);
+      (this).pendingPairs = Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.Concat(this.pendingPairs, Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.FromElements(ThunderDbMutable.PendingRetrieval.create(docId, queryId)));
+    }
+    public bool RemovePendingDocQuery(BigInteger docId, BigInteger queryId)
+    {
+      bool removed = false;
+      removed = false;
+      if ((this.pendingByQuery).Contains(queryId)) {
+        Dafny.ISequence<BigInteger> _0_docsForQuery;
+        _0_docsForQuery = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Select(this.pendingByQuery,queryId);
+        if (ThunderDbStack.__default.ContainsId(_0_docsForQuery, docId)) {
+          removed = true;
+          Dafny.ISequence<BigInteger> _1_nextDocsForQuery;
+          _1_nextDocsForQuery = ThunderDbStack.__default.RemoveDocId(_0_docsForQuery, docId);
+          if ((new BigInteger((_1_nextDocsForQuery).Count)).Sign == 0) {
+            (this).pendingByQuery = Dafny.Helpers.Id<Func<BigInteger, Dafny.IMap<BigInteger,Dafny.ISequence<BigInteger>>>>((_2_queryId) => ((System.Func<Dafny.IMap<BigInteger,Dafny.ISequence<BigInteger>>>)(() => {
+              var _coll0 = new System.Collections.Generic.List<Dafny.Pair<BigInteger,Dafny.ISequence<BigInteger>>>();
+              foreach (BigInteger _compr_0 in (this.pendingByQuery).Keys.Elements) {
+                BigInteger _3_key = (BigInteger)_compr_0;
+                if (((this.pendingByQuery).Contains(_3_key)) && ((_3_key) != (_2_queryId))) {
+                  _coll0.Add(new Dafny.Pair<BigInteger,Dafny.ISequence<BigInteger>>(_3_key, Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Select(this.pendingByQuery,_3_key)));
+                }
+              }
+              return Dafny.Map<BigInteger,Dafny.ISequence<BigInteger>>.FromCollection(_coll0);
+            }))())(queryId);
+          } else {
+            (this).pendingByQuery = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Update(this.pendingByQuery, queryId, _1_nextDocsForQuery);
+          }
+        }
+      }
+      if ((this.pendingByDoc).Contains(docId)) {
+        Dafny.ISequence<BigInteger> _4_queriesForDoc;
+        _4_queriesForDoc = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Select(this.pendingByDoc,docId);
+        if (ThunderDbStack.__default.ContainsQueryId(_4_queriesForDoc, queryId)) {
+          Dafny.ISequence<BigInteger> _5_nextQueriesForDoc;
+          _5_nextQueriesForDoc = ThunderDbMutable.__default.RemoveQueryId(_4_queriesForDoc, queryId);
+          if ((new BigInteger((_5_nextQueriesForDoc).Count)).Sign == 0) {
+            (this).pendingByDoc = Dafny.Helpers.Id<Func<BigInteger, Dafny.IMap<BigInteger,Dafny.ISequence<BigInteger>>>>((_6_docId) => ((System.Func<Dafny.IMap<BigInteger,Dafny.ISequence<BigInteger>>>)(() => {
+              var _coll1 = new System.Collections.Generic.List<Dafny.Pair<BigInteger,Dafny.ISequence<BigInteger>>>();
+              foreach (BigInteger _compr_1 in (this.pendingByDoc).Keys.Elements) {
+                BigInteger _7_key = (BigInteger)_compr_1;
+                if (((this.pendingByDoc).Contains(_7_key)) && ((_7_key) != (_6_docId))) {
+                  _coll1.Add(new Dafny.Pair<BigInteger,Dafny.ISequence<BigInteger>>(_7_key, Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Select(this.pendingByDoc,_7_key)));
+                }
+              }
+              return Dafny.Map<BigInteger,Dafny.ISequence<BigInteger>>.FromCollection(_coll1);
+            }))())(docId);
+            (this).pendingDocs = ThunderDbStack.__default.RemoveDocId(this.pendingDocs, docId);
+          } else {
+            (this).pendingByDoc = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Update(this.pendingByDoc, docId, _5_nextQueriesForDoc);
+          }
+        }
+      }
+      if (removed) {
+        (this).pendingPairs = ThunderDbMutable.__default.RemovePendingRetrieval(this.pendingPairs, docId, queryId);
+      }
+      return removed;
+    }
+    public void ResolvePendingForDoc(BigInteger docId)
+    {
+      if ((this.pendingByDoc).Contains(docId)) {
+        Dafny.ISequence<BigInteger> _0_queriesForDoc;
+        _0_queriesForDoc = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Select(this.pendingByDoc,docId);
+        BigInteger _1_i;
+        _1_i = BigInteger.Zero;
+        while ((_1_i) < (new BigInteger((_0_queriesForDoc).Count))) {
+          if ((this.pendingByQuery).Contains((_0_queriesForDoc).Select(_1_i))) {
+            Dafny.ISequence<BigInteger> _2_docsForQuery;
+            _2_docsForQuery = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Select(this.pendingByQuery,(_0_queriesForDoc).Select(_1_i));
+            Dafny.ISequence<BigInteger> _3_nextDocsForQuery;
+            _3_nextDocsForQuery = ThunderDbStack.__default.RemoveDocId(_2_docsForQuery, docId);
+            if ((new BigInteger((_3_nextDocsForQuery).Count)).Sign == 0) {
+              (this).pendingByQuery = Dafny.Helpers.Id<Func<Dafny.ISequence<BigInteger>, BigInteger, Dafny.IMap<BigInteger,Dafny.ISequence<BigInteger>>>>((_4_queriesForDoc, _5_i) => ((System.Func<Dafny.IMap<BigInteger,Dafny.ISequence<BigInteger>>>)(() => {
+                var _coll0 = new System.Collections.Generic.List<Dafny.Pair<BigInteger,Dafny.ISequence<BigInteger>>>();
+                foreach (BigInteger _compr_0 in (this.pendingByQuery).Keys.Elements) {
+                  BigInteger _6_key = (BigInteger)_compr_0;
+                  if (((this.pendingByQuery).Contains(_6_key)) && ((_6_key) != ((_4_queriesForDoc).Select(_5_i)))) {
+                    _coll0.Add(new Dafny.Pair<BigInteger,Dafny.ISequence<BigInteger>>(_6_key, Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Select(this.pendingByQuery,_6_key)));
+                  }
+                }
+                return Dafny.Map<BigInteger,Dafny.ISequence<BigInteger>>.FromCollection(_coll0);
+              }))())(_0_queriesForDoc, _1_i);
+            } else {
+              (this).pendingByQuery = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Update(this.pendingByQuery, (_0_queriesForDoc).Select(_1_i), _3_nextDocsForQuery);
+            }
+          }
+          _1_i = (_1_i) + (BigInteger.One);
+        }
+        (this).pendingByDoc = Dafny.Helpers.Id<Func<BigInteger, Dafny.IMap<BigInteger,Dafny.ISequence<BigInteger>>>>((_7_docId) => ((System.Func<Dafny.IMap<BigInteger,Dafny.ISequence<BigInteger>>>)(() => {
+          var _coll1 = new System.Collections.Generic.List<Dafny.Pair<BigInteger,Dafny.ISequence<BigInteger>>>();
+          foreach (BigInteger _compr_1 in (this.pendingByDoc).Keys.Elements) {
+            BigInteger _8_key = (BigInteger)_compr_1;
+            if (((this.pendingByDoc).Contains(_8_key)) && ((_8_key) != (_7_docId))) {
+              _coll1.Add(new Dafny.Pair<BigInteger,Dafny.ISequence<BigInteger>>(_8_key, Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Select(this.pendingByDoc,_8_key)));
+            }
+          }
+          return Dafny.Map<BigInteger,Dafny.ISequence<BigInteger>>.FromCollection(_coll1);
+        }))())(docId);
+        (this).pendingDocs = ThunderDbStack.__default.RemoveDocId(this.pendingDocs, docId);
+        (this).pendingPairs = ThunderDbMutable.__default.RemovePendingRetrievalsForDoc(this.pendingPairs, docId);
+      }
+    }
+    public bool CancelPendingForQuery(BigInteger docId, BigInteger queryId)
+    {
+      bool cancelled = false;
+      bool _out0;
+      _out0 = (this).RemovePendingDocQuery(docId, queryId);
+      cancelled = _out0;
+      if ((cancelled) && ((this.queries).Contains(queryId))) {
+        ThunderDbMutable._IQueryState _0_state;
+        _0_state = Dafny.Map<BigInteger, ThunderDbMutable._IQueryState>.Select(this.queries,queryId);
+        if (((_0_state).dtor_currentMatches).Sign == 1) {
+          (this).queries = Dafny.Map<BigInteger, ThunderDbMutable._IQueryState>.Update(this.queries, queryId, ThunderDbMutable.QueryState.create((_0_state).dtor_spec, ((_0_state).dtor_currentMatches) - (BigInteger.One), (_0_state).dtor_baseScore));
+        }
+      }
+      return cancelled;
+    }
+    public Dafny.ISequence<ThunderDbStack._IDownstreamEvent> DrainPendingRetrievals()
+    {
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Empty;
+      events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements();
+      Dafny.ISequence<ThunderDbMutable._IPendingRetrieval> _0_queued;
+      _0_queued = this.pendingPairs;
+      Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _1_retrievals;
+      _1_retrievals = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements();
+      BigInteger _2_i;
+      _2_i = BigInteger.Zero;
+      while ((_2_i) < (new BigInteger((_0_queued).Count))) {
+        BigInteger _3_docId;
+        _3_docId = ((_0_queued).Select(_2_i)).dtor_docId;
+        BigInteger _4_queryId;
+        _4_queryId = ((_0_queued).Select(_2_i)).dtor_queryId;
+        if (((this.pendingByDoc).Contains(_3_docId)) && (ThunderDbStack.__default.ContainsQueryId(Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Select(this.pendingByDoc,_3_docId), _4_queryId))) {
+          ThunderDbStack._IMaybeDocState _source0 = ThunderDbStack.__default.LookupState(this.store, _3_docId);
+          {
+            if (_source0.is_NoState) {
+              goto after_match0;
+            }
+          }
+          {
+            BigInteger _5_docState = _source0.dtor_state;
+            {
+              _1_retrievals = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(_1_retrievals, Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements(ThunderDbStack.RetrievalDoc.create(_3_docId, _5_docState, Dafny.Sequence<BigInteger>.FromElements(_4_queryId))));
+            }
+          }
+        after_match0: ;
+        }
+        _2_i = (_2_i) + (BigInteger.One);
+      }
+      (this).pendingByQuery = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements();
+      (this).pendingByDoc = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements();
+      (this).pendingDocs = Dafny.Sequence<BigInteger>.FromElements();
+      (this).pendingPairs = Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.FromElements();
+      if ((new BigInteger((_1_retrievals).Count)).Sign == 1) {
+        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_RetrievalEvent(_1_retrievals));
+      }
+      return events;
+    }
+    public Dafny.ISequence<ThunderDbStack._IDownstreamEvent> DrainPendingRetrievalsGrouped()
+    {
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Empty;
+      events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements();
+      Dafny.ISequence<BigInteger> _0_queued;
+      _0_queued = this.pendingDocs;
+      Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _1_retrievals;
+      _1_retrievals = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements();
+      BigInteger _2_i;
+      _2_i = BigInteger.Zero;
+      while ((_2_i) < (new BigInteger((_0_queued).Count))) {
+        BigInteger _3_docId;
+        _3_docId = (_0_queued).Select(_2_i);
+        if ((this.pendingByDoc).Contains(_3_docId)) {
+          Dafny.ISequence<BigInteger> _4_queriesForDoc;
+          _4_queriesForDoc = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Select(this.pendingByDoc,_3_docId);
+          ThunderDbStack._IMaybeDocState _source0 = ThunderDbStack.__default.LookupState(this.store, _3_docId);
+          {
+            if (_source0.is_NoState) {
+              goto after_match0;
+            }
+          }
+          {
+            BigInteger _5_docState = _source0.dtor_state;
+            {
+              _1_retrievals = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(_1_retrievals, Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements(ThunderDbStack.RetrievalDoc.create(_3_docId, _5_docState, _4_queriesForDoc)));
+            }
+          }
+        after_match0: ;
+        }
+        _2_i = (_2_i) + (BigInteger.One);
+      }
+      (this).pendingByQuery = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements();
+      (this).pendingByDoc = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements();
+      (this).pendingDocs = Dafny.Sequence<BigInteger>.FromElements();
+      (this).pendingPairs = Dafny.Sequence<ThunderDbMutable._IPendingRetrieval>.FromElements();
+      if ((new BigInteger((_1_retrievals).Count)).Sign == 1) {
+        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_RetrievalEvent(_1_retrievals));
+      }
+      return events;
     }
     public Dafny.ISequence<BigInteger> QueryVisible(BigInteger id)
     {
@@ -12402,36 +13050,41 @@ namespace ThunderDbMutable {
         ThunderDbMutable._IQueryState _0_state;
         _0_state = Dafny.Map<BigInteger, ThunderDbMutable._IQueryState>.Select(this.queries,queryId);
         if (((_0_state).dtor_currentMatches) < (((_0_state).dtor_spec).dtor_limit)) {
-          DocsIndexModel._IMaybeDocId _1_candidate;
-          DocsIndexModel._IMaybeDocId _out0;
-          _out0 = (this).QueryDocAtOffset(_0_state, (_0_state).dtor_currentMatches);
-          _1_candidate = _out0;
-          DocsIndexModel._IMaybeDocId _source0 = _1_candidate;
-          {
-            if (_source0.is_NoDoc) {
-              goto after_match0;
-            }
-          }
-          {
-            BigInteger _2_docId = _source0.dtor_doc;
+          BigInteger _1_offset;
+          _1_offset = (_0_state).dtor_currentMatches;
+          bool _2_found;
+          _2_found = false;
+          while (!(_2_found)) {
+            DocsIndexModel._IMaybeDocId _3_candidate;
+            DocsIndexModel._IMaybeDocId _out0;
+            _out0 = (this).QueryDocAtOffset(_0_state, _1_offset);
+            _3_candidate = _out0;
+            DocsIndexModel._IMaybeDocId _source0 = _3_candidate;
             {
-              ThunderDbStack._IMaybeDocState _source1 = ThunderDbStack.__default.LookupState(this.store, _2_docId);
-              {
-                if (_source1.is_NoState) {
-                  goto after_match1;
-                }
-              }
-              {
-                BigInteger _3_docState = _source1.dtor_state;
+              if (_source0.is_NoDoc) {
                 {
+                  _2_found = true;
+                }
+                goto after_match0;
+              }
+            }
+            {
+              BigInteger _4_docId = _source0.dtor_doc;
+              {
+                bool _5_alreadyPending;
+                _5_alreadyPending = ((this.pendingByQuery).Contains(queryId)) && (ThunderDbStack.__default.ContainsId(Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Select(this.pendingByQuery,queryId), _4_docId));
+                if (_5_alreadyPending) {
+                  _1_offset = (_1_offset) + (BigInteger.One);
+                } else {
                   (this).queries = Dafny.Map<BigInteger, ThunderDbMutable._IQueryState>.Update(this.queries, queryId, ThunderDbMutable.QueryState.create((_0_state).dtor_spec, ((_0_state).dtor_currentMatches) + (BigInteger.One), (_0_state).dtor_baseScore));
-                  retrievals = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements(ThunderDbStack.RetrievalDoc.create(_2_docId, _3_docState, Dafny.Sequence<BigInteger>.FromElements(queryId)));
+                  (this).RegisterPendingDocQuery(_4_docId, queryId);
+                  retrievals = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements();
+                  _2_found = true;
                 }
               }
-            after_match1: ;
             }
+          after_match0: ;
           }
-        after_match0: ;
         }
       }
       return retrievals;
@@ -12476,7 +13129,7 @@ namespace ThunderDbMutable {
         _0_i = (_0_i) + (BigInteger.One);
       }
     }
-    public void AddQuery(ThunderDbStack._IQuerySpec spec, out BigInteger queryId, out Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events)
+    public void AddQueryDeferred(ThunderDbStack._IQuerySpec spec, out BigInteger queryId, out Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events)
     {
       queryId = BigInteger.Zero;
       events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Empty;
@@ -12494,15 +13147,30 @@ namespace ThunderDbMutable {
       BigInteger _3_baseScore;
       _3_baseScore = (_1_effectiveScore) - (_2_accAtKey);
       (this).queries = Dafny.Map<BigInteger, ThunderDbMutable._IQueryState>.Update(this.queries, queryId, ThunderDbMutable.QueryState.create(spec, new BigInteger((_0_visible).Count), _3_baseScore));
-      Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _4_retrievals;
-      _4_retrievals = ThunderDbStack.__default.BuildAddQueryRetrievals(_0_visible, this.store, queryId);
-      if ((new BigInteger((_4_retrievals).Count)).Sign == 0) {
-        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements();
-      } else {
-        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_RetrievalEvent(_4_retrievals));
+      BigInteger _4_i;
+      _4_i = BigInteger.Zero;
+      while ((_4_i) < (new BigInteger((_0_visible).Count))) {
+        (this).RegisterPendingDocQuery((_0_visible).Select(_4_i), queryId);
+        _4_i = (_4_i) + (BigInteger.One);
       }
+      events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements();
     }
-    public Dafny.ISequence<ThunderDbStack._IDownstreamEvent> RemoveQuery(BigInteger id)
+    public void AddQuery(ThunderDbStack._IQuerySpec spec, out BigInteger queryId, out Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events)
+    {
+      queryId = BigInteger.Zero;
+      events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Empty;
+      BigInteger _out0;
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out1;
+      (this).AddQueryDeferred(spec, out _out0, out _out1);
+      queryId = _out0;
+      events = _out1;
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _0_retrievalEvents;
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out2;
+      _out2 = (this).DrainPendingRetrievals();
+      _0_retrievalEvents = _out2;
+      events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Concat(events, _0_retrievalEvents);
+    }
+    public Dafny.ISequence<ThunderDbStack._IDownstreamEvent> RemoveQueryDeferred(BigInteger id)
     {
       Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Empty;
       if ((this.queries).Contains(id)) {
@@ -12519,11 +13187,37 @@ namespace ThunderDbMutable {
           }
           return Dafny.Map<BigInteger,ThunderDbMutable._IQueryState>.FromCollection(_coll0);
         }))())(id);
+        if ((this.pendingByQuery).Contains(id)) {
+          Dafny.ISequence<BigInteger> _3_pendingDocs;
+          _3_pendingDocs = Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Select(this.pendingByQuery,id);
+          BigInteger _4_i;
+          _4_i = BigInteger.Zero;
+          while ((_4_i) < (new BigInteger((_3_pendingDocs).Count))) {
+            bool _5_ignored;
+            bool _out0;
+            _out0 = (this).RemovePendingDocQuery((_3_pendingDocs).Select(_4_i), id);
+            _5_ignored = _out0;
+            _4_i = (_4_i) + (BigInteger.One);
+          }
+        }
       }
       events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements();
       return events;
     }
-    public Dafny.ISequence<ThunderDbStack._IDownstreamEvent> ApplyDocChange(BigInteger id, ThunderDbStack._IMaybeDocState oldState, ThunderDbStack._IMaybeDocState newState)
+    public Dafny.ISequence<ThunderDbStack._IDownstreamEvent> RemoveQuery(BigInteger id)
+    {
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Empty;
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out0;
+      _out0 = (this).RemoveQueryDeferred(id);
+      events = _out0;
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _0_retrievalEvents;
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out1;
+      _out1 = (this).DrainPendingRetrievals();
+      _0_retrievalEvents = _out1;
+      events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Concat(events, _0_retrievalEvents);
+      return events;
+    }
+    public Dafny.ISequence<ThunderDbStack._IDownstreamEvent> ApplyDocChangeDeferred(BigInteger id, ThunderDbStack._IMaybeDocState oldState, ThunderDbStack._IMaybeDocState newState)
     {
       Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Empty;
       events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements();
@@ -12533,6 +13227,7 @@ namespace ThunderDbMutable {
         _out0 = (this).CollectQueriesForValue(ThunderDbStack.__default.GetScore((oldState).dtor_state), id);
         _0_covering = _out0;
         (this).store = Dafny.Map<BigInteger, BigInteger>.Update(this.store, id, (newState).dtor_state);
+        (this).ResolvePendingForDoc(id);
         if ((new BigInteger((_0_covering).Count)).Sign == 1) {
           events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_MatchEvent(ThunderDbStack.MatchPayload.create(id, oldState, newState, _0_covering, _0_covering, Dafny.Sequence<ThunderDbStack._IEviction>.FromElements())));
         }
@@ -12581,7 +13276,12 @@ namespace ThunderDbMutable {
           if ((this.queries).Contains((_2_newMatches).Select(_8_ni))) {
             ThunderDbMutable._IQueryState _9_state;
             _9_state = Dafny.Map<BigInteger, ThunderDbMutable._IQueryState>.Select(this.queries,(_2_newMatches).Select(_8_ni));
-            if (((_9_state).dtor_currentMatches) < (((_9_state).dtor_spec).dtor_limit)) {
+            bool _10_consumedPending;
+            bool _out3;
+            _out3 = (this).RemovePendingDocQuery(id, (_2_newMatches).Select(_8_ni));
+            _10_consumedPending = _out3;
+            if (_10_consumedPending) {
+            } else if (((_9_state).dtor_currentMatches) < (((_9_state).dtor_spec).dtor_limit)) {
               (this).queries = Dafny.Map<BigInteger, ThunderDbMutable._IQueryState>.Update(this.queries, (_2_newMatches).Select(_8_ni), ThunderDbMutable.QueryState.create((_9_state).dtor_spec, ((_9_state).dtor_currentMatches) + (BigInteger.One), (_9_state).dtor_baseScore));
             } else {
               _3_blockedCandidates = Dafny.Sequence<BigInteger>.Concat(_3_blockedCandidates, Dafny.Sequence<BigInteger>.FromElements((_2_newMatches).Select(_8_ni)));
@@ -12593,77 +13293,102 @@ namespace ThunderDbMutable {
         (this).store = ThunderDbStack.__default.RemoveStoredDoc(this.store, id);
         (this).docIds = ThunderDbStack.__default.RemoveDocId(this.docIds, id);
       }
-      Dafny.IMap<BigInteger,bool> _10_oldMatchMap;
-      _10_oldMatchMap = Dafny.Map<BigInteger, bool>.FromElements();
-      Dafny.IMap<BigInteger,bool> _11_newMatchMap;
-      _11_newMatchMap = Dafny.Map<BigInteger, bool>.FromElements();
-      BigInteger _12_oi;
-      _12_oi = BigInteger.Zero;
-      while ((_12_oi) < (new BigInteger((_1_oldMatches).Count))) {
-        _10_oldMatchMap = Dafny.Map<BigInteger, bool>.Update(_10_oldMatchMap, (_1_oldMatches).Select(_12_oi), true);
-        _12_oi = (_12_oi) + (BigInteger.One);
+      Dafny.IMap<BigInteger,bool> _11_oldMatchMap;
+      _11_oldMatchMap = Dafny.Map<BigInteger, bool>.FromElements();
+      Dafny.IMap<BigInteger,bool> _12_newMatchMap;
+      _12_newMatchMap = Dafny.Map<BigInteger, bool>.FromElements();
+      BigInteger _13_oi;
+      _13_oi = BigInteger.Zero;
+      while ((_13_oi) < (new BigInteger((_1_oldMatches).Count))) {
+        _11_oldMatchMap = Dafny.Map<BigInteger, bool>.Update(_11_oldMatchMap, (_1_oldMatches).Select(_13_oi), true);
+        _13_oi = (_13_oi) + (BigInteger.One);
       }
-      BigInteger _13_ni;
-      _13_ni = BigInteger.Zero;
-      while ((_13_ni) < (new BigInteger((_2_newMatches).Count))) {
-        _11_newMatchMap = Dafny.Map<BigInteger, bool>.Update(_11_newMatchMap, (_2_newMatches).Select(_13_ni), true);
-        _13_ni = (_13_ni) + (BigInteger.One);
+      BigInteger _14_ni;
+      _14_ni = BigInteger.Zero;
+      while ((_14_ni) < (new BigInteger((_2_newMatches).Count))) {
+        _12_newMatchMap = Dafny.Map<BigInteger, bool>.Update(_12_newMatchMap, (_2_newMatches).Select(_14_ni), true);
+        _14_ni = (_14_ni) + (BigInteger.One);
       }
-      Dafny.ISequence<ThunderDbStack._IEviction> _14_evictions;
-      _14_evictions = Dafny.Sequence<ThunderDbStack._IEviction>.FromElements();
-      Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _15_retrievals;
-      _15_retrievals = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements();
-      Dafny.ISequence<BigInteger> _16_matchesOld;
-      _16_matchesOld = _1_oldMatches;
-      Dafny.ISequence<BigInteger> _17_matchesNew;
-      _17_matchesNew = _2_newMatches;
-      Dafny.ISequence<BigInteger> _18_lostQueries;
-      _18_lostQueries = Dafny.Sequence<BigInteger>.FromElements();
-      BigInteger _19_li;
-      _19_li = BigInteger.Zero;
-      while ((_19_li) < (new BigInteger((_1_oldMatches).Count))) {
-        if (!((_11_newMatchMap).Contains((_1_oldMatches).Select(_19_li)))) {
-          _18_lostQueries = Dafny.Sequence<BigInteger>.Concat(_18_lostQueries, Dafny.Sequence<BigInteger>.FromElements((_1_oldMatches).Select(_19_li)));
+      Dafny.ISequence<ThunderDbStack._IEviction> _15_evictions;
+      _15_evictions = Dafny.Sequence<ThunderDbStack._IEviction>.FromElements();
+      Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _16_retrievals;
+      _16_retrievals = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements();
+      Dafny.ISequence<BigInteger> _17_matchesOld;
+      _17_matchesOld = _1_oldMatches;
+      Dafny.ISequence<BigInteger> _18_matchesNew;
+      _18_matchesNew = _2_newMatches;
+      Dafny.ISequence<BigInteger> _19_lostQueries;
+      _19_lostQueries = Dafny.Sequence<BigInteger>.FromElements();
+      BigInteger _20_li;
+      _20_li = BigInteger.Zero;
+      while ((_20_li) < (new BigInteger((_1_oldMatches).Count))) {
+        if (!((_12_newMatchMap).Contains((_1_oldMatches).Select(_20_li)))) {
+          _19_lostQueries = Dafny.Sequence<BigInteger>.Concat(_19_lostQueries, Dafny.Sequence<BigInteger>.FromElements((_1_oldMatches).Select(_20_li)));
         }
-        _19_li = (_19_li) + (BigInteger.One);
+        _20_li = (_20_li) + (BigInteger.One);
       }
-      _19_li = BigInteger.Zero;
-      while ((_19_li) < (new BigInteger((_18_lostQueries).Count))) {
-        Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _20_gapRetrievals;
-        Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _out3;
-        _out3 = (this).FillGap((_18_lostQueries).Select(_19_li));
-        _20_gapRetrievals = _out3;
-        _15_retrievals = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(_15_retrievals, _20_gapRetrievals);
-        _19_li = (_19_li) + (BigInteger.One);
+      _20_li = BigInteger.Zero;
+      while ((_20_li) < (new BigInteger((_19_lostQueries).Count))) {
+        Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _21_gapRetrievals;
+        Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _out4;
+        _out4 = (this).FillGap((_19_lostQueries).Select(_20_li));
+        _21_gapRetrievals = _out4;
+        _16_retrievals = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(_16_retrievals, _21_gapRetrievals);
+        _20_li = (_20_li) + (BigInteger.One);
       }
-      BigInteger _21_bi;
-      _21_bi = BigInteger.Zero;
-      while ((_21_bi) < (new BigInteger((_3_blockedCandidates).Count))) {
-        if (!((_10_oldMatchMap).Contains((_3_blockedCandidates).Select(_21_bi)))) {
-          Dafny.ISequence<BigInteger> _22_evicted;
-          Dafny.ISequence<BigInteger> _out4;
-          _out4 = (this).PickOverflowDoc((_3_blockedCandidates).Select(_21_bi));
-          _22_evicted = _out4;
-          if ((new BigInteger((_22_evicted).Count)).Sign == 1) {
-            _14_evictions = Dafny.Sequence<ThunderDbStack._IEviction>.Concat(_14_evictions, Dafny.Sequence<ThunderDbStack._IEviction>.FromElements(ThunderDbStack.Eviction.create((_3_blockedCandidates).Select(_21_bi), (_22_evicted).Select(BigInteger.Zero))));
+      BigInteger _22_bi;
+      _22_bi = BigInteger.Zero;
+      while ((_22_bi) < (new BigInteger((_3_blockedCandidates).Count))) {
+        if (!((_11_oldMatchMap).Contains((_3_blockedCandidates).Select(_22_bi)))) {
+          Dafny.ISequence<BigInteger> _23_evicted;
+          Dafny.ISequence<BigInteger> _out5;
+          _out5 = (this).PickOverflowDoc((_3_blockedCandidates).Select(_22_bi));
+          _23_evicted = _out5;
+          if ((new BigInteger((_23_evicted).Count)).Sign == 1) {
+            _15_evictions = Dafny.Sequence<ThunderDbStack._IEviction>.Concat(_15_evictions, Dafny.Sequence<ThunderDbStack._IEviction>.FromElements(ThunderDbStack.Eviction.create((_3_blockedCandidates).Select(_22_bi), (_23_evicted).Select(BigInteger.Zero))));
+            bool _24_cancelledPending;
+            bool _out6;
+            _out6 = (this).CancelPendingForQuery((_23_evicted).Select(BigInteger.Zero), (_3_blockedCandidates).Select(_22_bi));
+            _24_cancelledPending = _out6;
+            if (_24_cancelledPending) {
+              Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _25_replacement;
+              Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _out7;
+              _out7 = (this).FillGap((_3_blockedCandidates).Select(_22_bi));
+              _25_replacement = _out7;
+              _16_retrievals = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(_16_retrievals, _25_replacement);
+            }
           }
         }
-        _21_bi = (_21_bi) + (BigInteger.One);
+        _22_bi = (_22_bi) + (BigInteger.One);
       }
-      ThunderDbStack._IMatchPayload _23_payload;
-      _23_payload = ThunderDbStack.MatchPayload.create(id, oldState, newState, _16_matchesOld, _17_matchesNew, _14_evictions);
-      if ((ThunderDbStack.__default.HasAnyMatchChange(_23_payload)) && ((new BigInteger((_15_retrievals).Count)).Sign == 1)) {
-        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_MatchEvent(_23_payload), ThunderDbStack.DownstreamEvent.create_RetrievalEvent(_15_retrievals));
-      } else if (ThunderDbStack.__default.HasAnyMatchChange(_23_payload)) {
-        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_MatchEvent(_23_payload));
-      } else if ((new BigInteger((_15_retrievals).Count)).Sign == 1) {
-        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_RetrievalEvent(_15_retrievals));
+      (this).ResolvePendingForDoc(id);
+      ThunderDbStack._IMatchPayload _26_payload;
+      _26_payload = ThunderDbStack.MatchPayload.create(id, oldState, newState, _17_matchesOld, _18_matchesNew, _15_evictions);
+      if ((ThunderDbStack.__default.HasAnyMatchChange(_26_payload)) && ((new BigInteger((_16_retrievals).Count)).Sign == 1)) {
+        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_MatchEvent(_26_payload), ThunderDbStack.DownstreamEvent.create_RetrievalEvent(_16_retrievals));
+      } else if (ThunderDbStack.__default.HasAnyMatchChange(_26_payload)) {
+        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_MatchEvent(_26_payload));
+      } else if ((new BigInteger((_16_retrievals).Count)).Sign == 1) {
+        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_RetrievalEvent(_16_retrievals));
       } else {
         events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements();
       }
       return events;
     }
-    public void ProcessItem(ThunderDbStack._IStreamItem item, out Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events, out BigInteger queryId)
+    public Dafny.ISequence<ThunderDbStack._IDownstreamEvent> ApplyDocChange(BigInteger id, ThunderDbStack._IMaybeDocState oldState, ThunderDbStack._IMaybeDocState newState)
+    {
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Empty;
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out0;
+      _out0 = (this).ApplyDocChangeDeferred(id, oldState, newState);
+      events = _out0;
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _0_retrievalEvents;
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out1;
+      _out1 = (this).DrainPendingRetrievals();
+      _0_retrievalEvents = _out1;
+      events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Concat(events, _0_retrievalEvents);
+      return events;
+    }
+    public void ProcessItemDeferred(ThunderDbStack._IStreamItem item, out Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events, out BigInteger queryId)
     {
       events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Empty;
       queryId = BigInteger.Zero;
@@ -12685,7 +13410,7 @@ namespace ThunderDbMutable {
           {
             BigInteger _out0;
             Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out1;
-            (this).AddQuery(_1_spec, out _out0, out _out1);
+            (this).AddQueryDeferred(_1_spec, out _out0, out _out1);
             queryId = _out0;
             events = _out1;
           }
@@ -12697,7 +13422,7 @@ namespace ThunderDbMutable {
           BigInteger _2_id = _source0.dtor_id;
           {
             Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out2;
-            _out2 = (this).RemoveQuery(_2_id);
+            _out2 = (this).RemoveQueryDeferred(_2_id);
             events = _out2;
           }
           goto after_match0;
@@ -12709,11 +13434,26 @@ namespace ThunderDbMutable {
         ThunderDbStack._IMaybeDocState _5_newState = _source0.dtor_newState;
         {
           Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out3;
-          _out3 = (this).ApplyDocChange(_3_id, _4_oldState, _5_newState);
+          _out3 = (this).ApplyDocChangeDeferred(_3_id, _4_oldState, _5_newState);
           events = _out3;
         }
       }
     after_match0: ;
+    }
+    public void ProcessItem(ThunderDbStack._IStreamItem item, out Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events, out BigInteger queryId)
+    {
+      events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Empty;
+      queryId = BigInteger.Zero;
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out0;
+      BigInteger _out1;
+      (this).ProcessItemDeferred(item, out _out0, out _out1);
+      events = _out0;
+      queryId = _out1;
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _0_retrievalEvents;
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out2;
+      _out2 = (this).DrainPendingRetrievals();
+      _0_retrievalEvents = _out2;
+      events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Concat(events, _0_retrievalEvents);
     }
   }
 } // end of namespace ThunderDbMutable

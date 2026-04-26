@@ -21,6 +21,36 @@ This summary originally captured the failed pre-rewrite attempts. The mutable en
 - Benchmark-like release runtime improved from roughly `1.86s` to `1.30s` on the same event totals.
 - Observable metrics remain unchanged: events=`1651`, matches=`1502`, evictions=`4159`, retrievalBatches=`1344`, retrievalDocs=`7381`.
 
+### Pending Lifecycle Port
+
+The mutable engine now contains explicit pending registries and a deferred execution surface:
+
+- `pendingByQuery`
+- `pendingByDoc`
+- ordered `pendingPairs`
+- `AddQueryDeferred`
+- `ApplyDocChangeDeferred`
+- `ProcessItemDeferred`
+- `DrainPendingRetrievals`
+
+This is the first real port of the TS pending/cancel/resolve bookkeeping into Dafny instead of just mirroring the counter update logic.
+
+### Measurement Of Deferred Drain
+
+The first deferred execution experiment drains once per tick instead of after every item.
+
+Measured result on the rebuilt current code:
+
+- Fast driver immediate: `1510.48 ms`
+- Fast driver grouped per-tick drain: `2120.79 ms`
+
+Canonical harness summaries:
+
+- Immediate: events=`1651`, matches=`1502`, evictions=`4159`, retrievalBatches=`1344`, retrievalDocs=`7381`
+- Grouped per-tick drain: events=`1683`, matches=`1502`, evictions=`4158`, retrievalBatches=`31`, retrievalDocs=`3203`
+
+So the pending layer exists, and grouped delivery improved the deferred experiment, but the current per-tick strategy is still slower and not yet semantically identical to the compatibility path.
+
 ### Updated Conclusion
 
 The important lesson from the earlier failed attempts still holds: micro-optimizations alone were not enough. The difference is that the necessary algorithmic rewrite has now been done for the mutable update path, and it produced a real speedup. The remaining work is no longer "find any architectural fix"; it is reducing the still-large constant-factor/runtime gap that remains after the rewrite.

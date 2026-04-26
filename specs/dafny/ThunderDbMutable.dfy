@@ -10,6 +10,7 @@ module ThunderDbMutable {
 
   datatype QueryIndexEntry = QueryIndexEntry(id: QueryId, baseScore: int, maxCap: Score)
   datatype QueryState = QueryState(spec: QuerySpec, currentMatches: nat, baseScore: int)
+  datatype PendingRetrieval = PendingRetrieval(docId: DocId, queryId: QueryId)
 
   datatype QueryTree =
     | QEmpty
@@ -69,6 +70,24 @@ module ThunderDbMutable {
   {
     if |right| == 0 then left
     else UniqueConcatQueryIds(AppendQueryIdUnique(left, right[0]), right[1..])
+  }
+
+  function RemoveQueryId(ids: seq<QueryId>, id: QueryId): seq<QueryId> {
+    if |ids| == 0 then []
+    else if ids[0] == id then ids[1..]
+    else [ids[0]] + RemoveQueryId(ids[1..], id)
+  }
+
+  function RemovePendingRetrieval(pending: seq<PendingRetrieval>, docId: DocId, queryId: QueryId): seq<PendingRetrieval> {
+    if |pending| == 0 then []
+    else if pending[0].docId == docId && pending[0].queryId == queryId then pending[1..]
+    else [pending[0]] + RemovePendingRetrieval(pending[1..], docId, queryId)
+  }
+
+  function RemovePendingRetrievalsForDoc(pending: seq<PendingRetrieval>, docId: DocId): seq<PendingRetrieval> {
+    if |pending| == 0 then []
+    else if pending[0].docId == docId then RemovePendingRetrievalsForDoc(pending[1..], docId)
+    else [pending[0]] + RemovePendingRetrievalsForDoc(pending[1..], docId)
   }
 
   function QueryNodeCount(tree: QueryTree): nat {
@@ -319,6 +338,10 @@ module ThunderDbMutable {
     var docIds: seq<DocId>
     var queryIndex: MutableQueryIndex
     var queries: map<QueryId, QueryState>
+    var pendingByQuery: map<QueryId, seq<DocId>>
+    var pendingByDoc: map<DocId, seq<QueryId>>
+    var pendingDocs: seq<DocId>
+    var pendingPairs: seq<PendingRetrieval>
     var nextQueryId: QueryId
 
     constructor ()
@@ -326,6 +349,10 @@ module ThunderDbMutable {
       ensures this.store == map[]
       ensures this.docIds == []
       ensures this.queries == map[]
+      ensures this.pendingByQuery == map[]
+      ensures this.pendingByDoc == map[]
+      ensures this.pendingDocs == []
+      ensures this.pendingPairs == []
       ensures this.nextQueryId == 1
       ensures this.Ready()
     {
@@ -334,6 +361,10 @@ module ThunderDbMutable {
       this.docIds := [];
       this.queryIndex := new MutableQueryIndex();
       this.queries := map[];
+      this.pendingByQuery := map[];
+      this.pendingByDoc := map[];
+      this.pendingDocs := [];
+      this.pendingPairs := [];
       this.nextQueryId := 1;
     }
 
@@ -349,6 +380,174 @@ module ThunderDbMutable {
     {
       var cutoff: int := TreapRank(this.docs, value, SomeDoc(docId));
       ids := this.queryIndex.CollectForValue(value, cutoff);
+    }
+
+    method RegisterPendingDocQuery(docId: DocId, queryId: QueryId)
+      requires this.Ready()
+      ensures this.Ready()
+      modifies this
+      decreases *
+    {
+      var docsForQuery := if queryId in this.pendingByQuery then this.pendingByQuery[queryId] else [];
+      docsForQuery := AppendDocIdIfMissing(docsForQuery, docId);
+      this.pendingByQuery := this.pendingByQuery[queryId := docsForQuery];
+
+      var queriesForDoc := if docId in this.pendingByDoc then this.pendingByDoc[docId] else [];
+      queriesForDoc := AppendQueryIdUnique(queriesForDoc, queryId);
+      this.pendingByDoc := this.pendingByDoc[docId := queriesForDoc];
+      this.pendingDocs := AppendDocIdIfMissing(this.pendingDocs, docId);
+      this.pendingPairs := this.pendingPairs + [PendingRetrieval(docId, queryId)];
+    }
+
+    method RemovePendingDocQuery(docId: DocId, queryId: QueryId) returns (removed: bool)
+      requires this.Ready()
+      ensures this.Ready()
+      modifies this
+      decreases *
+    {
+      removed := false;
+      if queryId in this.pendingByQuery {
+        var docsForQuery := this.pendingByQuery[queryId];
+        if ContainsId(docsForQuery, docId) {
+          removed := true;
+          var nextDocsForQuery := RemoveDocId(docsForQuery, docId);
+          if |nextDocsForQuery| == 0 {
+            this.pendingByQuery := map key | key in this.pendingByQuery && key != queryId :: this.pendingByQuery[key];
+          } else {
+            this.pendingByQuery := this.pendingByQuery[queryId := nextDocsForQuery];
+          }
+        }
+      }
+      if docId in this.pendingByDoc {
+        var queriesForDoc := this.pendingByDoc[docId];
+        if ContainsQueryId(queriesForDoc, queryId) {
+          var nextQueriesForDoc := RemoveQueryId(queriesForDoc, queryId);
+          if |nextQueriesForDoc| == 0 {
+            this.pendingByDoc := map key | key in this.pendingByDoc && key != docId :: this.pendingByDoc[key];
+            this.pendingDocs := RemoveDocId(this.pendingDocs, docId);
+          } else {
+            this.pendingByDoc := this.pendingByDoc[docId := nextQueriesForDoc];
+          }
+        }
+      }
+      if removed {
+        this.pendingPairs := RemovePendingRetrieval(this.pendingPairs, docId, queryId);
+      }
+    }
+
+    method ResolvePendingForDoc(docId: DocId)
+      requires this.Ready()
+      ensures this.Ready()
+      modifies this
+      decreases *
+    {
+      if docId in this.pendingByDoc {
+        var queriesForDoc := this.pendingByDoc[docId];
+        var i := 0;
+        while i < |queriesForDoc|
+          invariant 0 <= i <= |queriesForDoc|
+          invariant SumConsistent(this.docs)
+        {
+          if queriesForDoc[i] in this.pendingByQuery {
+            var docsForQuery := this.pendingByQuery[queriesForDoc[i]];
+            var nextDocsForQuery := RemoveDocId(docsForQuery, docId);
+            if |nextDocsForQuery| == 0 {
+              this.pendingByQuery := map key | key in this.pendingByQuery && key != queriesForDoc[i] :: this.pendingByQuery[key];
+            } else {
+              this.pendingByQuery := this.pendingByQuery[queriesForDoc[i] := nextDocsForQuery];
+            }
+          }
+          i := i + 1;
+        }
+        this.pendingByDoc := map key | key in this.pendingByDoc && key != docId :: this.pendingByDoc[key];
+        this.pendingDocs := RemoveDocId(this.pendingDocs, docId);
+        this.pendingPairs := RemovePendingRetrievalsForDoc(this.pendingPairs, docId);
+      }
+    }
+
+    method CancelPendingForQuery(docId: DocId, queryId: QueryId) returns (cancelled: bool)
+      requires this.Ready()
+      ensures this.Ready()
+      modifies this
+      decreases *
+    {
+      cancelled := this.RemovePendingDocQuery(docId, queryId);
+      if cancelled && queryId in this.queries {
+        var state := this.queries[queryId];
+        if state.currentMatches > 0 {
+          this.queries := this.queries[queryId := QueryState(state.spec, state.currentMatches - 1, state.baseScore)];
+        }
+      }
+    }
+
+    method DrainPendingRetrievals() returns (events: seq<DownstreamEvent>)
+      requires this.Ready()
+      ensures this.Ready()
+      modifies this
+      decreases *
+    {
+      events := [];
+      var queued := this.pendingPairs;
+      var retrievals: seq<RetrievalDoc> := [];
+      var i := 0;
+      while i < |queued|
+        invariant 0 <= i <= |queued|
+        invariant SumConsistent(this.docs)
+      {
+        var docId := queued[i].docId;
+        var queryId := queued[i].queryId;
+        if docId in this.pendingByDoc && ContainsQueryId(this.pendingByDoc[docId], queryId) {
+          match LookupState(this.store, docId)
+          case NoState => {
+          }
+          case HasState(docState) => {
+            retrievals := retrievals + [RetrievalDoc(docId, docState, [queryId])];
+          }
+        }
+        i := i + 1;
+      }
+      this.pendingByQuery := map[];
+      this.pendingByDoc := map[];
+      this.pendingDocs := [];
+      this.pendingPairs := [];
+      if |retrievals| > 0 {
+        events := [RetrievalEvent(retrievals)];
+      }
+    }
+
+    method DrainPendingRetrievalsGrouped() returns (events: seq<DownstreamEvent>)
+      requires this.Ready()
+      ensures this.Ready()
+      modifies this
+      decreases *
+    {
+      events := [];
+      var queued := this.pendingDocs;
+      var retrievals: seq<RetrievalDoc> := [];
+      var i := 0;
+      while i < |queued|
+        invariant 0 <= i <= |queued|
+        invariant SumConsistent(this.docs)
+      {
+        var docId := queued[i];
+        if docId in this.pendingByDoc {
+          var queriesForDoc := this.pendingByDoc[docId];
+          match LookupState(this.store, docId)
+          case NoState => {
+          }
+          case HasState(docState) => {
+            retrievals := retrievals + [RetrievalDoc(docId, docState, queriesForDoc)];
+          }
+        }
+        i := i + 1;
+      }
+      this.pendingByQuery := map[];
+      this.pendingByDoc := map[];
+      this.pendingDocs := [];
+      this.pendingPairs := [];
+      if |retrievals| > 0 {
+        events := [RetrievalEvent(retrievals)];
+      }
     }
 
     method QueryVisible(id: QueryId) returns (visible: seq<DocId>)
@@ -407,17 +606,26 @@ module ThunderDbMutable {
       if queryId in this.queries {
         var state := this.queries[queryId];
         if state.currentMatches < state.spec.limit {
-          var candidate := this.QueryDocAtOffset(state, state.currentMatches);
-          match candidate
-          case NoDoc => {
-          }
-          case SomeDoc(docId) => {
-            match LookupState(this.store, docId)
-            case NoState => {
+          var offset := state.currentMatches;
+          var found := false;
+          while !found
+            invariant SumConsistent(this.docs)
+          {
+            var candidate := this.QueryDocAtOffset(state, offset);
+            match candidate
+            case NoDoc => {
+              found := true;
             }
-            case HasState(docState) => {
-              this.queries := this.queries[queryId := QueryState(state.spec, state.currentMatches + 1, state.baseScore)];
-              retrievals := [RetrievalDoc(docId, docState, [queryId])];
+            case SomeDoc(docId) => {
+              var alreadyPending := queryId in this.pendingByQuery && ContainsId(this.pendingByQuery[queryId], docId);
+              if alreadyPending {
+                offset := offset + 1;
+              } else {
+                this.queries := this.queries[queryId := QueryState(state.spec, state.currentMatches + 1, state.baseScore)];
+                this.RegisterPendingDocQuery(docId, queryId);
+                retrievals := [];
+                found := true;
+              }
             }
           }
         }
@@ -460,7 +668,7 @@ module ThunderDbMutable {
       }
     }
 
-    method AddQuery(spec: QuerySpec) returns (queryId: QueryId, events: seq<DownstreamEvent>)
+    method AddQueryDeferred(spec: QuerySpec) returns (queryId: QueryId, events: seq<DownstreamEvent>)
       requires this.Ready()
       ensures this.Ready()
       modifies this, this.queryIndex
@@ -474,15 +682,29 @@ module ThunderDbMutable {
       var accAtKey := this.queryIndex.AccumulatedAddAtKey(spec.minScore);
       var baseScore := effectiveScore - accAtKey;
       this.queries := this.queries[queryId := QueryState(spec, |visible|, baseScore)];
-      var retrievals := BuildAddQueryRetrievals(visible, this.store, queryId);
-      if |retrievals| == 0 {
-        events := [];
-      } else {
-        events := [RetrievalEvent(retrievals)];
+      var i := 0;
+      while i < |visible|
+        invariant 0 <= i <= |visible|
+        invariant SumConsistent(this.docs)
+      {
+        this.RegisterPendingDocQuery(visible[i], queryId);
+        i := i + 1;
       }
+      events := [];
     }
 
-    method RemoveQuery(id: QueryId) returns (events: seq<DownstreamEvent>)
+    method AddQuery(spec: QuerySpec) returns (queryId: QueryId, events: seq<DownstreamEvent>)
+      requires this.Ready()
+      ensures this.Ready()
+      modifies this, this.queryIndex
+      decreases *
+    {
+      queryId, events := this.AddQueryDeferred(spec);
+      var retrievalEvents := this.DrainPendingRetrievals();
+      events := events + retrievalEvents;
+    }
+
+    method RemoveQueryDeferred(id: QueryId) returns (events: seq<DownstreamEvent>)
       requires this.Ready()
       ensures this.Ready()
       modifies this, this.queryIndex
@@ -492,11 +714,33 @@ module ThunderDbMutable {
         var state := this.queries[id];
         this.queryIndex.Remove(state.spec.minScore, id, state.baseScore, state.spec.maxScore);
         this.queries := map key | key in this.queries && key != id :: this.queries[key];
+        if id in this.pendingByQuery {
+          var pendingDocs := this.pendingByQuery[id];
+          var i := 0;
+          while i < |pendingDocs|
+            invariant 0 <= i <= |pendingDocs|
+            invariant SumConsistent(this.docs)
+          {
+            var ignored := this.RemovePendingDocQuery(pendingDocs[i], id);
+            i := i + 1;
+          }
+        }
       }
       events := [];
     }
 
-    method ApplyDocChange(id: DocId, oldState: MaybeDocState, newState: MaybeDocState) returns (events: seq<DownstreamEvent>)
+    method RemoveQuery(id: QueryId) returns (events: seq<DownstreamEvent>)
+      requires this.Ready()
+      ensures this.Ready()
+      modifies this, this.queryIndex
+      decreases *
+    {
+      events := this.RemoveQueryDeferred(id);
+      var retrievalEvents := this.DrainPendingRetrievals();
+      events := events + retrievalEvents;
+    }
+
+    method ApplyDocChangeDeferred(id: DocId, oldState: MaybeDocState, newState: MaybeDocState) returns (events: seq<DownstreamEvent>)
       requires this.Ready()
       ensures this.Ready()
       modifies this, this.queryIndex
@@ -506,6 +750,7 @@ module ThunderDbMutable {
       if oldState.HasState? && newState.HasState? && GetScore(oldState.state) == GetScore(newState.state) {
         var covering := this.CollectQueriesForValue(GetScore(oldState.state), id);
         this.store := this.store[id := newState.state];
+        this.ResolvePendingForDoc(id);
         if |covering| > 0 {
           events := [MatchEvent(MatchPayload(id, oldState, newState, covering, covering, []))];
         }
@@ -551,7 +796,9 @@ module ThunderDbMutable {
         {
           if newMatches[ni] in this.queries {
             var state := this.queries[newMatches[ni]];
-            if state.currentMatches < state.spec.limit {
+            var consumedPending := this.RemovePendingDocQuery(id, newMatches[ni]);
+            if consumedPending {
+            } else if state.currentMatches < state.spec.limit {
               this.queries := this.queries[newMatches[ni] := QueryState(state.spec, state.currentMatches + 1, state.baseScore)];
             } else {
               blockedCandidates := blockedCandidates + [newMatches[ni]];
@@ -617,10 +864,17 @@ module ThunderDbMutable {
           var evicted := this.PickOverflowDoc(blockedCandidates[bi]);
           if |evicted| > 0 {
             evictions := evictions + [Eviction(blockedCandidates[bi], evicted[0])];
+            var cancelledPending := this.CancelPendingForQuery(evicted[0], blockedCandidates[bi]);
+            if cancelledPending {
+              var replacement := this.FillGap(blockedCandidates[bi]);
+              retrievals := retrievals + replacement;
+            }
           }
         }
         bi := bi + 1;
       }
+
+      this.ResolvePendingForDoc(id);
 
       var payload := MatchPayload(id, oldState, newState, matchesOld, matchesNew, evictions);
       if HasAnyMatchChange(payload) && |retrievals| > 0 {
@@ -634,7 +888,18 @@ module ThunderDbMutable {
       }
     }
 
-    method ProcessItem(item: StreamItem) returns (events: seq<DownstreamEvent>, queryId: QueryId)
+    method ApplyDocChange(id: DocId, oldState: MaybeDocState, newState: MaybeDocState) returns (events: seq<DownstreamEvent>)
+      requires this.Ready()
+      ensures this.Ready()
+      modifies this, this.queryIndex
+      decreases *
+    {
+      events := this.ApplyDocChangeDeferred(id, oldState, newState);
+      var retrievalEvents := this.DrainPendingRetrievals();
+      events := events + retrievalEvents;
+    }
+
+    method ProcessItemDeferred(item: StreamItem) returns (events: seq<DownstreamEvent>, queryId: QueryId)
       requires this.Ready()
       ensures this.Ready()
       modifies this, this.queryIndex
@@ -647,14 +912,25 @@ module ThunderDbMutable {
         this.SeedDocs(docs);
       }
       case QueryAddItem(spec) => {
-        queryId, events := this.AddQuery(spec);
+        queryId, events := this.AddQueryDeferred(spec);
       }
       case QueryRemoveItem(id) => {
-        events := this.RemoveQuery(id);
+        events := this.RemoveQueryDeferred(id);
       }
       case DocChangeItem(id, oldState, newState) => {
-        events := this.ApplyDocChange(id, oldState, newState);
+        events := this.ApplyDocChangeDeferred(id, oldState, newState);
       }
+    }
+
+    method ProcessItem(item: StreamItem) returns (events: seq<DownstreamEvent>, queryId: QueryId)
+      requires this.Ready()
+      ensures this.Ready()
+      modifies this, this.queryIndex
+      decreases *
+    {
+      events, queryId := this.ProcessItemDeferred(item);
+      var retrievalEvents := this.DrainPendingRetrievals();
+      events := events + retrievalEvents;
     }
   }
 }

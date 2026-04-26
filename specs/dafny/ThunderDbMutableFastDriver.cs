@@ -12,6 +12,11 @@ internal static class Program
     private const int Multiplier = 48271;
 
     private readonly record struct Summary(long EventsProcessed, long MatchEvents, long Evictions, long RetrievalBatches, long RetrievalDocs);
+    private enum DrainMode
+    {
+        Immediate,
+        PerTick,
+    }
 
     private static int NextState(int state)
     {
@@ -61,7 +66,7 @@ internal static class Program
         return summary;
     }
 
-    private static void Main()
+    private static Summary RunScenario(DrainMode drainMode, out double elapsedMs)
     {
         const int seed = 123;
         const int documents = 800;
@@ -105,8 +110,20 @@ internal static class Program
             int width = 1 + (NextRand(ref rng) % (range / 2 + 1));
             int minScore = NextRand(ref rng) % range;
             int maxScore = minScore + width;
-            engine.AddQuery(QuerySpec(minScore, maxScore, queryLimit), out _, out var events);
+            Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events;
+            if (drainMode == DrainMode.Immediate)
+            {
+                engine.AddQuery(QuerySpec(minScore, maxScore, queryLimit), out _, out events);
+            }
+            else
+            {
+                engine.AddQueryDeferred(QuerySpec(minScore, maxScore, queryLimit), out _, out events);
+            }
             summary = UpdateSummary(summary, events);
+        }
+        if (drainMode != DrainMode.Immediate)
+        {
+            summary = UpdateSummary(summary, engine.DrainPendingRetrievals());
         }
 
         for (int tick = 0; tick < ticks; tick++)
@@ -122,7 +139,9 @@ internal static class Program
                 int newScore = NextRand(ref rng) % range;
                 int oldScore = docStates[docId];
                 docStates[docId] = newScore;
-                var events = engine.ApplyDocChange(BI(docId), HasState(oldScore), HasState(newScore));
+                var events = drainMode == DrainMode.Immediate
+                    ? engine.ApplyDocChange(BI(docId), HasState(oldScore), HasState(newScore))
+                    : engine.ApplyDocChangeDeferred(BI(docId), HasState(oldScore), HasState(newScore));
                 summary = UpdateSummary(summary, events);
             }
 
@@ -133,7 +152,9 @@ internal static class Program
                 docStates[docId] = newScore;
                 docIndex[docId] = docOrder.Count;
                 docOrder.Add(docId);
-                var events = engine.ApplyDocChange(BI(docId), NoState(), HasState(newScore));
+                var events = drainMode == DrainMode.Immediate
+                    ? engine.ApplyDocChange(BI(docId), NoState(), HasState(newScore))
+                    : engine.ApplyDocChangeDeferred(BI(docId), NoState(), HasState(newScore));
                 summary = UpdateSummary(summary, events);
             }
 
@@ -156,13 +177,40 @@ internal static class Program
                 docIndex.Remove(docId);
                 docStates.Remove(docId);
 
-                var events = engine.ApplyDocChange(BI(docId), HasState(oldScore), NoState());
+                var events = drainMode == DrainMode.Immediate
+                    ? engine.ApplyDocChange(BI(docId), HasState(oldScore), NoState())
+                    : engine.ApplyDocChangeDeferred(BI(docId), HasState(oldScore), NoState());
                 summary = UpdateSummary(summary, events);
+            }
+
+            if (drainMode != DrainMode.Immediate)
+            {
+                summary = UpdateSummary(summary, engine.DrainPendingRetrievals());
             }
         }
 
+        if (drainMode != DrainMode.Immediate)
+        {
+            summary = UpdateSummary(summary, engine.DrainPendingRetrievals());
+        }
+
         stopwatch.Stop();
-        Console.WriteLine($"scenario whole-stack-benchmark-like-mutable-fast done: events={summary.EventsProcessed}, matches={summary.MatchEvents}, evictions={summary.Evictions}, retrievalBatches={summary.RetrievalBatches}, retrievalDocs={summary.RetrievalDocs}");
-        Console.WriteLine($"elapsed_ms={stopwatch.Elapsed.TotalMilliseconds:F2}");
+        elapsedMs = stopwatch.Elapsed.TotalMilliseconds;
+        return summary;
+    }
+
+    private static void PrintResult(string name, Summary summary, double elapsedMs)
+    {
+        Console.WriteLine($"scenario {name} done: events={summary.EventsProcessed}, matches={summary.MatchEvents}, evictions={summary.Evictions}, retrievalBatches={summary.RetrievalBatches}, retrievalDocs={summary.RetrievalDocs}");
+        Console.WriteLine($"elapsed_ms={elapsedMs:F2}");
+    }
+
+    private static void Main()
+    {
+        var immediate = RunScenario(DrainMode.Immediate, out var immediateElapsedMs);
+        PrintResult("whole-stack-benchmark-like-mutable-fast-immediate", immediate, immediateElapsedMs);
+
+        var perTick = RunScenario(DrainMode.PerTick, out var perTickElapsedMs);
+        PrintResult("whole-stack-benchmark-like-mutable-fast-per-tick", perTick, perTickElapsedMs);
     }
 }
