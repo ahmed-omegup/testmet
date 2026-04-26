@@ -393,5 +393,18 @@ module CleanLimitEngine {
       var retrievalEvents := this.DrainPendingRetrievalsGrouped();
       events := events + retrievalEvents;
     }
+
+    method ProcessItemWhenReady(item: StreamItem) returns (events: seq<DownstreamEvent>, queryId: QueryId)
+      ensures old(this.Ready()) ==> this.Ready()
+      modifies this
+      decreases *
+    {
+      if this.Ready() {
+        events, queryId := this.ProcessItem(item);
+      } else {
+        events := [];
+        queryId := 0;
+      }
+    }
   }
 }

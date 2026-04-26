@@ -1,4 +1,4 @@
-// Dafny program CleanLimitParity.dfy compiled into C#
+// Dafny program CleanLimitPerf.dfy compiled into C#
 // To recompile, you will need the libraries
 //     System.Runtime.Numerics.dll System.Collections.Immutable.dll
 // but the 'dotnet' tool in .NET should pick those up automatically.
@@ -9,11 +9,11 @@ using System;
 using System.Numerics;
 using System.Collections;
 [assembly: DafnyAssembly.DafnySourceAttribute(@"// dafny 4.11.0.0
-// Command-line arguments: run specs/clean-dafny/CleanLimitParity.dfy --no-verify --allow-warnings
-// CleanLimitParity.dfy
+// Command-line arguments: run specs/clean-dafny/CleanLimitPerf.dfy --no-verify --allow-warnings
+// CleanLimitPerf.dfy
 
 
-module CleanLimitParity {
+module CleanLimitPerf {
   const Modulus: int := 2147483647
   const Multiplier: int := 48271
 
@@ -37,156 +37,15 @@ module CleanLimitParity {
     value := nextState;
   }
 
-  function InsertQueryIdSorted(ids: seq<QueryId>, id: QueryId): seq<QueryId>
-    decreases ids, id
-  {
-    if |ids| == 0 then
-      [id]
-    else if id == ids[0] then
-      ids
-    else if id < ids[0] then
-      [id] + ids
-    else
-      [ids[0]] + InsertQueryIdSorted(ids[1..], id)
-  }
-
-  function NormalizeQueryIds(ids: seq<QueryId>): seq<QueryId>
-    decreases |ids|
-  {
-    if |ids| == 0 then
-      []
-    else
-      InsertQueryIdSorted(NormalizeQueryIds(ids[1..]), ids[0])
-  }
-
-  function NormalizeRetrievalDoc(doc: RetrievalDoc): RetrievalDoc
-    decreases doc
-  {
-    RetrievalDoc(doc.docId, doc.state, NormalizeQueryIds(doc.queries))
-  }
-
-  function InsertRetrievalDocSorted(docs: seq<RetrievalDoc>, doc: RetrievalDoc): seq<RetrievalDoc>
-    decreases docs, doc
-  {
-    if |docs| == 0 then
-      [NormalizeRetrievalDoc(doc)]
-    else if doc.docId < docs[0].docId then
-      [NormalizeRetrievalDoc(doc)] + docs
-    else if doc.docId == docs[0].docId then
-      [RetrievalDoc(doc.docId, docs[0].state, NormalizeQueryIds(docs[0].queries + doc.queries))] + docs[1..]
-    else
-      [docs[0]] + InsertRetrievalDocSorted(docs[1..], doc)
-  }
-
-  function NormalizeRetrievalDocs(docs: seq<RetrievalDoc>): seq<RetrievalDoc>
-    decreases |docs|
-  {
-    if |docs| == 0 then
-      []
-    else
-      InsertRetrievalDocSorted(NormalizeRetrievalDocs(docs[1..]), docs[0])
-  }
-
-  function NormalizeEvents(events: seq<DownstreamEvent>): seq<DownstreamEvent>
-    decreases |events|
-  {
-    if |events| == 0 then
-      []
-    else
-      match events[0] case MatchEvent(payload) => [MatchEvent(payload)] + NormalizeEvents(events[1..]) case RetrievalEvent(docs) => [RetrievalEvent(NormalizeRetrievalDocs(docs))] + NormalizeEvents(events[1..])
-  }
-
-  method NewReadyEngine() returns (engine: CleanEngine)
-    ensures engine.Ready()
-    ensures fresh(engine)
-  {
-    engine := new CleanEngine();
-  }
-
-  method CheckState(engine: CleanEngine, name: string, opIndex: nat, item: StreamItem, state: EngineState, functionalEvents: seq<DownstreamEvent>, cleanEvents: seq<DownstreamEvent>, functionalQueryId: QueryId, cleanQueryId: QueryId)
-    decreases *
-  {
-    var mismatch := !engine.Ready() || functionalQueryId != cleanQueryId || NormalizeEvents(functionalEvents) != NormalizeEvents(cleanEvents) || state.store != engine.store || state.docIds != engine.docIds || Entries(state.treap) != Entries(engine.docs) || state.nextQueryId != engine.nextQueryId || |state.queries| != |engine.queries|;
-    if mismatch {
-      print ""scenario "";
-      print name;
-      print "" mismatch at op "";
-      print opIndex;
-      print "" item="";
-      print item;
-      print ""\nfunctional queryId="";
-      print functionalQueryId;
-      print "", clean queryId="";
-      print cleanQueryId;
-      print ""\nfunctional events="";
-      print functionalEvents;
-      print ""\nclean events="";
-      print cleanEvents;
-      print ""\nfunctional store="";
-      print state.store;
-      print ""\nclean store="";
-      print engine.store;
-      print ""\nfunctional entries="";
-      print Entries(state.treap);
-      print ""\nclean entries="";
-      print Entries(engine.docs);
-      print ""\n"";
-    }
-    if engine.Ready() {
-      var i := 0;
-      while i < |state.queries|
-        invariant 0 <= i <= |state.queries|
-        decreases |state.queries| - i
-      {
-        var query := state.queries[i];
-        var cleanVisible := engine.QueryVisible(query.id);
-        if !(query.id in engine.queries) || engine.queries[query.id].spec != query.spec || cleanVisible != query.visible {
-          print ""scenario "";
-          print name;
-          print "" query mismatch at op "";
-          print opIndex;
-          print "" item="";
-          print item;
-          print "" query="";
-          print query.id;
-          print ""\nfunctional visible="";
-          print query.visible;
-          print ""\nclean visible="";
-          print cleanVisible;
-          print ""\nfunctional spec="";
-          print query.spec;
-          print ""\nclean spec="";
-          if query.id in engine.queries {
-            print engine.queries[query.id].spec;
-          } else {
-            print ""<missing>"";
-          }
-          print ""\n"";
-          mismatch := true;
-        }
-        i := i + 1;
-      }
-    }
-    if mismatch {
-      expect false, ""expectation violation"";
-    }
-  }
-
   method RunScenario(name: string, seed: int, documents: nat, customers: nat, ticks: nat, updatesPerTick: nat, insertsPerTick: nat, deletesPerTick: nat, queryLimit: nat, density: nat)
     decreases *
   {
-    var engine := NewReadyEngine();
-    var state := EmptyState();
+    var engine: CleanEngine := new CleanEngine();
     var summary := SummaryZero();
     var rng := if seed <= 0 then 1 else seed;
-    var seedDocs: seq<SeedDoc> := [];
+    var seedDocs := new SeedDoc[documents];
     var nextDocId := documents;
     var range := if density == 0 then 1 else documents / density + 1;
-    var opIndex: nat := 0;
-    if !engine.Ready() {
-      expect false, ""expectation violation"";
-      return;
-    }
     var i := 0;
     while i < documents
       invariant 0 <= i <= documents
@@ -195,20 +54,19 @@ module CleanLimitParity {
     {
       var nextRng, scoreSeed := NextRand(rng);
       rng := nextRng;
-      seedDocs := seedDocs + [SeedDoc(i, DocState(scoreSeed % range))];
+      seedDocs[i] := SeedDoc(i, DocState(scoreSeed % range));
       i := i + 1;
     }
-    var seedItem := SeedDocsItem(seedDocs);
-    var nextState, functionalEvents, functionalQueryId := ProcessItem(state, seedItem);
-    var cleanEvents, cleanQueryId := engine.ProcessItemWhenReady(seedItem);
-    state := nextState;
-    summary := UpdateSummary(summary, functionalEvents);
-    CheckState(engine, name, opIndex, seedItem, state, functionalEvents, cleanEvents, functionalQueryId, cleanQueryId);
+    var seedEvents, ignoredSeedQueryId := engine.ProcessItemWhenReady(SeedDocsItem(seedDocs[..]));
+    summary := UpdateSummary(summary, seedEvents);
+    if !engine.Ready() {
+      expect false, ""expectation violation"";
+      return;
+    }
     i := 0;
     while i < customers
       invariant 0 <= i <= customers
       invariant rng > 0
-      invariant SumConsistent(state.treap)
       invariant engine.Ready()
       decreases customers - i
     {
@@ -219,20 +77,15 @@ module CleanLimitParity {
       var width := 1 + widthSeed % (range / 2 + 1);
       var minScore := minSeed % range;
       var maxScore := minScore + width;
-      var item := QueryAddItem(QuerySpec(minScore, maxScore, queryLimit));
-      var stateAfterAdd, functionalAddEvents, functionalAddQueryId := ProcessItem(state, item);
-      var cleanAddEvents, cleanAddQueryId := engine.ProcessItemWhenReady(item);
-      state := stateAfterAdd;
-      summary := UpdateSummary(summary, functionalAddEvents);
-      opIndex := opIndex + 1;
-      CheckState(engine, name, opIndex, item, state, functionalAddEvents, cleanAddEvents, functionalAddQueryId, cleanAddQueryId);
+      var spec := QuerySpec(minScore, maxScore, queryLimit);
+      var events, ignoredQueryId := engine.ProcessItemWhenReady(QueryAddItem(spec));
+      summary := UpdateSummary(summary, events);
       i := i + 1;
     }
     var tick := 0;
     while tick < ticks
       invariant 0 <= tick <= ticks
       invariant rng > 0
-      invariant SumConsistent(state.treap)
       invariant engine.Ready()
       decreases ticks - tick
     {
@@ -240,30 +93,25 @@ module CleanLimitParity {
       while update < updatesPerTick
         invariant 0 <= update <= updatesPerTick
         invariant rng > 0
-        invariant SumConsistent(state.treap)
         invariant engine.Ready()
         decreases updatesPerTick - update
       {
-        if |state.docIds| > 0 {
+        if |engine.docIds| > 0 {
           var nextRng3, pickSeed := NextRand(rng);
           rng := nextRng3;
           var nextRng4, scoreSeed := NextRand(rng);
           rng := nextRng4;
-          var picked := pickSeed % |state.docIds|;
-          var docId := state.docIds[picked];
-          match LookupState(state.store, docId)
+          var picked := pickSeed % |engine.docIds|;
+          var docId := engine.docIds[picked];
+          match LookupState(engine.store, docId)
           case {:split false} NoState() =>
             {
             }
           case {:split false} HasState(docState) =>
             {
-              var item := DocChangeItem(docId, HasState(docState), HasState(DocState(scoreSeed % range)));
-              var stateAfterUpdate, functionalUpdateEvents, functionalUpdateQueryId := ProcessItem(state, item);
-              var cleanUpdateEvents, cleanUpdateQueryId := engine.ProcessItemWhenReady(item);
-              state := stateAfterUpdate;
-              summary := UpdateSummary(summary, functionalUpdateEvents);
-              opIndex := opIndex + 1;
-              CheckState(engine, name, opIndex, item, state, functionalUpdateEvents, cleanUpdateEvents, functionalUpdateQueryId, cleanUpdateQueryId);
+              var updatedDocState := DocState(scoreSeed % range);
+              var events, ignoredQueryId2 := engine.ProcessItemWhenReady(DocChangeItem(docId, HasState(docState), HasState(updatedDocState)));
+              summary := UpdateSummary(summary, events);
             }
         }
         update := update + 1;
@@ -272,48 +120,37 @@ module CleanLimitParity {
       while insert < insertsPerTick
         invariant 0 <= insert <= insertsPerTick
         invariant rng > 0
-        invariant SumConsistent(state.treap)
         invariant engine.Ready()
         decreases insertsPerTick - insert
       {
         var nextRng5, scoreSeed := NextRand(rng);
         rng := nextRng5;
-        var item := DocChangeItem(nextDocId, NoState, HasState(DocState(scoreSeed % range)));
-        var stateAfterInsert, functionalInsertEvents, functionalInsertQueryId := ProcessItem(state, item);
-        var cleanInsertEvents, cleanInsertQueryId := engine.ProcessItemWhenReady(item);
-        state := stateAfterInsert;
-        summary := UpdateSummary(summary, functionalInsertEvents);
+        var newDoc := DocState(scoreSeed % range);
+        var events, ignoredQueryId3 := engine.ProcessItemWhenReady(DocChangeItem(nextDocId, NoState, HasState(newDoc)));
+        summary := UpdateSummary(summary, events);
         nextDocId := nextDocId + 1;
-        opIndex := opIndex + 1;
-        CheckState(engine, name, opIndex, item, state, functionalInsertEvents, cleanInsertEvents, functionalInsertQueryId, cleanInsertQueryId);
         insert := insert + 1;
       }
       var delete := 0;
       while delete < deletesPerTick
         invariant 0 <= delete <= deletesPerTick
         invariant rng > 0
-        invariant SumConsistent(state.treap)
         invariant engine.Ready()
         decreases deletesPerTick - delete
       {
-        if |state.docIds| > 0 {
+        if |engine.docIds| > 0 {
           var nextRng6, pickSeed := NextRand(rng);
           rng := nextRng6;
-          var picked := pickSeed % |state.docIds|;
-          var docId := state.docIds[picked];
-          match LookupState(state.store, docId)
+          var picked := pickSeed % |engine.docIds|;
+          var docId := engine.docIds[picked];
+          match LookupState(engine.store, docId)
           case {:split false} NoState() =>
             {
             }
           case {:split false} HasState(docState) =>
             {
-              var item := DocChangeItem(docId, HasState(docState), NoState);
-              var stateAfterDelete, functionalDeleteEvents, functionalDeleteQueryId := ProcessItem(state, item);
-              var cleanDeleteEvents, cleanDeleteQueryId := engine.ProcessItemWhenReady(item);
-              state := stateAfterDelete;
-              summary := UpdateSummary(summary, functionalDeleteEvents);
-              opIndex := opIndex + 1;
-              CheckState(engine, name, opIndex, item, state, functionalDeleteEvents, cleanDeleteEvents, functionalDeleteQueryId, cleanDeleteQueryId);
+              var events, ignoredQueryId4 := engine.ProcessItemWhenReady(DocChangeItem(docId, HasState(docState), NoState));
+              summary := UpdateSummary(summary, events);
             }
         }
         delete := delete + 1;
@@ -322,7 +159,7 @@ module CleanLimitParity {
     }
     print ""scenario "";
     print name;
-    print "" passed: events="";
+    print "" done: events="";
     print summary.eventsProcessed;
     print "", matches="";
     print summary.matchEvents;
@@ -338,11 +175,8 @@ module CleanLimitParity {
   method Main(_noArgsParameter: seq<seq<char>>)
     decreases *
   {
-    RunScenario(""clean-small"", 1, 8, 4, 4, 2, 1, 1, 3, 2);
-    RunScenario(""clean-medium"", 17, 20, 8, 8, 3, 2, 2, 5, 3);
+    RunScenario(""whole-stack-benchmark-like-clean"", 123, 800, 120, 30, 35, 8, 8, 25, 10);
   }
-
-  import opened DocsIndexModel
 
   import opened DocsIndexTreap
 
@@ -12189,13 +12023,13 @@ namespace CleanLimitEngine {
     }
   }
 } // end of namespace CleanLimitEngine
-namespace CleanLimitParity {
+namespace CleanLimitPerf {
 
   public partial class __default {
     public static BigInteger NextState(BigInteger state) {
-      BigInteger _0_next = Dafny.Helpers.EuclideanModulus((state) * (CleanLimitParity.__default.Multiplier), CleanLimitParity.__default.Modulus);
+      BigInteger _0_next = Dafny.Helpers.EuclideanModulus((state) * (CleanLimitPerf.__default.Multiplier), CleanLimitPerf.__default.Modulus);
       if ((_0_next).Sign != 1) {
-        return (_0_next) + (CleanLimitParity.__default.Modulus);
+        return (_0_next) + (CleanLimitPerf.__default.Modulus);
       } else {
         return _0_next;
       }
@@ -12204,456 +12038,231 @@ namespace CleanLimitParity {
     {
       nextState = BigInteger.Zero;
       @value = BigInteger.Zero;
-      nextState = CleanLimitParity.__default.NextState(state);
+      nextState = CleanLimitPerf.__default.NextState(state);
       @value = nextState;
-    }
-    public static Dafny.ISequence<BigInteger> InsertQueryIdSorted(Dafny.ISequence<BigInteger> ids, BigInteger id)
-    {
-      Dafny.ISequence<BigInteger> _0___accumulator = Dafny.Sequence<BigInteger>.FromElements();
-    TAIL_CALL_START: ;
-      if ((new BigInteger((ids).Count)).Sign == 0) {
-        return Dafny.Sequence<BigInteger>.Concat(_0___accumulator, Dafny.Sequence<BigInteger>.FromElements(id));
-      } else if ((id) == ((ids).Select(BigInteger.Zero))) {
-        return Dafny.Sequence<BigInteger>.Concat(_0___accumulator, ids);
-      } else if ((id) < ((ids).Select(BigInteger.Zero))) {
-        return Dafny.Sequence<BigInteger>.Concat(_0___accumulator, Dafny.Sequence<BigInteger>.Concat(Dafny.Sequence<BigInteger>.FromElements(id), ids));
-      } else {
-        _0___accumulator = Dafny.Sequence<BigInteger>.Concat(_0___accumulator, Dafny.Sequence<BigInteger>.FromElements((ids).Select(BigInteger.Zero)));
-        Dafny.ISequence<BigInteger> _in0 = (ids).Drop(BigInteger.One);
-        BigInteger _in1 = id;
-        ids = _in0;
-        id = _in1;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static Dafny.ISequence<BigInteger> NormalizeQueryIds(Dafny.ISequence<BigInteger> ids) {
-      if ((new BigInteger((ids).Count)).Sign == 0) {
-        return Dafny.Sequence<BigInteger>.FromElements();
-      } else {
-        return CleanLimitParity.__default.InsertQueryIdSorted(CleanLimitParity.__default.NormalizeQueryIds((ids).Drop(BigInteger.One)), (ids).Select(BigInteger.Zero));
-      }
-    }
-    public static ThunderDbStack._IRetrievalDoc NormalizeRetrievalDoc(ThunderDbStack._IRetrievalDoc doc) {
-      return ThunderDbStack.RetrievalDoc.create((doc).dtor_docId, (doc).dtor_state, CleanLimitParity.__default.NormalizeQueryIds((doc).dtor_queries));
-    }
-    public static Dafny.ISequence<ThunderDbStack._IRetrievalDoc> InsertRetrievalDocSorted(Dafny.ISequence<ThunderDbStack._IRetrievalDoc> docs, ThunderDbStack._IRetrievalDoc doc)
-    {
-      Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _0___accumulator = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements();
-    TAIL_CALL_START: ;
-      if ((new BigInteger((docs).Count)).Sign == 0) {
-        return Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements(CleanLimitParity.__default.NormalizeRetrievalDoc(doc)));
-      } else if (((doc).dtor_docId) < (((docs).Select(BigInteger.Zero)).dtor_docId)) {
-        return Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements(CleanLimitParity.__default.NormalizeRetrievalDoc(doc)), docs));
-      } else if (((doc).dtor_docId) == (((docs).Select(BigInteger.Zero)).dtor_docId)) {
-        return Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements(ThunderDbStack.RetrievalDoc.create((doc).dtor_docId, ((docs).Select(BigInteger.Zero)).dtor_state, CleanLimitParity.__default.NormalizeQueryIds(Dafny.Sequence<BigInteger>.Concat(((docs).Select(BigInteger.Zero)).dtor_queries, (doc).dtor_queries)))), (docs).Drop(BigInteger.One)));
-      } else {
-        _0___accumulator = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements((docs).Select(BigInteger.Zero)));
-        Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _in0 = (docs).Drop(BigInteger.One);
-        ThunderDbStack._IRetrievalDoc _in1 = doc;
-        docs = _in0;
-        doc = _in1;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static Dafny.ISequence<ThunderDbStack._IRetrievalDoc> NormalizeRetrievalDocs(Dafny.ISequence<ThunderDbStack._IRetrievalDoc> docs) {
-      if ((new BigInteger((docs).Count)).Sign == 0) {
-        return Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements();
-      } else {
-        return CleanLimitParity.__default.InsertRetrievalDocSorted(CleanLimitParity.__default.NormalizeRetrievalDocs((docs).Drop(BigInteger.One)), (docs).Select(BigInteger.Zero));
-      }
-    }
-    public static Dafny.ISequence<ThunderDbStack._IDownstreamEvent> NormalizeEvents(Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events) {
-      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _0___accumulator = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements();
-    TAIL_CALL_START: ;
-      if ((new BigInteger((events).Count)).Sign == 0) {
-        return Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements());
-      } else {
-        ThunderDbStack._IDownstreamEvent _source0 = (events).Select(BigInteger.Zero);
-        {
-          if (_source0.is_MatchEvent) {
-            ThunderDbStack._IMatchPayload _1_payload = _source0.dtor_payload;
-            return Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Concat(Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_MatchEvent(_1_payload)), CleanLimitParity.__default.NormalizeEvents((events).Drop(BigInteger.One)));
-          }
-        }
-        {
-          Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _2_docs = _source0.dtor_docs;
-          return Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Concat(Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_RetrievalEvent(CleanLimitParity.__default.NormalizeRetrievalDocs(_2_docs))), CleanLimitParity.__default.NormalizeEvents((events).Drop(BigInteger.One)));
-        }
-      }
-    }
-    public static CleanLimitEngine.CleanEngine NewReadyEngine()
-    {
-      CleanLimitEngine.CleanEngine engine = default(CleanLimitEngine.CleanEngine);
-      CleanLimitEngine.CleanEngine _nw0 = new CleanLimitEngine.CleanEngine();
-      _nw0.__ctor();
-      engine = _nw0;
-      return engine;
-    }
-    public static void CheckState(CleanLimitEngine.CleanEngine engine, Dafny.ISequence<Dafny.Rune> name, BigInteger opIndex, ThunderDbStack._IStreamItem item, ThunderDbStack._IEngineState state, Dafny.ISequence<ThunderDbStack._IDownstreamEvent> functionalEvents, Dafny.ISequence<ThunderDbStack._IDownstreamEvent> cleanEvents, BigInteger functionalQueryId, BigInteger cleanQueryId)
-    {
-      bool _0_mismatch;
-      _0_mismatch = (((((((!((engine).Ready())) || ((functionalQueryId) != (cleanQueryId))) || (!(CleanLimitParity.__default.NormalizeEvents(functionalEvents)).Equals(CleanLimitParity.__default.NormalizeEvents(cleanEvents)))) || (!((state).dtor_store).Equals(engine.store))) || (!((state).dtor_docIds).Equals(engine.docIds))) || (!(DocsIndexTreap.__default.Entries((state).dtor_treap)).Equals(DocsIndexTreap.__default.Entries(engine.docs)))) || (((state).dtor_nextQueryId) != (engine.nextQueryId))) || ((new BigInteger(((state).dtor_queries).Count)) != (new BigInteger((engine.queries).Count)));
-      if (_0_mismatch) {
-        Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("scenario ")).ToVerbatimString(false));
-        Dafny.Helpers.Print((name).ToVerbatimString(false));
-        Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(" mismatch at op ")).ToVerbatimString(false));
-        Dafny.Helpers.Print((opIndex));
-        Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(" item=")).ToVerbatimString(false));
-        Dafny.Helpers.Print((item));
-        Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\nfunctional queryId=")).ToVerbatimString(false));
-        Dafny.Helpers.Print((functionalQueryId));
-        Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(", clean queryId=")).ToVerbatimString(false));
-        Dafny.Helpers.Print((cleanQueryId));
-        Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\nfunctional events=")).ToVerbatimString(false));
-        Dafny.Helpers.Print((functionalEvents));
-        Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\nclean events=")).ToVerbatimString(false));
-        Dafny.Helpers.Print((cleanEvents));
-        Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\nfunctional store=")).ToVerbatimString(false));
-        Dafny.Helpers.Print(((state).dtor_store));
-        Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\nclean store=")).ToVerbatimString(false));
-        Dafny.Helpers.Print((engine.store));
-        Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\nfunctional entries=")).ToVerbatimString(false));
-        Dafny.Helpers.Print((DocsIndexTreap.__default.Entries((state).dtor_treap)));
-        Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\nclean entries=")).ToVerbatimString(false));
-        Dafny.Helpers.Print((DocsIndexTreap.__default.Entries(engine.docs)));
-        Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\n")).ToVerbatimString(false));
-      }
-      if ((engine).Ready()) {
-        BigInteger _1_i;
-        _1_i = BigInteger.Zero;
-        while ((_1_i) < (new BigInteger(((state).dtor_queries).Count))) {
-          ThunderDbStack._IQueryRuntime _2_query;
-          _2_query = ((state).dtor_queries).Select(_1_i);
-          Dafny.ISequence<BigInteger> _3_cleanVisible;
-          Dafny.ISequence<BigInteger> _out0;
-          _out0 = (engine).QueryVisible((_2_query).dtor_id);
-          _3_cleanVisible = _out0;
-          if (((!((engine.queries).Contains((_2_query).dtor_id))) || (!object.Equals((Dafny.Map<BigInteger, CleanLimitEngine._ICleanQueryState>.Select(engine.queries,(_2_query).dtor_id)).dtor_spec, (_2_query).dtor_spec))) || (!(_3_cleanVisible).Equals((_2_query).dtor_visible))) {
-            Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("scenario ")).ToVerbatimString(false));
-            Dafny.Helpers.Print((name).ToVerbatimString(false));
-            Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(" query mismatch at op ")).ToVerbatimString(false));
-            Dafny.Helpers.Print((opIndex));
-            Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(" item=")).ToVerbatimString(false));
-            Dafny.Helpers.Print((item));
-            Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(" query=")).ToVerbatimString(false));
-            Dafny.Helpers.Print(((_2_query).dtor_id));
-            Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\nfunctional visible=")).ToVerbatimString(false));
-            Dafny.Helpers.Print(((_2_query).dtor_visible));
-            Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\nclean visible=")).ToVerbatimString(false));
-            Dafny.Helpers.Print((_3_cleanVisible));
-            Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\nfunctional spec=")).ToVerbatimString(false));
-            Dafny.Helpers.Print(((_2_query).dtor_spec));
-            Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\nclean spec=")).ToVerbatimString(false));
-            if ((engine.queries).Contains((_2_query).dtor_id)) {
-              Dafny.Helpers.Print(((Dafny.Map<BigInteger, CleanLimitEngine._ICleanQueryState>.Select(engine.queries,(_2_query).dtor_id)).dtor_spec));
-            } else {
-              Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("<missing>")).ToVerbatimString(false));
-            }
-            Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\n")).ToVerbatimString(false));
-            _0_mismatch = true;
-          }
-          _1_i = (_1_i) + (BigInteger.One);
-        }
-      }
-      if (_0_mismatch) {
-        if (!(false)) {
-          throw new Dafny.HaltException("specs/clean-dafny/CleanLimitParity.dfy(142,6): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      }
     }
     public static void RunScenario(Dafny.ISequence<Dafny.Rune> name, BigInteger seed, BigInteger documents, BigInteger customers, BigInteger ticks, BigInteger updatesPerTick, BigInteger insertsPerTick, BigInteger deletesPerTick, BigInteger queryLimit, BigInteger density)
     {
       CleanLimitEngine.CleanEngine _0_engine;
-      CleanLimitEngine.CleanEngine _out0;
-      _out0 = CleanLimitParity.__default.NewReadyEngine();
-      _0_engine = _out0;
-      ThunderDbStack._IEngineState _1_state;
-      _1_state = ThunderDbStack.__default.EmptyState();
-      ThunderDbStack._IWorkerRunSummary _2_summary;
-      _2_summary = ThunderDbStack.__default.SummaryZero();
-      BigInteger _3_rng;
+      CleanLimitEngine.CleanEngine _nw0 = new CleanLimitEngine.CleanEngine();
+      _nw0.__ctor();
+      _0_engine = _nw0;
+      ThunderDbStack._IWorkerRunSummary _1_summary;
+      _1_summary = ThunderDbStack.__default.SummaryZero();
+      BigInteger _2_rng;
       if ((seed).Sign != 1) {
-        _3_rng = BigInteger.One;
+        _2_rng = BigInteger.One;
       } else {
-        _3_rng = seed;
+        _2_rng = seed;
       }
-      Dafny.ISequence<ThunderDbStack._ISeedDoc> _4_seedDocs;
-      _4_seedDocs = Dafny.Sequence<ThunderDbStack._ISeedDoc>.FromElements();
-      BigInteger _5_nextDocId;
-      _5_nextDocId = documents;
-      BigInteger _6_range;
+      ThunderDbStack._ISeedDoc[] _3_seedDocs;
+      ThunderDbStack._ISeedDoc[] _nw1 = Dafny.ArrayHelpers.InitNewArray1<ThunderDbStack._ISeedDoc>(ThunderDbStack.SeedDoc.Default(), Dafny.Helpers.ToIntChecked(documents, "array size exceeds memory limit"));
+      _3_seedDocs = _nw1;
+      BigInteger _4_nextDocId;
+      _4_nextDocId = documents;
+      BigInteger _5_range;
       if ((density).Sign == 0) {
-        _6_range = BigInteger.One;
+        _5_range = BigInteger.One;
       } else {
-        _6_range = (Dafny.Helpers.EuclideanDivision(documents, density)) + (BigInteger.One);
+        _5_range = (Dafny.Helpers.EuclideanDivision(documents, density)) + (BigInteger.One);
       }
-      BigInteger _7_opIndex;
-      _7_opIndex = BigInteger.Zero;
+      BigInteger _6_i;
+      _6_i = BigInteger.Zero;
+      while ((_6_i) < (documents)) {
+        BigInteger _7_nextRng;
+        BigInteger _8_scoreSeed;
+        BigInteger _out0;
+        BigInteger _out1;
+        CleanLimitPerf.__default.NextRand(_2_rng, out _out0, out _out1);
+        _7_nextRng = _out0;
+        _8_scoreSeed = _out1;
+        _2_rng = _7_nextRng;
+        (_3_seedDocs)[(int)((_6_i))] = ThunderDbStack.SeedDoc.create(_6_i, Dafny.Helpers.EuclideanModulus(_8_scoreSeed, _5_range));
+        _6_i = (_6_i) + (BigInteger.One);
+      }
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _9_seedEvents;
+      BigInteger _10_ignoredSeedQueryId;
+      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out2;
+      BigInteger _out3;
+      (_0_engine).ProcessItemWhenReady(ThunderDbStack.StreamItem.create_SeedDocsItem(Dafny.Helpers.SeqFromArray(_3_seedDocs)), out _out2, out _out3);
+      _9_seedEvents = _out2;
+      _10_ignoredSeedQueryId = _out3;
+      _1_summary = ThunderDbStack.__default.UpdateSummary(_1_summary, _9_seedEvents);
       if (!((_0_engine).Ready())) {
         if (!(false)) {
-          throw new Dafny.HaltException("specs/clean-dafny/CleanLimitParity.dfy(159,6): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
+          throw new Dafny.HaltException("specs/clean-dafny/CleanLimitPerf.dfy(51,6): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
         return ;
       }
-      BigInteger _8_i;
-      _8_i = BigInteger.Zero;
-      while ((_8_i) < (documents)) {
-        BigInteger _9_nextRng;
-        BigInteger _10_scoreSeed;
-        BigInteger _out1;
-        BigInteger _out2;
-        CleanLimitParity.__default.NextRand(_3_rng, out _out1, out _out2);
-        _9_nextRng = _out1;
-        _10_scoreSeed = _out2;
-        _3_rng = _9_nextRng;
-        _4_seedDocs = Dafny.Sequence<ThunderDbStack._ISeedDoc>.Concat(_4_seedDocs, Dafny.Sequence<ThunderDbStack._ISeedDoc>.FromElements(ThunderDbStack.SeedDoc.create(_8_i, Dafny.Helpers.EuclideanModulus(_10_scoreSeed, _6_range))));
-        _8_i = (_8_i) + (BigInteger.One);
-      }
-      ThunderDbStack._IStreamItem _11_seedItem;
-      _11_seedItem = ThunderDbStack.StreamItem.create_SeedDocsItem(_4_seedDocs);
-      ThunderDbStack._IEngineState _12_nextState;
-      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _13_functionalEvents;
-      BigInteger _14_functionalQueryId;
-      ThunderDbStack._IEngineState _out3;
-      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out4;
-      BigInteger _out5;
-      ThunderDbStack.__default.ProcessItem(_1_state, _11_seedItem, out _out3, out _out4, out _out5);
-      _12_nextState = _out3;
-      _13_functionalEvents = _out4;
-      _14_functionalQueryId = _out5;
-      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _15_cleanEvents;
-      BigInteger _16_cleanQueryId;
-      Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out6;
-      BigInteger _out7;
-      (_0_engine).ProcessItemWhenReady(_11_seedItem, out _out6, out _out7);
-      _15_cleanEvents = _out6;
-      _16_cleanQueryId = _out7;
-      _1_state = _12_nextState;
-      _2_summary = ThunderDbStack.__default.UpdateSummary(_2_summary, _13_functionalEvents);
-      CleanLimitParity.__default.CheckState(_0_engine, name, _7_opIndex, _11_seedItem, _1_state, _13_functionalEvents, _15_cleanEvents, _14_functionalQueryId, _16_cleanQueryId);
-      _8_i = BigInteger.Zero;
-      while ((_8_i) < (customers)) {
-        BigInteger _17_nextRng1;
-        BigInteger _18_widthSeed;
-        BigInteger _out8;
+      _6_i = BigInteger.Zero;
+      while ((_6_i) < (customers)) {
+        BigInteger _11_nextRng1;
+        BigInteger _12_widthSeed;
+        BigInteger _out4;
+        BigInteger _out5;
+        CleanLimitPerf.__default.NextRand(_2_rng, out _out4, out _out5);
+        _11_nextRng1 = _out4;
+        _12_widthSeed = _out5;
+        _2_rng = _11_nextRng1;
+        BigInteger _13_nextRng2;
+        BigInteger _14_minSeed;
+        BigInteger _out6;
+        BigInteger _out7;
+        CleanLimitPerf.__default.NextRand(_2_rng, out _out6, out _out7);
+        _13_nextRng2 = _out6;
+        _14_minSeed = _out7;
+        _2_rng = _13_nextRng2;
+        BigInteger _15_width;
+        _15_width = (BigInteger.One) + (Dafny.Helpers.EuclideanModulus(_12_widthSeed, (Dafny.Helpers.EuclideanDivision(_5_range, new BigInteger(2))) + (BigInteger.One)));
+        BigInteger _16_minScore;
+        _16_minScore = Dafny.Helpers.EuclideanModulus(_14_minSeed, _5_range);
+        BigInteger _17_maxScore;
+        _17_maxScore = (_16_minScore) + (_15_width);
+        ThunderDbStack._IQuerySpec _18_spec;
+        _18_spec = ThunderDbStack.QuerySpec.create(_16_minScore, _17_maxScore, queryLimit);
+        Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _19_events;
+        BigInteger _20_ignoredQueryId;
+        Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out8;
         BigInteger _out9;
-        CleanLimitParity.__default.NextRand(_3_rng, out _out8, out _out9);
-        _17_nextRng1 = _out8;
-        _18_widthSeed = _out9;
-        _3_rng = _17_nextRng1;
-        BigInteger _19_nextRng2;
-        BigInteger _20_minSeed;
-        BigInteger _out10;
-        BigInteger _out11;
-        CleanLimitParity.__default.NextRand(_3_rng, out _out10, out _out11);
-        _19_nextRng2 = _out10;
-        _20_minSeed = _out11;
-        _3_rng = _19_nextRng2;
-        BigInteger _21_width;
-        _21_width = (BigInteger.One) + (Dafny.Helpers.EuclideanModulus(_18_widthSeed, (Dafny.Helpers.EuclideanDivision(_6_range, new BigInteger(2))) + (BigInteger.One)));
-        BigInteger _22_minScore;
-        _22_minScore = Dafny.Helpers.EuclideanModulus(_20_minSeed, _6_range);
-        BigInteger _23_maxScore;
-        _23_maxScore = (_22_minScore) + (_21_width);
-        ThunderDbStack._IStreamItem _24_item;
-        _24_item = ThunderDbStack.StreamItem.create_QueryAddItem(ThunderDbStack.QuerySpec.create(_22_minScore, _23_maxScore, queryLimit));
-        ThunderDbStack._IEngineState _25_stateAfterAdd;
-        Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _26_functionalAddEvents;
-        BigInteger _27_functionalAddQueryId;
-        ThunderDbStack._IEngineState _out12;
-        Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out13;
-        BigInteger _out14;
-        ThunderDbStack.__default.ProcessItem(_1_state, _24_item, out _out12, out _out13, out _out14);
-        _25_stateAfterAdd = _out12;
-        _26_functionalAddEvents = _out13;
-        _27_functionalAddQueryId = _out14;
-        Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _28_cleanAddEvents;
-        BigInteger _29_cleanAddQueryId;
-        Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out15;
-        BigInteger _out16;
-        (_0_engine).ProcessItemWhenReady(_24_item, out _out15, out _out16);
-        _28_cleanAddEvents = _out15;
-        _29_cleanAddQueryId = _out16;
-        _1_state = _25_stateAfterAdd;
-        _2_summary = ThunderDbStack.__default.UpdateSummary(_2_summary, _26_functionalAddEvents);
-        _7_opIndex = (_7_opIndex) + (BigInteger.One);
-        CleanLimitParity.__default.CheckState(_0_engine, name, _7_opIndex, _24_item, _1_state, _26_functionalAddEvents, _28_cleanAddEvents, _27_functionalAddQueryId, _29_cleanAddQueryId);
-        _8_i = (_8_i) + (BigInteger.One);
+        (_0_engine).ProcessItemWhenReady(ThunderDbStack.StreamItem.create_QueryAddItem(_18_spec), out _out8, out _out9);
+        _19_events = _out8;
+        _20_ignoredQueryId = _out9;
+        _1_summary = ThunderDbStack.__default.UpdateSummary(_1_summary, _19_events);
+        _6_i = (_6_i) + (BigInteger.One);
       }
-      BigInteger _30_tick;
-      _30_tick = BigInteger.Zero;
-      while ((_30_tick) < (ticks)) {
-        BigInteger _31_update;
-        _31_update = BigInteger.Zero;
-        while ((_31_update) < (updatesPerTick)) {
-          if ((new BigInteger(((_1_state).dtor_docIds).Count)).Sign == 1) {
-            BigInteger _32_nextRng3;
-            BigInteger _33_pickSeed;
-            BigInteger _out17;
-            BigInteger _out18;
-            CleanLimitParity.__default.NextRand(_3_rng, out _out17, out _out18);
-            _32_nextRng3 = _out17;
-            _33_pickSeed = _out18;
-            _3_rng = _32_nextRng3;
-            BigInteger _34_nextRng4;
-            BigInteger _35_scoreSeed;
-            BigInteger _out19;
-            BigInteger _out20;
-            CleanLimitParity.__default.NextRand(_3_rng, out _out19, out _out20);
-            _34_nextRng4 = _out19;
-            _35_scoreSeed = _out20;
-            _3_rng = _34_nextRng4;
-            BigInteger _36_picked;
-            _36_picked = Dafny.Helpers.EuclideanModulus(_33_pickSeed, new BigInteger(((_1_state).dtor_docIds).Count));
-            BigInteger _37_docId;
-            _37_docId = ((_1_state).dtor_docIds).Select(_36_picked);
-            ThunderDbStack._IMaybeDocState _source0 = ThunderDbStack.__default.LookupState((_1_state).dtor_store, _37_docId);
+      BigInteger _21_tick;
+      _21_tick = BigInteger.Zero;
+      while ((_21_tick) < (ticks)) {
+        BigInteger _22_update;
+        _22_update = BigInteger.Zero;
+        while ((_22_update) < (updatesPerTick)) {
+          if ((new BigInteger((_0_engine.docIds).Count)).Sign == 1) {
+            BigInteger _23_nextRng3;
+            BigInteger _24_pickSeed;
+            BigInteger _out10;
+            BigInteger _out11;
+            CleanLimitPerf.__default.NextRand(_2_rng, out _out10, out _out11);
+            _23_nextRng3 = _out10;
+            _24_pickSeed = _out11;
+            _2_rng = _23_nextRng3;
+            BigInteger _25_nextRng4;
+            BigInteger _26_scoreSeed;
+            BigInteger _out12;
+            BigInteger _out13;
+            CleanLimitPerf.__default.NextRand(_2_rng, out _out12, out _out13);
+            _25_nextRng4 = _out12;
+            _26_scoreSeed = _out13;
+            _2_rng = _25_nextRng4;
+            BigInteger _27_picked;
+            _27_picked = Dafny.Helpers.EuclideanModulus(_24_pickSeed, new BigInteger((_0_engine.docIds).Count));
+            BigInteger _28_docId;
+            _28_docId = (_0_engine.docIds).Select(_27_picked);
+            ThunderDbStack._IMaybeDocState _source0 = ThunderDbStack.__default.LookupState(_0_engine.store, _28_docId);
             {
               if (_source0.is_NoState) {
                 goto after_match0;
               }
             }
             {
-              BigInteger _38_docState = _source0.dtor_state;
+              BigInteger _29_docState = _source0.dtor_state;
               {
-                ThunderDbStack._IStreamItem _39_item;
-                _39_item = ThunderDbStack.StreamItem.create_DocChangeItem(_37_docId, ThunderDbStack.MaybeDocState.create_HasState(_38_docState), ThunderDbStack.MaybeDocState.create_HasState(Dafny.Helpers.EuclideanModulus(_35_scoreSeed, _6_range)));
-                ThunderDbStack._IEngineState _40_stateAfterUpdate;
-                Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _41_functionalUpdateEvents;
-                BigInteger _42_functionalUpdateQueryId;
-                ThunderDbStack._IEngineState _out21;
-                Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out22;
-                BigInteger _out23;
-                ThunderDbStack.__default.ProcessItem(_1_state, _39_item, out _out21, out _out22, out _out23);
-                _40_stateAfterUpdate = _out21;
-                _41_functionalUpdateEvents = _out22;
-                _42_functionalUpdateQueryId = _out23;
-                Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _43_cleanUpdateEvents;
-                BigInteger _44_cleanUpdateQueryId;
-                Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out24;
-                BigInteger _out25;
-                (_0_engine).ProcessItemWhenReady(_39_item, out _out24, out _out25);
-                _43_cleanUpdateEvents = _out24;
-                _44_cleanUpdateQueryId = _out25;
-                _1_state = _40_stateAfterUpdate;
-                _2_summary = ThunderDbStack.__default.UpdateSummary(_2_summary, _41_functionalUpdateEvents);
-                _7_opIndex = (_7_opIndex) + (BigInteger.One);
-                CleanLimitParity.__default.CheckState(_0_engine, name, _7_opIndex, _39_item, _1_state, _41_functionalUpdateEvents, _43_cleanUpdateEvents, _42_functionalUpdateQueryId, _44_cleanUpdateQueryId);
+                BigInteger _30_updatedDocState;
+                _30_updatedDocState = Dafny.Helpers.EuclideanModulus(_26_scoreSeed, _5_range);
+                Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _31_events;
+                BigInteger _32_ignoredQueryId2;
+                Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out14;
+                BigInteger _out15;
+                (_0_engine).ProcessItemWhenReady(ThunderDbStack.StreamItem.create_DocChangeItem(_28_docId, ThunderDbStack.MaybeDocState.create_HasState(_29_docState), ThunderDbStack.MaybeDocState.create_HasState(_30_updatedDocState)), out _out14, out _out15);
+                _31_events = _out14;
+                _32_ignoredQueryId2 = _out15;
+                _1_summary = ThunderDbStack.__default.UpdateSummary(_1_summary, _31_events);
               }
             }
           after_match0: ;
           }
-          _31_update = (_31_update) + (BigInteger.One);
+          _22_update = (_22_update) + (BigInteger.One);
         }
-        BigInteger _45_insert;
-        _45_insert = BigInteger.Zero;
-        while ((_45_insert) < (insertsPerTick)) {
-          BigInteger _46_nextRng5;
-          BigInteger _47_scoreSeed;
-          BigInteger _out26;
-          BigInteger _out27;
-          CleanLimitParity.__default.NextRand(_3_rng, out _out26, out _out27);
-          _46_nextRng5 = _out26;
-          _47_scoreSeed = _out27;
-          _3_rng = _46_nextRng5;
-          ThunderDbStack._IStreamItem _48_item;
-          _48_item = ThunderDbStack.StreamItem.create_DocChangeItem(_5_nextDocId, ThunderDbStack.MaybeDocState.create_NoState(), ThunderDbStack.MaybeDocState.create_HasState(Dafny.Helpers.EuclideanModulus(_47_scoreSeed, _6_range)));
-          ThunderDbStack._IEngineState _49_stateAfterInsert;
-          Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _50_functionalInsertEvents;
-          BigInteger _51_functionalInsertQueryId;
-          ThunderDbStack._IEngineState _out28;
-          Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out29;
-          BigInteger _out30;
-          ThunderDbStack.__default.ProcessItem(_1_state, _48_item, out _out28, out _out29, out _out30);
-          _49_stateAfterInsert = _out28;
-          _50_functionalInsertEvents = _out29;
-          _51_functionalInsertQueryId = _out30;
-          Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _52_cleanInsertEvents;
-          BigInteger _53_cleanInsertQueryId;
-          Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out31;
-          BigInteger _out32;
-          (_0_engine).ProcessItemWhenReady(_48_item, out _out31, out _out32);
-          _52_cleanInsertEvents = _out31;
-          _53_cleanInsertQueryId = _out32;
-          _1_state = _49_stateAfterInsert;
-          _2_summary = ThunderDbStack.__default.UpdateSummary(_2_summary, _50_functionalInsertEvents);
-          _5_nextDocId = (_5_nextDocId) + (BigInteger.One);
-          _7_opIndex = (_7_opIndex) + (BigInteger.One);
-          CleanLimitParity.__default.CheckState(_0_engine, name, _7_opIndex, _48_item, _1_state, _50_functionalInsertEvents, _52_cleanInsertEvents, _51_functionalInsertQueryId, _53_cleanInsertQueryId);
-          _45_insert = (_45_insert) + (BigInteger.One);
+        BigInteger _33_insert;
+        _33_insert = BigInteger.Zero;
+        while ((_33_insert) < (insertsPerTick)) {
+          BigInteger _34_nextRng5;
+          BigInteger _35_scoreSeed;
+          BigInteger _out16;
+          BigInteger _out17;
+          CleanLimitPerf.__default.NextRand(_2_rng, out _out16, out _out17);
+          _34_nextRng5 = _out16;
+          _35_scoreSeed = _out17;
+          _2_rng = _34_nextRng5;
+          BigInteger _36_newDoc;
+          _36_newDoc = Dafny.Helpers.EuclideanModulus(_35_scoreSeed, _5_range);
+          Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _37_events;
+          BigInteger _38_ignoredQueryId3;
+          Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out18;
+          BigInteger _out19;
+          (_0_engine).ProcessItemWhenReady(ThunderDbStack.StreamItem.create_DocChangeItem(_4_nextDocId, ThunderDbStack.MaybeDocState.create_NoState(), ThunderDbStack.MaybeDocState.create_HasState(_36_newDoc)), out _out18, out _out19);
+          _37_events = _out18;
+          _38_ignoredQueryId3 = _out19;
+          _1_summary = ThunderDbStack.__default.UpdateSummary(_1_summary, _37_events);
+          _4_nextDocId = (_4_nextDocId) + (BigInteger.One);
+          _33_insert = (_33_insert) + (BigInteger.One);
         }
-        BigInteger _54_delete;
-        _54_delete = BigInteger.Zero;
-        while ((_54_delete) < (deletesPerTick)) {
-          if ((new BigInteger(((_1_state).dtor_docIds).Count)).Sign == 1) {
-            BigInteger _55_nextRng6;
-            BigInteger _56_pickSeed;
-            BigInteger _out33;
-            BigInteger _out34;
-            CleanLimitParity.__default.NextRand(_3_rng, out _out33, out _out34);
-            _55_nextRng6 = _out33;
-            _56_pickSeed = _out34;
-            _3_rng = _55_nextRng6;
-            BigInteger _57_picked;
-            _57_picked = Dafny.Helpers.EuclideanModulus(_56_pickSeed, new BigInteger(((_1_state).dtor_docIds).Count));
-            BigInteger _58_docId;
-            _58_docId = ((_1_state).dtor_docIds).Select(_57_picked);
-            ThunderDbStack._IMaybeDocState _source1 = ThunderDbStack.__default.LookupState((_1_state).dtor_store, _58_docId);
+        BigInteger _39_delete;
+        _39_delete = BigInteger.Zero;
+        while ((_39_delete) < (deletesPerTick)) {
+          if ((new BigInteger((_0_engine.docIds).Count)).Sign == 1) {
+            BigInteger _40_nextRng6;
+            BigInteger _41_pickSeed;
+            BigInteger _out20;
+            BigInteger _out21;
+            CleanLimitPerf.__default.NextRand(_2_rng, out _out20, out _out21);
+            _40_nextRng6 = _out20;
+            _41_pickSeed = _out21;
+            _2_rng = _40_nextRng6;
+            BigInteger _42_picked;
+            _42_picked = Dafny.Helpers.EuclideanModulus(_41_pickSeed, new BigInteger((_0_engine.docIds).Count));
+            BigInteger _43_docId;
+            _43_docId = (_0_engine.docIds).Select(_42_picked);
+            ThunderDbStack._IMaybeDocState _source1 = ThunderDbStack.__default.LookupState(_0_engine.store, _43_docId);
             {
               if (_source1.is_NoState) {
                 goto after_match1;
               }
             }
             {
-              BigInteger _59_docState = _source1.dtor_state;
+              BigInteger _44_docState = _source1.dtor_state;
               {
-                ThunderDbStack._IStreamItem _60_item;
-                _60_item = ThunderDbStack.StreamItem.create_DocChangeItem(_58_docId, ThunderDbStack.MaybeDocState.create_HasState(_59_docState), ThunderDbStack.MaybeDocState.create_NoState());
-                ThunderDbStack._IEngineState _61_stateAfterDelete;
-                Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _62_functionalDeleteEvents;
-                BigInteger _63_functionalDeleteQueryId;
-                ThunderDbStack._IEngineState _out35;
-                Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out36;
-                BigInteger _out37;
-                ThunderDbStack.__default.ProcessItem(_1_state, _60_item, out _out35, out _out36, out _out37);
-                _61_stateAfterDelete = _out35;
-                _62_functionalDeleteEvents = _out36;
-                _63_functionalDeleteQueryId = _out37;
-                Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _64_cleanDeleteEvents;
-                BigInteger _65_cleanDeleteQueryId;
-                Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out38;
-                BigInteger _out39;
-                (_0_engine).ProcessItemWhenReady(_60_item, out _out38, out _out39);
-                _64_cleanDeleteEvents = _out38;
-                _65_cleanDeleteQueryId = _out39;
-                _1_state = _61_stateAfterDelete;
-                _2_summary = ThunderDbStack.__default.UpdateSummary(_2_summary, _62_functionalDeleteEvents);
-                _7_opIndex = (_7_opIndex) + (BigInteger.One);
-                CleanLimitParity.__default.CheckState(_0_engine, name, _7_opIndex, _60_item, _1_state, _62_functionalDeleteEvents, _64_cleanDeleteEvents, _63_functionalDeleteQueryId, _65_cleanDeleteQueryId);
+                Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _45_events;
+                BigInteger _46_ignoredQueryId4;
+                Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out22;
+                BigInteger _out23;
+                (_0_engine).ProcessItemWhenReady(ThunderDbStack.StreamItem.create_DocChangeItem(_43_docId, ThunderDbStack.MaybeDocState.create_HasState(_44_docState), ThunderDbStack.MaybeDocState.create_NoState()), out _out22, out _out23);
+                _45_events = _out22;
+                _46_ignoredQueryId4 = _out23;
+                _1_summary = ThunderDbStack.__default.UpdateSummary(_1_summary, _45_events);
               }
             }
           after_match1: ;
           }
-          _54_delete = (_54_delete) + (BigInteger.One);
+          _39_delete = (_39_delete) + (BigInteger.One);
         }
-        _30_tick = (_30_tick) + (BigInteger.One);
+        _21_tick = (_21_tick) + (BigInteger.One);
       }
       Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("scenario ")).ToVerbatimString(false));
       Dafny.Helpers.Print((name).ToVerbatimString(false));
-      Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(" passed: events=")).ToVerbatimString(false));
-      Dafny.Helpers.Print(((_2_summary).dtor_eventsProcessed));
+      Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(" done: events=")).ToVerbatimString(false));
+      Dafny.Helpers.Print(((_1_summary).dtor_eventsProcessed));
       Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(", matches=")).ToVerbatimString(false));
-      Dafny.Helpers.Print(((_2_summary).dtor_matchEvents));
+      Dafny.Helpers.Print(((_1_summary).dtor_matchEvents));
       Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(", evictions=")).ToVerbatimString(false));
-      Dafny.Helpers.Print(((_2_summary).dtor_evictions));
+      Dafny.Helpers.Print(((_1_summary).dtor_evictions));
       Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(", retrievalBatches=")).ToVerbatimString(false));
-      Dafny.Helpers.Print(((_2_summary).dtor_retrievalBatches));
+      Dafny.Helpers.Print(((_1_summary).dtor_retrievalBatches));
       Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString(", retrievalDocs=")).ToVerbatimString(false));
-      Dafny.Helpers.Print(((_2_summary).dtor_retrievalDocs));
+      Dafny.Helpers.Print(((_1_summary).dtor_retrievalDocs));
       Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("\n")).ToVerbatimString(false));
     }
     public static void _Main(Dafny.ISequence<Dafny.ISequence<Dafny.Rune>> __noArgsParameter)
     {
-      CleanLimitParity.__default.RunScenario(Dafny.Sequence<Dafny.Rune>.UnicodeFromString("clean-small"), BigInteger.One, new BigInteger(8), new BigInteger(4), new BigInteger(4), new BigInteger(2), BigInteger.One, BigInteger.One, new BigInteger(3), new BigInteger(2));
-      CleanLimitParity.__default.RunScenario(Dafny.Sequence<Dafny.Rune>.UnicodeFromString("clean-medium"), new BigInteger(17), new BigInteger(20), new BigInteger(8), new BigInteger(8), new BigInteger(3), new BigInteger(2), new BigInteger(2), new BigInteger(5), new BigInteger(3));
+      CleanLimitPerf.__default.RunScenario(Dafny.Sequence<Dafny.Rune>.UnicodeFromString("whole-stack-benchmark-like-clean"), new BigInteger(123), new BigInteger(800), new BigInteger(120), new BigInteger(30), new BigInteger(35), new BigInteger(8), new BigInteger(8), new BigInteger(25), new BigInteger(10));
     }
     public static BigInteger Multiplier { get {
       return new BigInteger(48271);
@@ -12662,12 +12271,12 @@ namespace CleanLimitParity {
       return new BigInteger(2147483647);
     } }
   }
-} // end of namespace CleanLimitParity
+} // end of namespace CleanLimitPerf
 namespace _module {
 
 } // end of namespace _module
 class __CallToMain {
   public static void Main(string[] args) {
-    Dafny.Helpers.WithHaltHandling(() => CleanLimitParity.__default._Main(Dafny.Sequence<Dafny.ISequence<Dafny.Rune>>.UnicodeFromMainArguments(args)));
+    Dafny.Helpers.WithHaltHandling(() => CleanLimitPerf.__default._Main(Dafny.Sequence<Dafny.ISequence<Dafny.Rune>>.UnicodeFromMainArguments(args)));
   }
 }
