@@ -1,4 +1,4 @@
-include "../dafny/ThunderDbStack.dfy"
+include "ThunderDbStack.dfy"
 
 module TsQueriesRuntime {
   import opened DocsIndexModel

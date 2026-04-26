@@ -1,4 +1,4 @@
-include "../dafny/DocsIndexModel.dfy"
+include "DocsIndexModel.dfy"
 
 module TsDocsRuntime {
   import opened DocsIndexModel
