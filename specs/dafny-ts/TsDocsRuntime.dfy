@@ -15,12 +15,14 @@ module TsDocsRuntime {
 
   function AddDoc(state: DocsState, score: Score, id: DocId): DocsState
     requires DocsConsistent(state)
+    ensures DocsConsistent(AddDoc(state, score, id))
   {
     DocsState(InsertUnique(state.entries, score, id))
   }
 
   function RemoveDoc(state: DocsState, score: Score, id: DocId): DocsState
     requires DocsConsistent(state)
+    ensures DocsConsistent(RemoveDoc(state, score, id))
   {
     DocsState(RemoveOne(state.entries, score, id))
   }

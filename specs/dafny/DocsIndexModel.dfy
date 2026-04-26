@@ -45,6 +45,7 @@ module DocsIndexModel {
 
   function InsertUnique(es: seq<Entry>, score: Score, id: DocId): seq<Entry>
     requires SortedEntries(es)
+    ensures SortedEntries(InsertUnique(es, score, id))
   {
     if |es| == 0 then [Entry(score, id)]
     else if es[0].score == score && es[0].id == id then es
@@ -54,6 +55,7 @@ module DocsIndexModel {
 
   function RemoveOne(es: seq<Entry>, score: Score, id: DocId): seq<Entry>
     requires SortedEntries(es)
+    ensures SortedEntries(RemoveOne(es, score, id))
   {
     if |es| == 0 then es
     else if es[0].score == score && es[0].id == id then es[1..]

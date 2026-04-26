@@ -206,6 +206,7 @@ module TsLimitQueriesRuntime {
   function FillGapFrom(state: LimitQueriesState, queryId: QueryId, offset: nat): GapFillResult
     requires LimitQueriesConsistent(state)
     requires queryId in state.infos
+    ensures LimitQueriesConsistent(FillGapFrom(state, queryId, offset).state)
     decreases |state.docs.entries| + 1, |state.docs.entries| - offset
   {
     var candidate := DocForQueryAt(state, state.infos[queryId], offset);
@@ -221,6 +222,7 @@ module TsLimitQueriesRuntime {
 
   function FillGap(state: LimitQueriesState, queryId: QueryId): GapFillResult
     requires LimitQueriesConsistent(state)
+    ensures LimitQueriesConsistent(FillGap(state, queryId).state)
   {
     if !(queryId in state.infos) then GapFillResult(state, NoDoc)
     else
@@ -231,6 +233,7 @@ module TsLimitQueriesRuntime {
 
   function CancelPendingForQuery(state: LimitQueriesState, docId: DocId, queryId: QueryId): StateChange
     requires LimitQueriesConsistent(state)
+    ensures LimitQueriesConsistent(CancelPendingForQuery(state, docId, queryId).state)
   {
     if !(queryId in state.pendingByQuery) || !ContainsId(state.pendingByQuery[queryId], docId) then StateChange(state, false)
     else
@@ -247,7 +250,6 @@ module TsLimitQueriesRuntime {
   }
 
   function ResolvePendingForDoc(state: LimitQueriesState, docId: DocId): LimitQueriesState
-    requires LimitQueriesConsistent(state)
   {
     if !(docId in state.pendingByDoc) then state
     else ResolvePendingDocQueries(state, state.pendingByDoc[docId], docId)
