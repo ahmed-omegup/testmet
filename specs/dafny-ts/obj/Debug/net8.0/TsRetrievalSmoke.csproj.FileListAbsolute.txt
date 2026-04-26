@@ -1,0 +1,15 @@
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsRetrievalSmoke.GeneratedMSBuildEditorConfig.editorconfig
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsRetrievalSmoke.AssemblyInfoInputs.cache
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsRetrievalSmoke.AssemblyInfo.cs
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsRetrievalSmoke.csproj.CoreCompileInputs.cache
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsRetrievalSmoke.sourcelink.json
+/home/asus/work/testmet/specs/dafny-ts/TsRetrievalSmoke
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsRetrievalSmoke.dll
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/refint/TsRetrievalSmoke.dll
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsRetrievalSmoke.pdb
+/home/asus/work/testmet/specs/dafny-ts/TsRetrievalSmoke.deps.json
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/TsRetrievalSmoke.genruntimeconfig.cache
+/home/asus/work/testmet/specs/dafny-ts/TsRetrievalSmoke.runtimeconfig.json
+/home/asus/work/testmet/specs/dafny-ts/TsRetrievalSmoke.dll
+/home/asus/work/testmet/specs/dafny-ts/obj/Debug/net8.0/ref/TsRetrievalSmoke.dll
+/home/asus/work/testmet/specs/dafny-ts/TsRetrievalSmoke.pdb
