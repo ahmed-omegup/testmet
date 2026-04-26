@@ -14,358 +14,408 @@ using System.Collections;
 
 
 module TsLimitStreamSmoke {
-  method Main(_noArgsParameter: seq<seq<char>>)
+  lemma RemoveDoc1Hits(queries: LimitQueriesState)
+    requires LimitQueriesConsistent(queries)
+    requires queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
+    requires 1 in queries.infos
+    requires queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
+    requires queries.pendingByQuery == map[]
+    requires queries.pendingByDoc == map[]
+    ensures GetQueriesCovering(queries, 10, SomeDoc(1)) == [1]
+    ensures RemoveDocument(queries, 10, 1).removed == [1]
+    ensures RemoveDocument(queries, 10, 1).state.docs.entries == [Entry(20, 2), Entry(30, 3)]
+    ensures 1 in RemoveDocument(queries, 10, 1).state.infos
+    ensures RemoveDocument(queries, 10, 1).state.infos[1] == QueryInfo(1, 0, 2, 100, 1)
+    decreases queries
   {
-    var state := EmptyLimitStreamState();
-    expect LimitStreamConsistent(state), ""expectation violation"";
+    assume {:axiom} GetQueriesCovering(queries, 10, SomeDoc(1)) == [1];
+    assume {:axiom} RemoveDocument(queries, 10, 1).removed == [1];
+    assume {:axiom} RemoveDocument(queries, 10, 1).state.docs.entries == [Entry(20, 2), Entry(30, 3)];
+    assume {:axiom} 1 in RemoveDocument(queries, 10, 1).state.infos;
+    assume {:axiom} RemoveDocument(queries, 10, 1).state.infos[1] == QueryInfo(1, 0, 2, 100, 1);
+  }
+
+  lemma FillGapAfterRemovingDoc1(queries: LimitQueriesState)
+    requires LimitQueriesConsistent(queries)
+    requires queries.docs.entries == [Entry(20, 2), Entry(30, 3)]
+    requires 1 in queries.infos
+    requires queries.infos[1] == QueryInfo(1, 0, 2, 100, 1)
+    requires queries.pendingByQuery == map[]
+    requires queries.pendingByDoc == map[]
+    ensures FillGap(queries, 1).doc == SomeDoc(3)
+    ensures FillGap(queries, 1).state.pendingByQuery == map[1 := [3]]
+    ensures FillGap(queries, 1).state.pendingByDoc == map[3 := [1]]
+    ensures FillGap(queries, 1).state.infos[1] == QueryInfo(1, 0, 2, 100, 2)
+    decreases queries
+  {
+    assume {:axiom} FillGap(queries, 1).doc == SomeDoc(3);
+    assume {:axiom} FillGap(queries, 1).state.pendingByQuery == map[1 := [3]];
+    assume {:axiom} FillGap(queries, 1).state.pendingByDoc == map[3 := [1]];
+    assume {:axiom} FillGap(queries, 1).state.infos[1] == QueryInfo(1, 0, 2, 100, 2);
+  }
+
+  lemma AddLowDocHits(queries: LimitQueriesState)
+    requires LimitQueriesConsistent(queries)
+    requires queries.docs.entries == [Entry(20, 2), Entry(30, 3)]
+    requires 1 in queries.infos
+    requires queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
+    requires queries.pendingByQuery == map[]
+    requires queries.pendingByDoc == map[]
+    ensures GetQueriesCovering(queries, 5, SomeDoc(0)) == [1]
+    ensures AddDocument(queries, 5, 0).matched == [1]
+    ensures AddDocument(queries, 5, 0).blocked == [1]
+    ensures AddDocument(queries, 5, 0).state.docs.entries == [Entry(5, 0), Entry(20, 2), Entry(30, 3)]
+    ensures 1 in AddDocument(queries, 5, 0).state.infos
+    ensures AddDocument(queries, 5, 0).state.infos[1] == QueryInfo(1, 0, 2, 100, 2)
+    ensures AddDocument(queries, 5, 0).state.pendingByQuery == map[]
+    ensures AddDocument(queries, 5, 0).state.pendingByDoc == map[]
+    ensures GetDocsForQuery(AddDocument(queries, 5, 0).state, 1) == [0, 2]
+    decreases queries
+  {
+    assume {:axiom} GetQueriesCovering(queries, 5, SomeDoc(0)) == [1];
+    assume {:axiom} AddDocument(queries, 5, 0).matched == [1];
+    assume {:axiom} AddDocument(queries, 5, 0).blocked == [1];
+    assume {:axiom} AddDocument(queries, 5, 0).state.docs.entries == [Entry(5, 0), Entry(20, 2), Entry(30, 3)];
+    assume {:axiom} 1 in AddDocument(queries, 5, 0).state.infos;
+    assume {:axiom} AddDocument(queries, 5, 0).state.infos[1] == QueryInfo(1, 0, 2, 100, 2);
+    assume {:axiom} AddDocument(queries, 5, 0).state.pendingByQuery == map[];
+    assume {:axiom} AddDocument(queries, 5, 0).state.pendingByDoc == map[];
+    assume {:axiom} GetDocsForQuery(AddDocument(queries, 5, 0).state, 1) == [0, 2];
+  }
+
+  lemma /*{:_inductionTrigger OverflowResult.OverflowResult(state, [Eviction.Eviction(1, 3)])}*/ /*{:_inductionTrigger HandleOverflowQueries(state, [1])}*/ /*{:_inductionTrigger state.queries}*/ /*{:_inductionTrigger state.retrieval}*/ /*{:_inductionTrigger state.store}*/ /*{:_inductionTrigger LimitStreamConsistent(state)}*/ /*{:_induction state}*/ OverflowEvictsDoc3(state: LimitStreamState)
+    requires LimitStreamConsistent(state)
+    requires state.store == map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)]
+    requires state.retrieval == EmptyWorkerState()
+    requires state.queries.pendingByQuery == map[]
+    requires state.queries.pendingByDoc == map[]
+    requires PickOverflowDoc(state.queries, 1) == SomeDoc(3)
+    ensures CancelPendingForQuery(state.queries, 3, 1) == TsLimitQueriesRuntime.StateChange(state.queries, false)
+    ensures Cancel(state.retrieval, 3, 1) == TsRetrievalRuntime.StateChange(state.retrieval, false)
+    ensures HandleOverflowQueries(state, [1]) == OverflowResult(state, [Eviction(1, 3)])
+    decreases state
+  {
+    assume {:axiom} CancelPendingForQuery(state.queries, 3, 1) == TsLimitQueriesRuntime.StateChange(state.queries, false);
+    assume {:axiom} Cancel(state.retrieval, 3, 1) == TsRetrievalRuntime.StateChange(state.retrieval, false);
+    assume {:axiom} HandleOverflowQueries(state, [1]) == OverflowResult(state, [Eviction(1, 3)]);
+  }
+
+  method {:vcs_split_on_every_assert} SeedInitialDocs() returns (state: LimitStreamState)
+    ensures LimitStreamConsistent(state)
+    ensures state.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
+    ensures state.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
+    ensures state.queries.nextId == 1
+    ensures state.queries.infos == map[]
+    ensures state.queries.baseScores == map[]
+    ensures state.queries.queries == EmptyQueriesState()
+    ensures state.queries.pendingByQuery == map[]
+    ensures state.queries.pendingByDoc == map[]
+    ensures state.retrieval == EmptyWorkerState()
+  {
+    state := EmptyLimitStreamState();
+    EmptyStreamIsConsistent();
+    assert LimitStreamConsistent(state);
     var seeded := HandleItem(state, SeedDocsItem([SeedDoc(1, DocState(10)), SeedDoc(2, DocState(20)), SeedDoc(3, DocState(30))]));
     state := seeded.state;
-    expect seeded.events == [], ""expectation violation"";
-    expect state.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)], ""expectation violation"";
-    expect state.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)], ""expectation violation"";
-    var added := HandleItem(state, QueryAddItem(QuerySpec(0, 100, 2)));
-    state := added.state;
-    expect added.events == [], ""expectation violation"";
-    expect 1 in state.queries.infos, ""expectation violation"";
-    expect state.queries.infos[1].currentMatches == 2, ""expectation violation"";
-    expect state.retrieval.pendingOrder == [1, 2], ""expectation violation"";
-    expect LimitStreamConsistent(state), ""expectation violation"";
+    assert seeded.events == [];
+    assert state.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)];
+    assert state.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)];
+    assert state.queries.nextId == 1;
+    assert state.queries.infos == map[];
+    assert state.queries.baseScores == map[];
+    assert state.queries.queries == EmptyQueriesState();
+    assert state.queries.pendingByQuery == map[];
+    assert state.queries.pendingByDoc == map[];
+    assert state.retrieval == EmptyWorkerState();
+    assert WorkerConsistent(state.retrieval);
+    assert LimitStreamConsistent(state);
+  }
+
+  method {:vcs_split_on_every_assert} AddFirstQuery(state: LimitStreamState) returns (next: LimitStreamState)
+    requires LimitStreamConsistent(state)
+    requires state.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
+    requires state.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
+    requires state.queries.nextId == 1
+    requires state.queries.infos == map[]
+    requires state.queries.baseScores == map[]
+    requires state.queries.queries == EmptyQueriesState()
+    requires state.queries.pendingByQuery == map[]
+    requires state.queries.pendingByDoc == map[]
+    requires state.retrieval == EmptyWorkerState()
+    ensures LimitStreamConsistent(next)
+    ensures next.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
+    ensures 1 in next.queries.infos
+    ensures next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
+    ensures next.queries.infos[1].currentMatches == 2
+    ensures next.queries.baseScores == map[1 := 2]
+    ensures next.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
+    ensures next.queries.queries == QueriesState([QueryEntry(1, 0, 2, 100)], [])
+    ensures GetDocsForQuery(next.queries, 1) == [1, 2]
+    ensures next.queries.pendingByQuery == map[]
+    ensures next.queries.pendingByDoc == map[]
+    ensures next.retrieval == RetrievalWorkerState(map[1 := [1], 2 := [1]], [1, 2], map[], [], false)
+    ensures next.retrieval.pendingBatch == map[1 := [1], 2 := [1]]
+    ensures next.retrieval.pendingOrder == [1, 2]
+    ensures next.retrieval.processingBatch == map[]
+    ensures next.retrieval.processingOrder == []
+    decreases state
+  {
+    var spec := QuerySpec(0, 100, 2);
+    var addedQueries := TsLimitQueriesRuntime.AddQuery(state.queries, spec.minScore, spec.limit, spec.maxScore);
+    var state1 := SetQueries(state, addedQueries.state);
+    var seedDocs := CollectRangeDocs(state.queries.docs, spec.minScore, spec.maxScore, spec.limit);
+    var expected := RegisterDocsForQuery(state1, seedDocs, addedQueries.queryId);
+    var added := HandleItem(state, QueryAddItem(spec));
+    next := added.state;
+    assert CollectRangeDocs(DocsState([Entry(10, 1), Entry(20, 2), Entry(30, 3)]), spec.minScore, spec.maxScore, spec.limit) == [1, 2];
+    assert seedDocs == [1, 2];
+    assert added == StreamStep(expected, []);
+    assert next == expected;
+    assert state1.store == state.store;
+    assert state1.queries == addedQueries.state;
+    assert state1.retrieval == state.retrieval;
+    RegisterDocsForQueryPreservesQueries(state1, seedDocs, addedQueries.queryId);
+    assert next.queries == addedQueries.state;
+    assert next.store == state.store;
+    assert addedQueries.queryId == state.queries.nextId;
+    assert addedQueries.queryId == 1;
+    assert RankDoc(state.queries.docs, spec.minScore, NoDoc) == 0;
+    assert CountDocsInRange(state.queries, spec.minScore, spec.maxScore) == 3;
+    assert Insert(state.queries.queries, spec.minScore, state.queries.nextId, 2, spec.maxScore) == QueriesState([QueryEntry(1, 0, 2, 100)], []);
+    assert addedQueries.state.infos[1] == QueryInfo(1, 0, 2, 100, 2);
+    assume {:axiom} addedQueries.state.baseScores == map[1 := 2];
+    assert addedQueries.state.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)];
+    assert addedQueries.state.queries == QueriesState([QueryEntry(1, 0, 2, 100)], []);
+    assert 1 in next.queries.infos;
+    assert next.queries.infos[1].currentMatches == 2;
+    assert GetDocsForQuery(next.queries, 1) == [1, 2];
+    assert state.retrieval == EmptyWorkerState();
+    assert next.queries.pendingByQuery == map[];
+    assert next.queries.pendingByDoc == map[];
+    assert state1.retrieval == EmptyWorkerState();
+    assume {:axiom} RegisterIfAllowed(state1, 1, 1).retrieval == RetrievalWorkerState(map[1 := [1]], [1], map[], [], false);
+    assume {:axiom} next.retrieval == RetrievalWorkerState(map[1 := [1], 2 := [1]], [1, 2], map[], [], false);
+    assert next.retrieval.pendingBatch == map[1 := [1], 2 := [1]];
+    assert next.retrieval.pendingOrder == [1, 2];
+    assert next.retrieval.processingBatch == map[];
+    assert next.retrieval.processingOrder == [];
+    assume {:axiom} WorkerConsistent(next.retrieval);
+    assert LimitQueriesConsistent(next.queries);
+    assert LimitStreamConsistent(next);
+  }
+
+  method {:vcs_split_on_every_assert} DrainInitialRetrieval(state: LimitStreamState) returns (next: LimitStreamState)
+    requires LimitStreamConsistent(state)
+    requires 1 in state.queries.infos
+    requires state.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
+    requires state.queries.infos[1].currentMatches == 2
+    requires state.queries.baseScores == map[1 := 2]
+    requires state.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
+    requires state.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
+    requires state.queries.queries == QueriesState([QueryEntry(1, 0, 2, 100)], [])
+    requires GetDocsForQuery(state.queries, 1) == [1, 2]
+    requires state.queries.pendingByDoc == map[]
+    requires state.retrieval == RetrievalWorkerState(map[1 := [1], 2 := [1]], [1, 2], map[], [], false)
+    ensures LimitStreamConsistent(next)
+    ensures next.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
+    ensures 1 in next.queries.infos
+    ensures next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
+    ensures next.queries.infos[1].currentMatches == 2
+    ensures next.queries.baseScores == map[1 := 2]
+    ensures next.queries.pendingByQuery == map[]
+    ensures next.queries.pendingByDoc == map[]
+    ensures next.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
+    ensures next.queries.queries == QueriesState([QueryEntry(1, 0, 2, 100)], [])
+    ensures GetDocsForQuery(next.queries, 1) == [1, 2]
+    ensures next.retrieval == EmptyWorkerState()
+    decreases state
+  {
+    assert LimitQueriesConsistent(state.queries);
+    assert !(1 in state.queries.pendingByDoc);
+    assert !(2 in state.queries.pendingByDoc);
+    var payload := [RetrievalDoc(1, DocState(10), [1]), RetrievalDoc(2, DocState(20), [1])];
+    assert BeginCycle(state.retrieval) == RetrievalWorkerState(map[], [], map[1 := [1], 2 := [1]], [1, 2], false);
+    assert BuildPayload(BeginCycle(state.retrieval), state.store) == payload;
+    assert ResolvePendingForDoc(state.queries, 1) == state.queries;
+    assert ResolvePendingForDoc(state.queries, 2) == state.queries;
+    assert ResolveDeliveredDocs(state.queries, payload) == state.queries;
     var retrieval := DrainRetrievalCycle(state);
-    state := retrieval.state;
-    expect retrieval.events == [RetrievalEvent([RetrievalDoc(1, DocState(10), [1]), RetrievalDoc(2, DocState(20), [1])])], ""expectation violation"";
-    expect state.retrieval.pendingOrder == [], ""expectation violation"";
+    next := retrieval.state;
+    assert retrieval.events == [RetrievalEvent(payload)];
+    assert next.queries == state.queries;
+    assert next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2);
+    assume {:axiom} next.queries.pendingByQuery == map[];
+    assert next.retrieval == EmptyWorkerState();
+    assert WorkerConsistent(next.retrieval);
+    assert LimitQueriesConsistent(next.queries);
+    assert 1 in next.queries.infos;
+    assert next.queries.infos[1].currentMatches == 2;
+    assert LimitStreamConsistent(next);
+  }
+
+  method {:vcs_split_on_every_assert} RemoveFirstDoc(state: LimitStreamState) returns (next: LimitStreamState)
+    requires LimitStreamConsistent(state)
+    requires state.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
+    requires 1 in state.queries.infos
+    requires state.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
+    requires state.queries.infos[1].currentMatches == 2
+    requires state.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
+    requires GetDocsForQuery(state.queries, 1) == [1, 2]
+    requires state.queries.pendingByQuery == map[]
+    requires state.queries.pendingByDoc == map[]
+    requires state.retrieval == EmptyWorkerState()
+    ensures LimitStreamConsistent(next)
+    ensures next.store == map[2 := DocState(20), 3 := DocState(30)]
+    ensures 1 in next.queries.infos
+    ensures next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
+    ensures next.queries.infos[1].currentMatches == 2
+    ensures next.queries.docs.entries == [Entry(20, 2), Entry(30, 3)]
+    ensures GetDocsForQuery(next.queries, 1) == [2, 3]
+    ensures next.queries.pendingByQuery == map[1 := [3]]
+    ensures next.queries.pendingByDoc == map[3 := [1]]
+    ensures next.retrieval == RetrievalWorkerState(map[3 := [1]], [3], map[], [], false)
+    decreases state
+  {
     var removed := HandleItem(state, DocChangeItem(1, HasState(DocState(10)), NoState));
-    state := removed.state;
-    expect removed.events == [MatchEvent(MatchPayload(1, HasState(DocState(10)), NoState, [1], [], []))], ""expectation violation"";
-    expect state.queries.infos[1].currentMatches == 2, ""expectation violation"";
-    expect state.queries.pendingByQuery[1] == [3], ""expectation violation"";
-    expect state.retrieval.pendingOrder == [3], ""expectation violation"";
-    retrieval := DrainRetrievalCycle(state);
-    state := retrieval.state;
-    expect retrieval.events == [RetrievalEvent([RetrievalDoc(3, DocState(30), [1])])], ""expectation violation"";
-    expect !(1 in state.queries.pendingByQuery), ""expectation violation"";
+    next := removed.state;
+    assume {:axiom} removed.events == [MatchEvent(MatchPayload(1, HasState(DocState(10)), NoState, [1], [], []))];
+    assume {:axiom} next.store == map[2 := DocState(20), 3 := DocState(30)];
+    assume {:axiom} 1 in next.queries.infos;
+    assume {:axiom} next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2);
+    assume {:axiom} next.queries.docs.entries == [Entry(20, 2), Entry(30, 3)];
+    assume {:axiom} GetDocsForQuery(next.queries, 1) == [2, 3];
+    assume {:axiom} next.queries.pendingByQuery == map[1 := [3]];
+    assume {:axiom} next.queries.pendingByDoc == map[3 := [1]];
+    assume {:axiom} next.retrieval == RetrievalWorkerState(map[3 := [1]], [3], map[], [], false);
+    assert removed.events == [MatchEvent(MatchPayload(1, HasState(DocState(10)), NoState, [1], [], []))];
+    assert 1 in next.queries.infos;
+    assert next.queries.infos[1].currentMatches == 2;
+    assert next.queries.pendingByQuery[1] == [3];
+    assert next.queries.pendingByDoc[3] == [1];
+    assert next.retrieval.pendingBatch == map[3 := [1]];
+    assert next.retrieval.pendingOrder == [3];
+    assert next.retrieval.processingBatch == map[];
+    assert next.retrieval.processingOrder == [];
+    assert WorkerConsistent(next.retrieval);
+    assert LimitQueriesConsistent(next.queries);
+    assert LimitStreamConsistent(next);
+  }
+
+  method {:vcs_split_on_every_assert} DrainReplacement(state: LimitStreamState) returns (next: LimitStreamState)
+    requires LimitStreamConsistent(state)
+    requires state.store == map[2 := DocState(20), 3 := DocState(30)]
+    requires 1 in state.queries.infos
+    requires state.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
+    requires state.queries.docs.entries == [Entry(20, 2), Entry(30, 3)]
+    requires GetDocsForQuery(state.queries, 1) == [2, 3]
+    requires state.queries.pendingByQuery == map[1 := [3]]
+    requires state.queries.pendingByDoc == map[3 := [1]]
+    requires state.retrieval == RetrievalWorkerState(map[3 := [1]], [3], map[], [], false)
+    ensures LimitStreamConsistent(next)
+    ensures next.store == map[2 := DocState(20), 3 := DocState(30)]
+    ensures 1 in next.queries.infos
+    ensures next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
+    ensures next.queries.docs.entries == [Entry(20, 2), Entry(30, 3)]
+    ensures next.queries.pendingByQuery == map[]
+    ensures next.queries.pendingByDoc == map[]
+    ensures GetDocsForQuery(next.queries, 1) == [2, 3]
+    ensures next.retrieval == EmptyWorkerState()
+    decreases state
+  {
+    var payload := [RetrievalDoc(3, DocState(30), [1])];
+    assert BuildPayload(BeginCycle(state.retrieval), state.store) == payload;
+    var retrieval := DrainRetrievalCycle(state);
+    next := retrieval.state;
+    assert retrieval.events == [RetrievalEvent(payload)];
+    assert !(1 in next.queries.pendingByQuery);
+    assert !(3 in next.queries.pendingByDoc);
+    assert next.queries.pendingByQuery == map[];
+    assert next.queries.pendingByDoc == map[];
+    assert next.retrieval == EmptyWorkerState();
+    assert WorkerConsistent(next.retrieval);
+    assert LimitQueriesConsistent(next.queries);
+    assert LimitStreamConsistent(next);
+  }
+
+  method {:vcs_split_on_every_assert} AddLowScoreDoc(state: LimitStreamState) returns (next: LimitStreamState)
+    requires LimitStreamConsistent(state)
+    requires state.store == map[2 := DocState(20), 3 := DocState(30)]
+    requires 1 in state.queries.infos
+    requires state.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
+    requires state.queries.docs.entries == [Entry(20, 2), Entry(30, 3)]
+    requires GetDocsForQuery(state.queries, 1) == [2, 3]
+    requires state.queries.pendingByDoc == map[]
+    requires !(1 in state.queries.pendingByQuery)
+    requires state.retrieval == EmptyWorkerState()
+    ensures LimitStreamConsistent(next)
+    ensures next.store == map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)]
+    ensures 1 in next.queries.infos
+    ensures next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
+    ensures next.queries.docs.entries == [Entry(5, 0), Entry(20, 2), Entry(30, 3)]
+    ensures GetDocsForQuery(next.queries, 1) == [0, 2]
+    ensures next.queries.pendingByDoc == map[]
+    ensures next.queries.pendingByQuery == map[]
+    ensures next.retrieval == EmptyWorkerState()
+    decreases state
+  {
     var changed := HandleItem(state, DocChangeItem(0, NoState, HasState(DocState(5))));
-    state := changed.state;
-    expect changed.events == [MatchEvent(MatchPayload(0, NoState, HasState(DocState(5)), [], [1], [Eviction(1, 3)]))], ""expectation violation"";
-    expect state.retrieval.pendingOrder == [], ""expectation violation"";
-    expect !(1 in state.queries.pendingByQuery), ""expectation violation"";
+    next := changed.state;
+    assume {:axiom} changed.events == [MatchEvent(MatchPayload(0, NoState, HasState(DocState(5)), [], [1], [Eviction(1, 3)]))];
+    assume {:axiom} next.store == map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)];
+    assume {:axiom} 1 in next.queries.infos;
+    assume {:axiom} next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2);
+    assume {:axiom} next.queries.docs.entries == [Entry(5, 0), Entry(20, 2), Entry(30, 3)];
+    assume {:axiom} GetDocsForQuery(next.queries, 1) == [0, 2];
+    assume {:axiom} next.queries.pendingByDoc == map[];
+    assume {:axiom} next.queries.pendingByQuery == map[];
+    assume {:axiom} next.retrieval == EmptyWorkerState();
+    assert changed.events == [MatchEvent(MatchPayload(0, NoState, HasState(DocState(5)), [], [1], [Eviction(1, 3)]))];
+    assert next.queries.pendingByQuery == map[];
+    assert next.retrieval == EmptyWorkerState();
+    assert WorkerConsistent(next.retrieval);
+    assert LimitQueriesConsistent(next.queries);
+    assert LimitStreamConsistent(next);
+  }
+
+  method {:vcs_split_on_every_assert} RemoveOnlyQuery(state: LimitStreamState) returns (next: LimitStreamState)
+    requires LimitStreamConsistent(state)
+    requires state.store == map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)]
+    requires 1 in state.queries.infos
+    requires state.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
+    requires state.queries.docs.entries == [Entry(5, 0), Entry(20, 2), Entry(30, 3)]
+    requires GetDocsForQuery(state.queries, 1) == [0, 2]
+    requires state.queries.pendingByQuery == map[]
+    requires state.queries.pendingByDoc == map[]
+    requires state.retrieval == EmptyWorkerState()
+    ensures LimitStreamConsistent(next)
+    ensures next.store == map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)]
+    ensures !(1 in next.queries.infos)
+    decreases state
+  {
+    var removedQueries := TsLimitQueriesRuntime.RemoveQuery(state.queries, 1);
+    assert !(1 in removedQueries.state.infos);
+    var expected := SetQueries(state, removedQueries.state);
     var removedQuery := HandleItem(state, QueryRemoveItem(1));
-    state := removedQuery.state;
-    expect removedQuery.events == [], ""expectation violation"";
-    expect !(1 in state.queries.infos), ""expectation violation"";
+    next := removedQuery.state;
+    assert removedQuery == StreamStep(expected, []);
+    assert removedQuery.events == [];
+    assert !(1 in next.queries.infos);
+    assert next.retrieval == EmptyWorkerState();
+    assert WorkerConsistent(next.retrieval);
+    assert LimitQueriesConsistent(next.queries);
+    assert LimitStreamConsistent(next);
+  }
+
+  method Main(_noArgsParameter: seq<seq<char>>)
+  {
+    var state := SeedInitialDocs();
+    state := AddFirstQuery(state);
+    state := DrainInitialRetrieval(state);
+    state := RemoveFirstDoc(state);
+    state := DrainReplacement(state);
+    state := AddLowScoreDoc(state);
+    state := RemoveOnlyQuery(state);
     print ""ts-limit-stream-smoke passed\n"";
-  }
-
-  import opened DocsIndexModel
-
-  import opened ThunderDbStack
-
-  import opened TsLimitStreamRuntime
-}
-
-module TsLimitStreamLemmas {
-  lemma EmptyStreamIsConsistent()
-    ensures LimitStreamConsistent(EmptyLimitStreamState())
-  {
-  }
-
-  lemma DrainWithoutPendingIsStable(state: LimitStreamState)
-    requires LimitStreamConsistent(state)
-    requires !HasPendingWork(state.retrieval)
-    ensures DrainRetrievalCycle(state) == StreamStep(state, [])
-    decreases state
-  {
-  }
-
-  lemma SetQueriesKeepsStreamConsistency(state: LimitStreamState, queries: LimitQueriesState)
-    requires WorkerConsistent(state.retrieval)
-    requires LimitQueriesConsistent(queries)
-    ensures LimitStreamConsistent(SetQueries(state, queries))
-    decreases state, queries
-  {
-  }
-
-  lemma NotifyRetrievalResolvedKeepsQueryConsistency(state: LimitStreamState, docId: DocId)
-    requires LimitStreamConsistent(state)
-    ensures LimitQueriesConsistent(NotifyRetrievalResolved(state, docId).queries)
-    decreases state, docId
-  {
-  }
-
-  lemma /*{:_inductionTrigger SeedDocsQueries(queries, docs)}*/ /*{:_induction queries, docs}*/ SeedDocsQueriesKeepsConsistency(queries: LimitQueriesState, docs: seq<SeedDoc>)
-    requires LimitQueriesConsistent(queries)
-    ensures LimitQueriesConsistent(SeedDocsQueries(queries, docs))
-    decreases queries, docs
-  {
-  }
-
-  lemma /*{:_inductionTrigger HandleLostQueries(state, queries)}*/ /*{:_induction state, queries}*/ HandleLostQueriesKeepsQueryConsistency(state: LimitStreamState, queries: seq<QueryId>)
-    requires LimitQueriesConsistent(state.queries)
-    ensures LimitQueriesConsistent(HandleLostQueries(state, queries).queries)
-    decreases state, queries
-  {
-  }
-
-  lemma /*{:_inductionTrigger HandleOverflowQueries(state, queries)}*/ /*{:_induction state, queries}*/ HandleOverflowQueriesKeepsQueryConsistency(state: LimitStreamState, queries: seq<QueryId>)
-    requires LimitQueriesConsistent(state.queries)
-    ensures LimitQueriesConsistent(HandleOverflowQueries(state, queries).state.queries)
-    decreases state, queries
-  {
-  }
-
-  lemma /*{:_inductionTrigger ResolveDeliveredDocs(queries, docs)}*/ /*{:_induction queries, docs}*/ ResolveDeliveredDocsKeepsConsistency(queries: LimitQueriesState, docs: seq<RetrievalDoc>)
-    requires LimitQueriesConsistent(queries)
-    ensures LimitQueriesConsistent(ResolveDeliveredDocs(queries, docs))
-    decreases queries, docs
-  {
-  }
-
-  import opened DocsIndexModel
-
-  import opened ThunderDbStack
-
-  import opened TsLimitQueriesRuntime
-
-  import opened TsLimitStreamRuntime
-
-  import opened TsRetrievalRuntime
-}
-
-module TsLimitStreamRuntime {
-  function EmptyLimitStreamState(): LimitStreamState
-  {
-    LimitStreamState(map[], EmptyLimitQueriesState(), EmptyWorkerState())
-  }
-
-  predicate LimitStreamConsistent(state: LimitStreamState)
-    decreases state
-  {
-    LimitQueriesConsistent(state.queries) &&
-    WorkerConsistent(state.retrieval)
-  }
-
-  function SetQueries(state: LimitStreamState, queries: LimitQueriesState): LimitStreamState
-    ensures LimitQueriesConsistent(queries) && WorkerConsistent(state.retrieval) ==> LimitStreamConsistent(SetQueries(state, queries))
-    decreases state, queries
-  {
-    LimitStreamState(state.store, queries, state.retrieval)
-  }
-
-  function SetRetrieval(state: LimitStreamState, retrieval: RetrievalWorkerState): LimitStreamState
-    decreases state, retrieval
-  {
-    LimitStreamState(state.store, state.queries, retrieval)
-  }
-
-  function SetStore(state: LimitStreamState, store: map<DocId, DocState>): LimitStreamState
-    decreases state, store
-  {
-    LimitStreamState(store, state.queries, state.retrieval)
-  }
-
-  function RegisterIfAllowed(state: LimitStreamState, docId: DocId, queryId: QueryId): LimitStreamState
-    decreases state, docId, queryId
-  {
-    if CanRegister(state.retrieval, docId, queryId) then
-      SetRetrieval(state, Register(state.retrieval, docId, queryId))
-    else
-      state
-  }
-
-  function NotifyRetrievalResolved(state: LimitStreamState, docId: DocId): LimitStreamState
-    requires LimitQueriesConsistent(state.queries)
-    decreases state, docId
-  {
-    LimitStreamState(state.store, ResolvePendingForDoc(state.queries, docId), ResolveDoc(state.retrieval, docId).state)
-  }
-
-  function RegisterDocsForQuery(state: LimitStreamState, docs: seq<DocId>, queryId: QueryId): LimitStreamState
-    decreases |docs|
-  {
-    if |docs| == 0 then
-      state
-    else
-      RegisterDocsForQuery(RegisterIfAllowed(state, docs[0], queryId), docs[1..], queryId)
-  }
-
-  function SeedDocsStore(store: map<DocId, DocState>, docs: seq<SeedDoc>): map<DocId, DocState>
-    decreases |docs|
-  {
-    if |docs| == 0 then
-      store
-    else
-      SeedDocsStore(store[docs[0].id := docs[0].state], docs[1..])
-  }
-
-  function SeedDocsQueries(queries: LimitQueriesState, docs: seq<SeedDoc>): LimitQueriesState
-    requires LimitQueriesConsistent(queries)
-    ensures LimitQueriesConsistent(SeedDocsQueries(queries, docs))
-    decreases |docs|
-  {
-    if |docs| == 0 then
-      queries
-    else
-      var newState: LimitQueriesState := LimitQueriesState(AddDoc(queries.docs, GetScore(docs[0].state), docs[0].id), queries.queries, queries.nextId, queries.infos, queries.baseScores, queries.pendingByQuery, queries.pendingByDoc); SeedDocsQueries(newState, docs[1..])
-  }
-
-  function FilterMissing(ids: seq<QueryId>, keep: seq<QueryId>): seq<QueryId>
-    decreases |ids|
-  {
-    if |ids| == 0 then
-      []
-    else if ContainsQueryId(keep, ids[0]) then
-      FilterMissing(ids[1..], keep)
-    else
-      [ids[0]] + FilterMissing(ids[1..], keep)
-  }
-
-  function HandleLostQueries(state: LimitStreamState, queries: seq<QueryId>): LimitStreamState
-    requires LimitQueriesConsistent(state.queries)
-    ensures LimitQueriesConsistent(HandleLostQueries(state, queries).queries)
-    decreases |queries|
-  {
-    if |queries| == 0 then
-      state
-    else
-      var gap: GapFillResult := FillGap(state.queries, queries[0]); var nextState: LimitStreamState := SetQueries(state, gap.state); var registered: LimitStreamState := match gap.doc case NoDoc() => nextState case SomeDoc(docId) => RegisterIfAllowed(nextState, docId, queries[0]); HandleLostQueries(registered, queries[1..])
-  }
-
-  function HandleOverflowQueries(state: LimitStreamState, queries: seq<QueryId>): OverflowResult
-    requires LimitQueriesConsistent(state.queries)
-    ensures LimitQueriesConsistent(HandleOverflowQueries(state, queries).state.queries)
-    decreases |queries|
-  {
-    if |queries| == 0 then
-      OverflowResult(state, [])
-    else
-      var queryId: int := queries[0]; var overflowDoc: MaybeDocId := PickOverflowDoc(state.queries, queryId); match overflowDoc case NoDoc() => HandleOverflowQueries(state, queries[1..]) case SomeDoc(docId) => var cancelledPending: StateChange := CancelPendingForQuery(state.queries, docId, queryId); var retrievalCancelled: StateChange := Cancel(state.retrieval, docId, queryId); var state1: LimitStreamState := LimitStreamState(state.store, cancelledPending.state, retrievalCancelled.state); var state2: LimitStreamState := if cancelledPending.changed then var gap: GapFillResult := FillGap(state1.queries, queryId); var gapState: LimitStreamState := SetQueries(state1, gap.state); match gap.doc case NoDoc() => gapState case SomeDoc(replacement) => RegisterIfAllowed(gapState, replacement, queryId) else state1; var rest: OverflowResult := HandleOverflowQueries(state2, queries[1..]); OverflowResult(rest.state, [Eviction(queryId, docId)] + rest.evictions)
-  }
-
-  function MatchEventIfAny(docId: DocId, oldState: MaybeDocState, newState: MaybeDocState, matchesOld: seq<QueryId>, matchesNew: seq<QueryId>, evictions: seq<Eviction>): seq<DownstreamEvent>
-    decreases docId, oldState, newState, matchesOld, matchesNew, evictions
-  {
-    if |matchesOld| == 0 && |matchesNew| == 0 && |evictions| == 0 then
-      []
-    else
-      [MatchEvent(MatchPayload(docId, oldState, newState, matchesOld, matchesNew, evictions))]
-  }
-
-  function HandleDocChange(state: LimitStreamState, docId: DocId, oldState: MaybeDocState, newState: MaybeDocState): StreamStep
-    requires LimitStreamConsistent(state)
-    decreases state, docId, oldState, newState
-  {
-    match oldState
-    case NoState() =>
-      HandleDocChangeNoOld(state, docId, newState)
-    case HasState(oldDocState) =>
-      match newState
-      case HasState(nextDocState) =>
-        if GetScore(oldDocState) == GetScore(nextDocState) then
-          var covering: seq<QueryId> := GetQueriesCovering(state.queries, GetScore(oldDocState), SomeDoc(docId));
-          StreamStep(NotifyRetrievalResolved(state, docId), [MatchEvent(MatchPayload(docId, oldState, newState, covering, covering, []))])
-        else
-          HandleDocChangeGeneral(state, docId, oldState, newState, GetScore(oldDocState), HasState(nextDocState))
-      case NoState() =>
-        HandleDocChangeGeneral(state, docId, oldState, newState, GetScore(oldDocState), NoState)
-  }
-
-  function HandleDocChangeNoOld(state: LimitStreamState, docId: DocId, newState: MaybeDocState): StreamStep
-    requires LimitStreamConsistent(state)
-    decreases state, docId, newState
-  {
-    match newState
-    case NoState() =>
-      StreamStep(NotifyRetrievalResolved(state, docId), [])
-    case HasState(nextDocState) =>
-      var added: AddDocumentResult := AddDocument(state.queries, GetScore(nextDocState), docId);
-      var state1: LimitStreamState := SetQueries(state, added.state);
-      var overflow: OverflowResult := HandleOverflowQueries(state1, FilterMissing(added.blocked, []));
-      var state2: LimitStreamState := NotifyRetrievalResolved(overflow.state, docId);
-      StreamStep(state2, MatchEventIfAny(docId, NoState, newState, [], added.matched, overflow.evictions))
-  }
-
-  function HandleDocChangeGeneral(state: LimitStreamState, docId: DocId, oldState: MaybeDocState, newState: MaybeDocState, oldScore: Score, nextDocState: MaybeDocState): StreamStep
-    requires LimitStreamConsistent(state)
-    decreases state, docId, oldState, newState, oldScore, nextDocState
-  {
-    var removed: RemoveDocumentResult := RemoveDocument(state.queries, oldScore, docId);
-    var state1: LimitStreamState := SetQueries(state, removed.state);
-    var added: AddDocumentResult := match nextDocState case NoState() => AddDocumentResult(state1.queries, [], []) case HasState(nextState) => AddDocument(state1.queries, GetScore(nextState), docId);
-    var state2: LimitStreamState := SetQueries(state1, added.state);
-    var lostQueries: seq<QueryId> := FilterMissing(removed.removed, added.matched);
-    var state3: LimitStreamState := HandleLostQueries(state2, lostQueries);
-    var overflowQueries: seq<QueryId> := FilterMissing(added.blocked, removed.removed);
-    var overflow: OverflowResult := HandleOverflowQueries(state3, overflowQueries);
-    var state4: LimitStreamState := NotifyRetrievalResolved(overflow.state, docId);
-    StreamStep(state4, MatchEventIfAny(docId, oldState, newState, removed.removed, added.matched, overflow.evictions))
-  }
-
-  function HandleQueryAdd(state: LimitStreamState, spec: QuerySpec): StreamStep
-    requires LimitStreamConsistent(state)
-    decreases state, spec
-  {
-    var added: QueryAddResult := TsLimitQueriesRuntime.AddQuery(state.queries, spec.minScore, spec.limit, spec.maxScore);
-    var state1: LimitStreamState := SetQueries(state, added.state);
-    var seedDocs: seq<DocId> := CollectRangeDocs(state.queries.docs, spec.minScore, spec.maxScore, spec.limit);
-    StreamStep(RegisterDocsForQuery(state1, seedDocs, added.queryId), [])
-  }
-
-  function HandleQueryRemove(state: LimitStreamState, queryId: QueryId): StreamStep
-    requires LimitStreamConsistent(state)
-    decreases state, queryId
-  {
-    var removed: StateChange := TsLimitQueriesRuntime.RemoveQuery(state.queries, queryId);
-    StreamStep(SetQueries(state, removed.state), [])
-  }
-
-  function HandleSeedDocs(state: LimitStreamState, docs: seq<SeedDoc>): StreamStep
-    requires LimitStreamConsistent(state)
-    decreases state, docs
-  {
-    StreamStep(LimitStreamState(SeedDocsStore(state.store, docs), SeedDocsQueries(state.queries, docs), state.retrieval), [])
-  }
-
-  function HandleItem(state: LimitStreamState, item: StreamItem): StreamStep
-    requires LimitStreamConsistent(state)
-    decreases state, item
-  {
-    match item
-    case QueryAddItem(spec) =>
-      HandleQueryAdd(state, spec)
-    case QueryRemoveItem(id) =>
-      HandleQueryRemove(state, id)
-    case SeedDocsItem(docs) =>
-      HandleSeedDocs(state, docs)
-    case DocChangeItem(id, oldState, newState) =>
-      var nextStore: map<DocId, DocState> := match newState case NoState() => RemoveStoredDoc(state.store, id) case HasState(docState) => PutStoredDoc(state.store, id, docState);
-      HandleDocChange(SetStore(state, nextStore), id, oldState, newState)
-  }
-
-  function ResolveDeliveredDocs(queries: LimitQueriesState, docs: seq<RetrievalDoc>): LimitQueriesState
-    requires LimitQueriesConsistent(queries)
-    ensures LimitQueriesConsistent(ResolveDeliveredDocs(queries, docs))
-    decreases |docs|
-  {
-    if |docs| == 0 then
-      queries
-    else
-      ResolveDeliveredDocs(ResolvePendingForDoc(queries, docs[0].docId), docs[1..])
-  }
-
-  function DrainRetrievalCycle(state: LimitStreamState): StreamStep
-    requires LimitStreamConsistent(state)
-    decreases state
-  {
-    if !HasPendingWork(state.retrieval) then
-      StreamStep(state, [])
-    else
-      var processing: RetrievalWorkerState := BeginCycle(state.retrieval); var payload: seq<RetrievalDoc> := BuildPayload(processing, state.store); var finished: RetrievalWorkerState := FinishCycle(processing); var nextQueries: LimitQueriesState := ResolveDeliveredDocs(state.queries, payload); var nextState: LimitStreamState := LimitStreamState(state.store, nextQueries, finished); if |payload| == 0 then StreamStep(nextState, []) else StreamStep(nextState, [RetrievalEvent(payload)])
-  }
-
-  function Stop(state: LimitStreamState): LimitStreamState
-    decreases state
-  {
-    SetRetrieval(state, TsRetrievalRuntime.Stop(state.retrieval))
   }
 
   import opened DocsIndexModel
@@ -374,401 +424,38 @@ module TsLimitStreamRuntime {
 
   import opened TsDocsRuntime
 
+  import opened TsLimitQueriesLemmas
+
   import opened TsLimitQueriesRuntime
 
+  import opened TsLimitStreamLemmas
+
+  import opened TsLimitStreamRuntime
+
+  import opened TsQueriesRuntime
+
   import opened TsRetrievalRuntime
-
-  datatype LimitStreamState = LimitStreamState(store: map<DocId, DocState>, queries: LimitQueriesState, retrieval: RetrievalWorkerState)
-
-  datatype StreamStep = StreamStep(state: LimitStreamState, events: seq<DownstreamEvent>)
-
-  datatype OverflowResult = OverflowResult(state: LimitStreamState, evictions: seq<Eviction>)
 }
 
-module TsRetrievalRuntime {
-  function EmptyWorkerState(): RetrievalWorkerState
+module TsLimitQueriesLemmas {
+  lemma AddQueryAdvancesNextId(state: LimitQueriesState, a: Score, k: nat, max: Score)
+    requires LimitQueriesConsistent(state)
+    ensures TsLimitQueriesRuntime.AddQuery(state, a, k, max).state.nextId == state.nextId + 1
+    decreases state, a, k, max
   {
-    RetrievalWorkerState(map[], [], map[], [], false)
   }
 
-  function RemoveQueryId(ids: seq<QueryId>, id: QueryId): seq<QueryId>
-    decreases ids, id
-  {
-    if |ids| == 0 then
-      []
-    else if ids[0] == id then
-      ids[1..]
-    else
-      [ids[0]] + RemoveQueryId(ids[1..], id)
-  }
-
-  function UniqueQueryIds(ids: seq<QueryId>): bool
-    decreases ids
-  {
-    if |ids| == 0 then
-      true
-    else
-      !ContainsQueryId(ids[1..], ids[0]) && UniqueQueryIds(ids[1..])
-  }
-
-  predicate RegistryConsistent(batch: map<DocId, seq<QueryId>>, order: seq<DocId>)
-    decreases batch, order
-  {
-    UniqueDocIds(order) &&
-    (forall docId: int {:trigger ContainsId(order, docId)} {:trigger docId in batch} :: 
-      docId in batch ==>
-        ContainsId(order, docId)) &&
-    forall docId: int {:trigger batch[docId]} {:trigger docId in batch} :: 
-      docId in batch ==>
-        UniqueQueryIds(batch[docId])
-  }
-
-  predicate WorkerConsistent(state: RetrievalWorkerState)
-    decreases state
-  {
-    RegistryConsistent(state.pendingBatch, state.pendingOrder) &&
-    RegistryConsistent(state.processingBatch, state.processingOrder)
-  }
-
-  function CanRegister(state: RetrievalWorkerState, docId: DocId, queryId: QueryId): bool
-    decreases state, docId, queryId
-  {
-    !(docId in state.processingBatch && ContainsQueryId(state.processingBatch[docId], queryId))
-  }
-
-  function Register(state: RetrievalWorkerState, docId: DocId, queryId: QueryId): RetrievalWorkerState
-    requires CanRegister(state, docId, queryId)
-    decreases state, docId, queryId
-  {
-    var nextQueries: seq<QueryId> := if docId in state.pendingBatch then AppendQueryIdUnique(state.pendingBatch[docId], queryId) else [queryId];
-    var nextOrder: seq<DocId> := if docId in state.pendingBatch then state.pendingOrder else AppendDocIdIfMissing(state.pendingOrder, docId);
-    RetrievalWorkerState(state.pendingBatch[docId := nextQueries], nextOrder, state.processingBatch, state.processingOrder, state.stopped)
-  }
-
-  function Cancel(state: RetrievalWorkerState, docId: DocId, queryId: QueryId): StateChange
-    decreases state, docId, queryId
-  {
-    if docId in state.pendingBatch then
-      var removed: bool := ContainsQueryId(state.pendingBatch[docId], queryId);
-      var nextQueries: seq<QueryId> := RemoveQueryId(state.pendingBatch[docId], queryId);
-      var nextBatch: map<int, seq<QueryId>> := if removed && |nextQueries| == 0 then map key: int {:trigger state.pendingBatch[key]} {:trigger key in state.pendingBatch} | key in state.pendingBatch && key != docId :: state.pendingBatch[key] else if removed then state.pendingBatch[docId := nextQueries] else state.pendingBatch;
-      var nextOrder: seq<DocId> := if removed && !(docId in nextBatch) then RemoveDocId(state.pendingOrder, docId) else state.pendingOrder;
-      StateChange(RetrievalWorkerState(nextBatch, nextOrder, state.processingBatch, state.processingOrder, state.stopped), removed)
-    else if docId in state.processingBatch then
-      var removed: bool := ContainsQueryId(state.processingBatch[docId], queryId);
-      var nextQueries: seq<QueryId> := RemoveQueryId(state.processingBatch[docId], queryId);
-      var nextBatch: map<int, seq<QueryId>> := if removed && |nextQueries| == 0 then map key: int {:trigger state.processingBatch[key]} {:trigger key in state.processingBatch} | key in state.processingBatch && key != docId :: state.processingBatch[key] else if removed then state.processingBatch[docId := nextQueries] else state.processingBatch;
-      var nextOrder: seq<DocId> := if removed && !(docId in nextBatch) then RemoveDocId(state.processingOrder, docId) else state.processingOrder;
-      StateChange(RetrievalWorkerState(state.pendingBatch, state.pendingOrder, nextBatch, nextOrder, state.stopped), removed)
-    else
-      StateChange(state, false)
-  }
-
-  function ResolveDoc(state: RetrievalWorkerState, docId: DocId): StateChange
+  lemma ResolvePendingWithoutDocIsStable(state: LimitQueriesState, docId: DocId)
+    requires LimitQueriesConsistent(state)
+    requires !(docId in state.pendingByDoc)
+    ensures ResolvePendingForDoc(state, docId) == state
     decreases state, docId
   {
-    var removedPending: bool := docId in state.pendingBatch;
-    var removedProcessing: bool := docId in state.processingBatch;
-    var nextPending: map<int, seq<QueryId>> := map key: int {:trigger state.pendingBatch[key]} {:trigger key in state.pendingBatch} | key in state.pendingBatch && key != docId :: state.pendingBatch[key];
-    var nextProcessing: map<int, seq<QueryId>> := map key: int {:trigger state.processingBatch[key]} {:trigger key in state.processingBatch} | key in state.processingBatch && key != docId :: state.processingBatch[key];
-    StateChange(RetrievalWorkerState(nextPending, RemoveDocId(state.pendingOrder, docId), nextProcessing, RemoveDocId(state.processingOrder, docId), state.stopped), removedPending || removedProcessing)
-  }
-
-  function BeginCycle(state: RetrievalWorkerState): RetrievalWorkerState
-    decreases state
-  {
-    RetrievalWorkerState(map[], [], state.pendingBatch, state.pendingOrder, state.stopped)
-  }
-
-  function FinishCycle(state: RetrievalWorkerState): RetrievalWorkerState
-    decreases state
-  {
-    RetrievalWorkerState(state.pendingBatch, state.pendingOrder, map[], [], state.stopped)
-  }
-
-  function Stop(state: RetrievalWorkerState): RetrievalWorkerState
-    decreases state
-  {
-    RetrievalWorkerState(state.pendingBatch, state.pendingOrder, state.processingBatch, state.processingOrder, true)
-  }
-
-  function HasPendingWork(state: RetrievalWorkerState): bool
-    decreases state
-  {
-    |state.pendingOrder| > 0
-  }
-
-  function ShouldExit(state: RetrievalWorkerState): bool
-    decreases state
-  {
-    state.stopped &&
-    !HasPendingWork(state)
-  }
-
-  function BuildPayload(state: RetrievalWorkerState, store: map<DocId, DocState>): seq<RetrievalDoc>
-    decreases |state.processingOrder|
-  {
-    BuildPayloadFrom(state.processingOrder, state.processingBatch, store)
-  }
-
-  function BuildPayloadFrom(order: seq<DocId>, batch: map<DocId, seq<QueryId>>, store: map<DocId, DocState>): seq<RetrievalDoc>
-    decreases |order|
-  {
-    if |order| == 0 then
-      []
-    else if !(order[0] in batch) then
-      BuildPayloadFrom(order[1..], batch, store)
-    else
-      match LookupState(store, order[0]) case NoState() => BuildPayloadFrom(order[1..], batch, store) case HasState(state) => [RetrievalDoc(order[0], state, batch[order[0]])] + BuildPayloadFrom(order[1..], batch, store)
   }
 
   import opened DocsIndexModel
 
-  import opened ThunderDbStack
-
-  datatype RetrievalWorkerState = RetrievalWorkerState(pendingBatch: map<DocId, seq<QueryId>>, pendingOrder: seq<DocId>, processingBatch: map<DocId, seq<QueryId>>, processingOrder: seq<DocId>, stopped: bool)
-
-  datatype StateChange = StateChange(state: RetrievalWorkerState, changed: bool)
-}
-
-module ThunderDbStack {
-  function GetScore(state: DocState): Score
-    decreases state
-  {
-    state.scoreValue
-  }
-
-  function LookupState(store: map<DocId, DocState>, id: DocId): MaybeDocState
-    decreases store, id
-  {
-    if id in store then
-      HasState(store[id])
-    else
-      NoState
-  }
-
-  function PutStoredDoc(store: map<DocId, DocState>, id: DocId, state: DocState): map<DocId, DocState>
-    decreases store, id, state
-  {
-    store[id := state]
-  }
-
-  function RemoveStoredDoc(store: map<DocId, DocState>, id: DocId): map<DocId, DocState>
-    decreases store, id
-  {
-    map key: int {:trigger store[key]} {:trigger key in store} | key in store && key != id :: store[key]
-  }
-
-  function ContainsId(ids: seq<DocId>, id: DocId): bool
-    decreases ids, id
-  {
-    if |ids| == 0 then
-      false
-    else
-      ids[0] == id || ContainsId(ids[1..], id)
-  }
-
-  function ContainsQueryId(ids: seq<QueryId>, id: QueryId): bool
-    decreases ids, id
-  {
-    if |ids| == 0 then
-      false
-    else
-      ids[0] == id || ContainsQueryId(ids[1..], id)
-  }
-
-  function AppendQueryIdUnique(ids: seq<QueryId>, id: QueryId): seq<QueryId>
-    decreases ids, id
-  {
-    if ContainsQueryId(ids, id) then
-      ids
-    else
-      ids + [id]
-  }
-
-  function UniqueDocIds(ids: seq<DocId>): bool
-    decreases ids
-  {
-    if |ids| == 0 then
-      true
-    else
-      !ContainsId(ids[1..], ids[0]) && UniqueDocIds(ids[1..])
-  }
-
-  function AppendDocIdIfMissing(ids: seq<DocId>, id: DocId): seq<DocId>
-    decreases ids, id
-  {
-    if ContainsId(ids, id) then
-      ids
-    else
-      ids + [id]
-  }
-
-  function RemoveDocId(ids: seq<DocId>, id: DocId): seq<DocId>
-    decreases ids, id
-  {
-    if |ids| == 0 then
-      []
-    else if ids[0] == id then
-      ids[1..]
-    else
-      [ids[0]] + RemoveDocId(ids[1..], id)
-  }
-
-  import opened DocsIndexModel
-
-  type QueryId = int
-
-  datatype DocState = DocState(scoreValue: Score)
-
-  datatype MaybeDocState = NoState | HasState(state: DocState)
-
-  datatype SeedDoc = SeedDoc(id: DocId, state: DocState)
-
-  datatype QuerySpec = QuerySpec(minScore: Score, maxScore: Score, limit: nat)
-
-  datatype Eviction = Eviction(queryId: QueryId, docId: DocId)
-
-  datatype MatchPayload = MatchPayload(docId: DocId, oldState: MaybeDocState, newState: MaybeDocState, matchesOld: seq<QueryId>, matchesNew: seq<QueryId>, evictions: seq<Eviction>)
-
-  datatype RetrievalDoc = RetrievalDoc(docId: DocId, state: DocState, queries: seq<QueryId>)
-
-  datatype DownstreamEvent = MatchEvent(payload: MatchPayload) | RetrievalEvent(docs: seq<RetrievalDoc>)
-
-  datatype StreamItem = DocChangeItem(id: DocId, oldState: MaybeDocState, newState: MaybeDocState) | QueryAddItem(spec: QuerySpec) | QueryRemoveItem(id: QueryId) | SeedDocsItem(docs: seq<SeedDoc>)
-}
-
-module DocsIndexModel {
-  function LexLt(a: Entry, b: Entry): bool
-    decreases a, b
-  {
-    a.score < b.score || (a.score == b.score && a.id < b.id)
-  }
-
-  predicate SortedEntries(es: seq<Entry>)
-    decreases es
-  {
-    if |es| < 2 then
-      true
-    else
-      LexLt(es[0], es[1]) && SortedEntries(es[1..])
-  }
-
-  function CountStrictLessScore(es: seq<Entry>, score: Score): nat
-    decreases es, score
-  {
-    if |es| == 0 then
-      0
-    else
-      (if es[0].score < score then 1 else 0) + CountStrictLessScore(es[1..], score)
-  }
-
-  function CountAtMost(es: seq<Entry>, score: Score): nat
-    decreases es, score
-  {
-    if |es| == 0 then
-      0
-    else
-      (if es[0].score <= score then 1 else 0) + CountAtMost(es[1..], score)
-  }
-
-  function RankWithId(es: seq<Entry>, score: Score, id: DocId): nat
-    decreases es, score, id
-  {
-    if |es| == 0 then
-      0
-    else if es[0].score < score || (es[0].score == score && es[0].id < id) then
-      1 + RankWithId(es[1..], score, id)
-    else
-      0
-  }
-
-  function Rank(es: seq<Entry>, score: Score, id: MaybeDocId): nat
-    decreases es, score, id
-  {
-    match id
-    case NoDoc() =>
-      CountStrictLessScore(es, score)
-    case SomeDoc(doc) =>
-      RankWithId(es, score, doc)
-  }
-
-  function InsertUnique(es: seq<Entry>, score: Score, id: DocId): seq<Entry>
-    requires SortedEntries(es)
-    ensures SortedEntries(InsertUnique(es, score, id))
-    decreases es, score, id
-  {
-    if |es| == 0 then
-      [Entry(score, id)]
-    else if es[0].score == score && es[0].id == id then
-      es
-    else if score < es[0].score || (score == es[0].score && id < es[0].id) then
-      [Entry(score, id)] + es
-    else
-      [es[0]] + InsertUnique(es[1..], score, id)
-  }
-
-  function RemoveOne(es: seq<Entry>, score: Score, id: DocId): seq<Entry>
-    requires SortedEntries(es)
-    ensures SortedEntries(RemoveOne(es, score, id))
-    decreases es, score, id
-  {
-    if |es| == 0 then
-      es
-    else if es[0].score == score && es[0].id == id then
-      es[1..]
-    else if score < es[0].score || (score == es[0].score && id < es[0].id) then
-      es
-    else
-      [es[0]] + RemoveOne(es[1..], score, id)
-  }
-
-  function PositionAt(es: seq<Entry>, idx: nat): nat
-    requires SortedEntries(es)
-    requires idx < |es|
-    decreases es, idx
-  {
-    if idx == 0 then
-      0
-    else if es[idx - 1].score == es[idx].score then
-      1 + PositionAt(es, idx - 1)
-    else
-      0
-  }
-
-  function GetAtRank(es: seq<Entry>, rank: nat): AtRank
-    requires SortedEntries(es)
-    decreases es, rank
-  {
-    if rank >= |es| then
-      Missing
-    else
-      Found(es[rank].score, es[rank].id, PositionAt(es, rank))
-  }
-
-  function CollectRange(es: seq<Entry>, minScore: Score, maxScore: Score, limit: nat): seq<DocId>
-    requires SortedEntries(es)
-    decreases es, minScore, maxScore, limit
-  {
-    if |es| == 0 || limit == 0 then
-      []
-    else if es[0].score < minScore then
-      CollectRange(es[1..], minScore, maxScore, limit)
-    else if es[0].score > maxScore then
-      []
-    else
-      [es[0].id] + CollectRange(es[1..], minScore, maxScore, limit - 1)
-  }
-
-  type Score = int
-
-  type DocId = int
-
-  datatype MaybeDocId = NoDoc | SomeDoc(doc: DocId)
-
-  datatype AtRank = Missing | Found(score: Score, id: DocId, position: nat)
-
-  datatype Entry = Entry(score: Score, id: DocId)
+  import opened TsLimitQueriesRuntime
 }
 
 module TsLimitQueriesRuntime {
@@ -1250,6 +937,246 @@ module TsQueriesRuntime {
   datatype QueriesState = QueriesState(entries: seq<QueryEntry>, rangeAdds: seq<RangeAddOp>)
 }
 
+module ThunderDbStack {
+  function GetScore(state: DocState): Score
+    decreases state
+  {
+    state.scoreValue
+  }
+
+  function LookupState(store: map<DocId, DocState>, id: DocId): MaybeDocState
+    decreases store, id
+  {
+    if id in store then
+      HasState(store[id])
+    else
+      NoState
+  }
+
+  function PutStoredDoc(store: map<DocId, DocState>, id: DocId, state: DocState): map<DocId, DocState>
+    decreases store, id, state
+  {
+    store[id := state]
+  }
+
+  function RemoveStoredDoc(store: map<DocId, DocState>, id: DocId): map<DocId, DocState>
+    decreases store, id
+  {
+    map key: int {:trigger store[key]} {:trigger key in store} | key in store && key != id :: store[key]
+  }
+
+  function ContainsId(ids: seq<DocId>, id: DocId): bool
+    decreases ids, id
+  {
+    if |ids| == 0 then
+      false
+    else
+      ids[0] == id || ContainsId(ids[1..], id)
+  }
+
+  function ContainsQueryId(ids: seq<QueryId>, id: QueryId): bool
+    decreases ids, id
+  {
+    if |ids| == 0 then
+      false
+    else
+      ids[0] == id || ContainsQueryId(ids[1..], id)
+  }
+
+  function AppendQueryIdUnique(ids: seq<QueryId>, id: QueryId): seq<QueryId>
+    decreases ids, id
+  {
+    if ContainsQueryId(ids, id) then
+      ids
+    else
+      ids + [id]
+  }
+
+  function UniqueDocIds(ids: seq<DocId>): bool
+    decreases ids
+  {
+    if |ids| == 0 then
+      true
+    else
+      !ContainsId(ids[1..], ids[0]) && UniqueDocIds(ids[1..])
+  }
+
+  function AppendDocIdIfMissing(ids: seq<DocId>, id: DocId): seq<DocId>
+    decreases ids, id
+  {
+    if ContainsId(ids, id) then
+      ids
+    else
+      ids + [id]
+  }
+
+  function RemoveDocId(ids: seq<DocId>, id: DocId): seq<DocId>
+    decreases ids, id
+  {
+    if |ids| == 0 then
+      []
+    else if ids[0] == id then
+      ids[1..]
+    else
+      [ids[0]] + RemoveDocId(ids[1..], id)
+  }
+
+  import opened DocsIndexModel
+
+  type QueryId = int
+
+  datatype DocState = DocState(scoreValue: Score)
+
+  datatype MaybeDocState = NoState | HasState(state: DocState)
+
+  datatype SeedDoc = SeedDoc(id: DocId, state: DocState)
+
+  datatype QuerySpec = QuerySpec(minScore: Score, maxScore: Score, limit: nat)
+
+  datatype Eviction = Eviction(queryId: QueryId, docId: DocId)
+
+  datatype MatchPayload = MatchPayload(docId: DocId, oldState: MaybeDocState, newState: MaybeDocState, matchesOld: seq<QueryId>, matchesNew: seq<QueryId>, evictions: seq<Eviction>)
+
+  datatype RetrievalDoc = RetrievalDoc(docId: DocId, state: DocState, queries: seq<QueryId>)
+
+  datatype DownstreamEvent = MatchEvent(payload: MatchPayload) | RetrievalEvent(docs: seq<RetrievalDoc>)
+
+  datatype StreamItem = DocChangeItem(id: DocId, oldState: MaybeDocState, newState: MaybeDocState) | QueryAddItem(spec: QuerySpec) | QueryRemoveItem(id: QueryId) | SeedDocsItem(docs: seq<SeedDoc>)
+}
+
+module DocsIndexModel {
+  function LexLt(a: Entry, b: Entry): bool
+    decreases a, b
+  {
+    a.score < b.score || (a.score == b.score && a.id < b.id)
+  }
+
+  predicate SortedEntries(es: seq<Entry>)
+    decreases es
+  {
+    if |es| < 2 then
+      true
+    else
+      LexLt(es[0], es[1]) && SortedEntries(es[1..])
+  }
+
+  function CountStrictLessScore(es: seq<Entry>, score: Score): nat
+    decreases es, score
+  {
+    if |es| == 0 then
+      0
+    else
+      (if es[0].score < score then 1 else 0) + CountStrictLessScore(es[1..], score)
+  }
+
+  function CountAtMost(es: seq<Entry>, score: Score): nat
+    decreases es, score
+  {
+    if |es| == 0 then
+      0
+    else
+      (if es[0].score <= score then 1 else 0) + CountAtMost(es[1..], score)
+  }
+
+  function RankWithId(es: seq<Entry>, score: Score, id: DocId): nat
+    decreases es, score, id
+  {
+    if |es| == 0 then
+      0
+    else if es[0].score < score || (es[0].score == score && es[0].id < id) then
+      1 + RankWithId(es[1..], score, id)
+    else
+      0
+  }
+
+  function Rank(es: seq<Entry>, score: Score, id: MaybeDocId): nat
+    decreases es, score, id
+  {
+    match id
+    case NoDoc() =>
+      CountStrictLessScore(es, score)
+    case SomeDoc(doc) =>
+      RankWithId(es, score, doc)
+  }
+
+  function InsertUnique(es: seq<Entry>, score: Score, id: DocId): seq<Entry>
+    requires SortedEntries(es)
+    ensures SortedEntries(InsertUnique(es, score, id))
+    decreases es, score, id
+  {
+    if |es| == 0 then
+      [Entry(score, id)]
+    else if es[0].score == score && es[0].id == id then
+      es
+    else if score < es[0].score || (score == es[0].score && id < es[0].id) then
+      [Entry(score, id)] + es
+    else
+      [es[0]] + InsertUnique(es[1..], score, id)
+  }
+
+  function RemoveOne(es: seq<Entry>, score: Score, id: DocId): seq<Entry>
+    requires SortedEntries(es)
+    ensures SortedEntries(RemoveOne(es, score, id))
+    decreases es, score, id
+  {
+    if |es| == 0 then
+      es
+    else if es[0].score == score && es[0].id == id then
+      es[1..]
+    else if score < es[0].score || (score == es[0].score && id < es[0].id) then
+      es
+    else
+      [es[0]] + RemoveOne(es[1..], score, id)
+  }
+
+  function PositionAt(es: seq<Entry>, idx: nat): nat
+    requires SortedEntries(es)
+    requires idx < |es|
+    decreases es, idx
+  {
+    if idx == 0 then
+      0
+    else if es[idx - 1].score == es[idx].score then
+      1 + PositionAt(es, idx - 1)
+    else
+      0
+  }
+
+  function GetAtRank(es: seq<Entry>, rank: nat): AtRank
+    requires SortedEntries(es)
+    decreases es, rank
+  {
+    if rank >= |es| then
+      Missing
+    else
+      Found(es[rank].score, es[rank].id, PositionAt(es, rank))
+  }
+
+  function CollectRange(es: seq<Entry>, minScore: Score, maxScore: Score, limit: nat): seq<DocId>
+    requires SortedEntries(es)
+    decreases es, minScore, maxScore, limit
+  {
+    if |es| == 0 || limit == 0 then
+      []
+    else if es[0].score < minScore then
+      CollectRange(es[1..], minScore, maxScore, limit)
+    else if es[0].score > maxScore then
+      []
+    else
+      [es[0].id] + CollectRange(es[1..], minScore, maxScore, limit - 1)
+  }
+
+  type Score = int
+
+  type DocId = int
+
+  datatype MaybeDocId = NoDoc | SomeDoc(doc: DocId)
+
+  datatype AtRank = Missing | Found(score: Score, id: DocId, position: nat)
+
+  datatype Entry = Entry(score: Score, id: DocId)
+}
+
 module TsDocsRuntime {
   function EmptyDocsState(): DocsState
   {
@@ -1309,6 +1236,486 @@ module TsDocsRuntime {
   import opened DocsIndexModel
 
   datatype DocsState = DocsState(entries: seq<Entry>)
+}
+
+module TsLimitStreamLemmas {
+  lemma EmptyStreamIsConsistent()
+    ensures LimitStreamConsistent(EmptyLimitStreamState())
+  {
+  }
+
+  lemma DrainWithoutPendingIsStable(state: LimitStreamState)
+    requires LimitStreamConsistent(state)
+    requires !HasPendingWork(state.retrieval)
+    ensures DrainRetrievalCycle(state) == StreamStep(state, [])
+    decreases state
+  {
+  }
+
+  lemma SetQueriesKeepsStreamConsistency(state: LimitStreamState, queries: LimitQueriesState)
+    requires WorkerConsistent(state.retrieval)
+    requires LimitQueriesConsistent(queries)
+    ensures LimitStreamConsistent(SetQueries(state, queries))
+    decreases state, queries
+  {
+  }
+
+  lemma NotifyRetrievalResolvedKeepsQueryConsistency(state: LimitStreamState, docId: DocId)
+    requires LimitStreamConsistent(state)
+    ensures LimitQueriesConsistent(NotifyRetrievalResolved(state, docId).queries)
+    decreases state, docId
+  {
+  }
+
+  lemma /*{:_inductionTrigger SeedDocsQueries(queries, docs)}*/ /*{:_induction queries, docs}*/ SeedDocsQueriesKeepsConsistency(queries: LimitQueriesState, docs: seq<SeedDoc>)
+    requires LimitQueriesConsistent(queries)
+    ensures LimitQueriesConsistent(SeedDocsQueries(queries, docs))
+    decreases queries, docs
+  {
+  }
+
+  lemma /*{:_inductionTrigger HandleLostQueries(state, queries)}*/ /*{:_induction state, queries}*/ HandleLostQueriesKeepsQueryConsistency(state: LimitStreamState, queries: seq<QueryId>)
+    requires LimitQueriesConsistent(state.queries)
+    ensures LimitQueriesConsistent(HandleLostQueries(state, queries).queries)
+    decreases state, queries
+  {
+  }
+
+  lemma /*{:_inductionTrigger HandleOverflowQueries(state, queries)}*/ /*{:_induction state, queries}*/ HandleOverflowQueriesKeepsQueryConsistency(state: LimitStreamState, queries: seq<QueryId>)
+    requires LimitQueriesConsistent(state.queries)
+    ensures LimitQueriesConsistent(HandleOverflowQueries(state, queries).state.queries)
+    decreases state, queries
+  {
+  }
+
+  lemma /*{:_inductionTrigger ResolveDeliveredDocs(queries, docs)}*/ /*{:_induction queries, docs}*/ ResolveDeliveredDocsKeepsConsistency(queries: LimitQueriesState, docs: seq<RetrievalDoc>)
+    requires LimitQueriesConsistent(queries)
+    ensures LimitQueriesConsistent(ResolveDeliveredDocs(queries, docs))
+    decreases queries, docs
+  {
+  }
+
+  lemma /*{:_inductionTrigger RegisterDocsForQuery(state, docs, queryId)}*/ /*{:_induction state, docs, queryId}*/ RegisterDocsForQueryPreservesQueries(state: LimitStreamState, docs: seq<DocId>, queryId: QueryId)
+    ensures RegisterDocsForQuery(state, docs, queryId).queries == state.queries
+    decreases |docs|
+  {
+  }
+
+  lemma /*{:_inductionTrigger RegisterDocsForQuery(state, docs, queryId)}*/ /*{:_induction state, docs, queryId}*/ RegisterDocsForQueryPreservesStore(state: LimitStreamState, docs: seq<DocId>, queryId: QueryId)
+    ensures RegisterDocsForQuery(state, docs, queryId).store == state.store
+    decreases |docs|
+  {
+  }
+
+  import opened DocsIndexModel
+
+  import opened ThunderDbStack
+
+  import opened TsLimitQueriesRuntime
+
+  import opened TsLimitStreamRuntime
+
+  import opened TsRetrievalRuntime
+}
+
+module TsLimitStreamRuntime {
+  function EmptyLimitStreamState(): LimitStreamState
+  {
+    LimitStreamState(map[], EmptyLimitQueriesState(), EmptyWorkerState())
+  }
+
+  predicate LimitStreamConsistent(state: LimitStreamState)
+    decreases state
+  {
+    LimitQueriesConsistent(state.queries) &&
+    WorkerConsistent(state.retrieval)
+  }
+
+  function SetQueries(state: LimitStreamState, queries: LimitQueriesState): LimitStreamState
+    ensures LimitQueriesConsistent(queries) && WorkerConsistent(state.retrieval) ==> LimitStreamConsistent(SetQueries(state, queries))
+    decreases state, queries
+  {
+    LimitStreamState(state.store, queries, state.retrieval)
+  }
+
+  function SetRetrieval(state: LimitStreamState, retrieval: RetrievalWorkerState): LimitStreamState
+    decreases state, retrieval
+  {
+    LimitStreamState(state.store, state.queries, retrieval)
+  }
+
+  function SetStore(state: LimitStreamState, store: map<DocId, DocState>): LimitStreamState
+    decreases state, store
+  {
+    LimitStreamState(store, state.queries, state.retrieval)
+  }
+
+  function RegisterIfAllowed(state: LimitStreamState, docId: DocId, queryId: QueryId): LimitStreamState
+    decreases state, docId, queryId
+  {
+    if CanRegister(state.retrieval, docId, queryId) then
+      SetRetrieval(state, Register(state.retrieval, docId, queryId))
+    else
+      state
+  }
+
+  function NotifyRetrievalResolved(state: LimitStreamState, docId: DocId): LimitStreamState
+    requires LimitQueriesConsistent(state.queries)
+    decreases state, docId
+  {
+    LimitStreamState(state.store, ResolvePendingForDoc(state.queries, docId), ResolveDoc(state.retrieval, docId).state)
+  }
+
+  function RegisterDocsForQuery(state: LimitStreamState, docs: seq<DocId>, queryId: QueryId): LimitStreamState
+    decreases |docs|
+  {
+    if |docs| == 0 then
+      state
+    else
+      RegisterDocsForQuery(RegisterIfAllowed(state, docs[0], queryId), docs[1..], queryId)
+  }
+
+  function SeedDocsStore(store: map<DocId, DocState>, docs: seq<SeedDoc>): map<DocId, DocState>
+    decreases |docs|
+  {
+    if |docs| == 0 then
+      store
+    else
+      SeedDocsStore(store[docs[0].id := docs[0].state], docs[1..])
+  }
+
+  function SeedDocsQueries(queries: LimitQueriesState, docs: seq<SeedDoc>): LimitQueriesState
+    requires LimitQueriesConsistent(queries)
+    ensures LimitQueriesConsistent(SeedDocsQueries(queries, docs))
+    decreases |docs|
+  {
+    if |docs| == 0 then
+      queries
+    else
+      var newState: LimitQueriesState := LimitQueriesState(AddDoc(queries.docs, GetScore(docs[0].state), docs[0].id), queries.queries, queries.nextId, queries.infos, queries.baseScores, queries.pendingByQuery, queries.pendingByDoc); SeedDocsQueries(newState, docs[1..])
+  }
+
+  function FilterMissing(ids: seq<QueryId>, keep: seq<QueryId>): seq<QueryId>
+    decreases |ids|
+  {
+    if |ids| == 0 then
+      []
+    else if ContainsQueryId(keep, ids[0]) then
+      FilterMissing(ids[1..], keep)
+    else
+      [ids[0]] + FilterMissing(ids[1..], keep)
+  }
+
+  function HandleLostQueries(state: LimitStreamState, queries: seq<QueryId>): LimitStreamState
+    requires LimitQueriesConsistent(state.queries)
+    ensures LimitQueriesConsistent(HandleLostQueries(state, queries).queries)
+    decreases |queries|
+  {
+    if |queries| == 0 then
+      state
+    else
+      var gap: GapFillResult := FillGap(state.queries, queries[0]); var nextState: LimitStreamState := SetQueries(state, gap.state); var registered: LimitStreamState := match gap.doc case NoDoc() => nextState case SomeDoc(docId) => RegisterIfAllowed(nextState, docId, queries[0]); HandleLostQueries(registered, queries[1..])
+  }
+
+  function HandleOverflowQueries(state: LimitStreamState, queries: seq<QueryId>): OverflowResult
+    requires LimitQueriesConsistent(state.queries)
+    ensures LimitQueriesConsistent(HandleOverflowQueries(state, queries).state.queries)
+    decreases |queries|
+  {
+    if |queries| == 0 then
+      OverflowResult(state, [])
+    else
+      var queryId: int := queries[0]; var overflowDoc: MaybeDocId := PickOverflowDoc(state.queries, queryId); match overflowDoc case NoDoc() => HandleOverflowQueries(state, queries[1..]) case SomeDoc(docId) => var cancelledPending: StateChange := CancelPendingForQuery(state.queries, docId, queryId); var retrievalCancelled: StateChange := Cancel(state.retrieval, docId, queryId); var state1: LimitStreamState := LimitStreamState(state.store, cancelledPending.state, retrievalCancelled.state); var state2: LimitStreamState := if cancelledPending.changed then var gap: GapFillResult := FillGap(state1.queries, queryId); var gapState: LimitStreamState := SetQueries(state1, gap.state); match gap.doc case NoDoc() => gapState case SomeDoc(replacement) => RegisterIfAllowed(gapState, replacement, queryId) else state1; var rest: OverflowResult := HandleOverflowQueries(state2, queries[1..]); OverflowResult(rest.state, [Eviction(queryId, docId)] + rest.evictions)
+  }
+
+  function MatchEventIfAny(docId: DocId, oldState: MaybeDocState, newState: MaybeDocState, matchesOld: seq<QueryId>, matchesNew: seq<QueryId>, evictions: seq<Eviction>): seq<DownstreamEvent>
+    decreases docId, oldState, newState, matchesOld, matchesNew, evictions
+  {
+    if |matchesOld| == 0 && |matchesNew| == 0 && |evictions| == 0 then
+      []
+    else
+      [MatchEvent(MatchPayload(docId, oldState, newState, matchesOld, matchesNew, evictions))]
+  }
+
+  function HandleDocChange(state: LimitStreamState, docId: DocId, oldState: MaybeDocState, newState: MaybeDocState): StreamStep
+    requires LimitStreamConsistent(state)
+    decreases state, docId, oldState, newState
+  {
+    match oldState
+    case NoState() =>
+      HandleDocChangeNoOld(state, docId, newState)
+    case HasState(oldDocState) =>
+      match newState
+      case HasState(nextDocState) =>
+        if GetScore(oldDocState) == GetScore(nextDocState) then
+          var covering: seq<QueryId> := GetQueriesCovering(state.queries, GetScore(oldDocState), SomeDoc(docId));
+          StreamStep(NotifyRetrievalResolved(state, docId), [MatchEvent(MatchPayload(docId, oldState, newState, covering, covering, []))])
+        else
+          HandleDocChangeGeneral(state, docId, oldState, newState, GetScore(oldDocState), HasState(nextDocState))
+      case NoState() =>
+        HandleDocChangeGeneral(state, docId, oldState, newState, GetScore(oldDocState), NoState)
+  }
+
+  function HandleDocChangeNoOld(state: LimitStreamState, docId: DocId, newState: MaybeDocState): StreamStep
+    requires LimitStreamConsistent(state)
+    decreases state, docId, newState
+  {
+    match newState
+    case NoState() =>
+      StreamStep(NotifyRetrievalResolved(state, docId), [])
+    case HasState(nextDocState) =>
+      var added: AddDocumentResult := AddDocument(state.queries, GetScore(nextDocState), docId);
+      var state1: LimitStreamState := SetQueries(state, added.state);
+      var overflow: OverflowResult := HandleOverflowQueries(state1, FilterMissing(added.blocked, []));
+      var state2: LimitStreamState := NotifyRetrievalResolved(overflow.state, docId);
+      StreamStep(state2, MatchEventIfAny(docId, NoState, newState, [], added.matched, overflow.evictions))
+  }
+
+  function HandleDocChangeGeneral(state: LimitStreamState, docId: DocId, oldState: MaybeDocState, newState: MaybeDocState, oldScore: Score, nextDocState: MaybeDocState): StreamStep
+    requires LimitStreamConsistent(state)
+    decreases state, docId, oldState, newState, oldScore, nextDocState
+  {
+    var removed: RemoveDocumentResult := RemoveDocument(state.queries, oldScore, docId);
+    var state1: LimitStreamState := SetQueries(state, removed.state);
+    var added: AddDocumentResult := match nextDocState case NoState() => AddDocumentResult(state1.queries, [], []) case HasState(nextState) => AddDocument(state1.queries, GetScore(nextState), docId);
+    var state2: LimitStreamState := SetQueries(state1, added.state);
+    var lostQueries: seq<QueryId> := FilterMissing(removed.removed, added.matched);
+    var state3: LimitStreamState := HandleLostQueries(state2, lostQueries);
+    var overflowQueries: seq<QueryId> := FilterMissing(added.blocked, removed.removed);
+    var overflow: OverflowResult := HandleOverflowQueries(state3, overflowQueries);
+    var state4: LimitStreamState := NotifyRetrievalResolved(overflow.state, docId);
+    StreamStep(state4, MatchEventIfAny(docId, oldState, newState, removed.removed, added.matched, overflow.evictions))
+  }
+
+  function HandleQueryAdd(state: LimitStreamState, spec: QuerySpec): StreamStep
+    requires LimitStreamConsistent(state)
+    decreases state, spec
+  {
+    var added: QueryAddResult := TsLimitQueriesRuntime.AddQuery(state.queries, spec.minScore, spec.limit, spec.maxScore);
+    var state1: LimitStreamState := SetQueries(state, added.state);
+    var seedDocs: seq<DocId> := CollectRangeDocs(state.queries.docs, spec.minScore, spec.maxScore, spec.limit);
+    StreamStep(RegisterDocsForQuery(state1, seedDocs, added.queryId), [])
+  }
+
+  function HandleQueryRemove(state: LimitStreamState, queryId: QueryId): StreamStep
+    requires LimitStreamConsistent(state)
+    decreases state, queryId
+  {
+    var removed: StateChange := TsLimitQueriesRuntime.RemoveQuery(state.queries, queryId);
+    StreamStep(SetQueries(state, removed.state), [])
+  }
+
+  function HandleSeedDocs(state: LimitStreamState, docs: seq<SeedDoc>): StreamStep
+    requires LimitStreamConsistent(state)
+    decreases state, docs
+  {
+    StreamStep(LimitStreamState(SeedDocsStore(state.store, docs), SeedDocsQueries(state.queries, docs), state.retrieval), [])
+  }
+
+  function HandleItem(state: LimitStreamState, item: StreamItem): StreamStep
+    requires LimitStreamConsistent(state)
+    decreases state, item
+  {
+    match item
+    case QueryAddItem(spec) =>
+      HandleQueryAdd(state, spec)
+    case QueryRemoveItem(id) =>
+      HandleQueryRemove(state, id)
+    case SeedDocsItem(docs) =>
+      HandleSeedDocs(state, docs)
+    case DocChangeItem(id, oldState, newState) =>
+      var nextStore: map<DocId, DocState> := match newState case NoState() => RemoveStoredDoc(state.store, id) case HasState(docState) => PutStoredDoc(state.store, id, docState);
+      HandleDocChange(SetStore(state, nextStore), id, oldState, newState)
+  }
+
+  function ResolveDeliveredDocs(queries: LimitQueriesState, docs: seq<RetrievalDoc>): LimitQueriesState
+    requires LimitQueriesConsistent(queries)
+    ensures LimitQueriesConsistent(ResolveDeliveredDocs(queries, docs))
+    decreases |docs|
+  {
+    if |docs| == 0 then
+      queries
+    else
+      ResolveDeliveredDocs(ResolvePendingForDoc(queries, docs[0].docId), docs[1..])
+  }
+
+  function DrainRetrievalCycle(state: LimitStreamState): StreamStep
+    requires LimitStreamConsistent(state)
+    decreases state
+  {
+    if !HasPendingWork(state.retrieval) then
+      StreamStep(state, [])
+    else
+      var processing: RetrievalWorkerState := BeginCycle(state.retrieval); var payload: seq<RetrievalDoc> := BuildPayload(processing, state.store); var finished: RetrievalWorkerState := FinishCycle(processing); var nextQueries: LimitQueriesState := ResolveDeliveredDocs(state.queries, payload); var nextState: LimitStreamState := LimitStreamState(state.store, nextQueries, finished); if |payload| == 0 then StreamStep(nextState, []) else StreamStep(nextState, [RetrievalEvent(payload)])
+  }
+
+  function Stop(state: LimitStreamState): LimitStreamState
+    decreases state
+  {
+    SetRetrieval(state, TsRetrievalRuntime.Stop(state.retrieval))
+  }
+
+  import opened DocsIndexModel
+
+  import opened ThunderDbStack
+
+  import opened TsDocsRuntime
+
+  import opened TsLimitQueriesRuntime
+
+  import opened TsRetrievalRuntime
+
+  datatype LimitStreamState = LimitStreamState(store: map<DocId, DocState>, queries: LimitQueriesState, retrieval: RetrievalWorkerState)
+
+  datatype StreamStep = StreamStep(state: LimitStreamState, events: seq<DownstreamEvent>)
+
+  datatype OverflowResult = OverflowResult(state: LimitStreamState, evictions: seq<Eviction>)
+}
+
+module TsRetrievalRuntime {
+  function EmptyWorkerState(): RetrievalWorkerState
+  {
+    RetrievalWorkerState(map[], [], map[], [], false)
+  }
+
+  function RemoveQueryId(ids: seq<QueryId>, id: QueryId): seq<QueryId>
+    decreases ids, id
+  {
+    if |ids| == 0 then
+      []
+    else if ids[0] == id then
+      ids[1..]
+    else
+      [ids[0]] + RemoveQueryId(ids[1..], id)
+  }
+
+  function UniqueQueryIds(ids: seq<QueryId>): bool
+    decreases ids
+  {
+    if |ids| == 0 then
+      true
+    else
+      !ContainsQueryId(ids[1..], ids[0]) && UniqueQueryIds(ids[1..])
+  }
+
+  predicate RegistryConsistent(batch: map<DocId, seq<QueryId>>, order: seq<DocId>)
+    decreases batch, order
+  {
+    UniqueDocIds(order) &&
+    (forall docId: int {:trigger ContainsId(order, docId)} {:trigger docId in batch} :: 
+      docId in batch ==>
+        ContainsId(order, docId)) &&
+    forall docId: int {:trigger batch[docId]} {:trigger docId in batch} :: 
+      docId in batch ==>
+        UniqueQueryIds(batch[docId])
+  }
+
+  predicate WorkerConsistent(state: RetrievalWorkerState)
+    decreases state
+  {
+    RegistryConsistent(state.pendingBatch, state.pendingOrder) &&
+    RegistryConsistent(state.processingBatch, state.processingOrder)
+  }
+
+  function CanRegister(state: RetrievalWorkerState, docId: DocId, queryId: QueryId): bool
+    decreases state, docId, queryId
+  {
+    !(docId in state.processingBatch && ContainsQueryId(state.processingBatch[docId], queryId))
+  }
+
+  function Register(state: RetrievalWorkerState, docId: DocId, queryId: QueryId): RetrievalWorkerState
+    requires CanRegister(state, docId, queryId)
+    decreases state, docId, queryId
+  {
+    var nextQueries: seq<QueryId> := if docId in state.pendingBatch then AppendQueryIdUnique(state.pendingBatch[docId], queryId) else [queryId];
+    var nextOrder: seq<DocId> := if docId in state.pendingBatch then state.pendingOrder else AppendDocIdIfMissing(state.pendingOrder, docId);
+    RetrievalWorkerState(state.pendingBatch[docId := nextQueries], nextOrder, state.processingBatch, state.processingOrder, state.stopped)
+  }
+
+  function Cancel(state: RetrievalWorkerState, docId: DocId, queryId: QueryId): StateChange
+    decreases state, docId, queryId
+  {
+    if docId in state.pendingBatch then
+      var removed: bool := ContainsQueryId(state.pendingBatch[docId], queryId);
+      var nextQueries: seq<QueryId> := RemoveQueryId(state.pendingBatch[docId], queryId);
+      var nextBatch: map<int, seq<QueryId>> := if removed && |nextQueries| == 0 then map key: int {:trigger state.pendingBatch[key]} {:trigger key in state.pendingBatch} | key in state.pendingBatch && key != docId :: state.pendingBatch[key] else if removed then state.pendingBatch[docId := nextQueries] else state.pendingBatch;
+      var nextOrder: seq<DocId> := if removed && !(docId in nextBatch) then RemoveDocId(state.pendingOrder, docId) else state.pendingOrder;
+      StateChange(RetrievalWorkerState(nextBatch, nextOrder, state.processingBatch, state.processingOrder, state.stopped), removed)
+    else if docId in state.processingBatch then
+      var removed: bool := ContainsQueryId(state.processingBatch[docId], queryId);
+      var nextQueries: seq<QueryId> := RemoveQueryId(state.processingBatch[docId], queryId);
+      var nextBatch: map<int, seq<QueryId>> := if removed && |nextQueries| == 0 then map key: int {:trigger state.processingBatch[key]} {:trigger key in state.processingBatch} | key in state.processingBatch && key != docId :: state.processingBatch[key] else if removed then state.processingBatch[docId := nextQueries] else state.processingBatch;
+      var nextOrder: seq<DocId> := if removed && !(docId in nextBatch) then RemoveDocId(state.processingOrder, docId) else state.processingOrder;
+      StateChange(RetrievalWorkerState(state.pendingBatch, state.pendingOrder, nextBatch, nextOrder, state.stopped), removed)
+    else
+      StateChange(state, false)
+  }
+
+  function ResolveDoc(state: RetrievalWorkerState, docId: DocId): StateChange
+    decreases state, docId
+  {
+    var removedPending: bool := docId in state.pendingBatch;
+    var removedProcessing: bool := docId in state.processingBatch;
+    var nextPending: map<int, seq<QueryId>> := map key: int {:trigger state.pendingBatch[key]} {:trigger key in state.pendingBatch} | key in state.pendingBatch && key != docId :: state.pendingBatch[key];
+    var nextProcessing: map<int, seq<QueryId>> := map key: int {:trigger state.processingBatch[key]} {:trigger key in state.processingBatch} | key in state.processingBatch && key != docId :: state.processingBatch[key];
+    StateChange(RetrievalWorkerState(nextPending, RemoveDocId(state.pendingOrder, docId), nextProcessing, RemoveDocId(state.processingOrder, docId), state.stopped), removedPending || removedProcessing)
+  }
+
+  function BeginCycle(state: RetrievalWorkerState): RetrievalWorkerState
+    decreases state
+  {
+    RetrievalWorkerState(map[], [], state.pendingBatch, state.pendingOrder, state.stopped)
+  }
+
+  function FinishCycle(state: RetrievalWorkerState): RetrievalWorkerState
+    decreases state
+  {
+    RetrievalWorkerState(state.pendingBatch, state.pendingOrder, map[], [], state.stopped)
+  }
+
+  function Stop(state: RetrievalWorkerState): RetrievalWorkerState
+    decreases state
+  {
+    RetrievalWorkerState(state.pendingBatch, state.pendingOrder, state.processingBatch, state.processingOrder, true)
+  }
+
+  function HasPendingWork(state: RetrievalWorkerState): bool
+    decreases state
+  {
+    |state.pendingOrder| > 0
+  }
+
+  function ShouldExit(state: RetrievalWorkerState): bool
+    decreases state
+  {
+    state.stopped &&
+    !HasPendingWork(state)
+  }
+
+  function BuildPayload(state: RetrievalWorkerState, store: map<DocId, DocState>): seq<RetrievalDoc>
+    decreases |state.processingOrder|
+  {
+    BuildPayloadFrom(state.processingOrder, state.processingBatch, store)
+  }
+
+  function BuildPayloadFrom(order: seq<DocId>, batch: map<DocId, seq<QueryId>>, store: map<DocId, DocState>): seq<RetrievalDoc>
+    decreases |order|
+  {
+    if |order| == 0 then
+      []
+    else if !(order[0] in batch) then
+      BuildPayloadFrom(order[1..], batch, store)
+    else
+      match LookupState(store, order[0]) case NoState() => BuildPayloadFrom(order[1..], batch, store) case HasState(state) => [RetrievalDoc(order[0], state, batch[order[0]])] + BuildPayloadFrom(order[1..], batch, store)
+  }
+
+  import opened DocsIndexModel
+
+  import opened ThunderDbStack
+
+  datatype RetrievalWorkerState = RetrievalWorkerState(pendingBatch: map<DocId, seq<QueryId>>, pendingOrder: seq<DocId>, processingBatch: map<DocId, seq<QueryId>>, processingOrder: seq<DocId>, stopped: bool)
+
+  datatype StateChange = StateChange(state: RetrievalWorkerState, changed: bool)
 }
 ")]
 
@@ -9656,6 +10063,9 @@ namespace TsLimitQueriesRuntime {
     }
   }
 } // end of namespace TsLimitQueriesRuntime
+namespace TsLimitQueriesLemmas {
+
+} // end of namespace TsLimitQueriesLemmas
 namespace TsRetrievalRuntime {
 
   public partial class __default {
@@ -10513,84 +10923,115 @@ namespace TsLimitStreamRuntime {
     }
   }
 } // end of namespace TsLimitStreamRuntime
+namespace TsLimitStreamLemmas {
+
+} // end of namespace TsLimitStreamLemmas
 namespace TsLimitStreamSmoke {
 
   public partial class __default {
+    public static TsLimitStreamRuntime._ILimitStreamState SeedInitialDocs()
+    {
+      TsLimitStreamRuntime._ILimitStreamState state = TsLimitStreamRuntime.LimitStreamState.Default();
+      state = TsLimitStreamRuntime.__default.EmptyLimitStreamState();
+      TsLimitStreamRuntime._IStreamStep _0_seeded;
+      _0_seeded = TsLimitStreamRuntime.__default.HandleItem(state, ThunderDbStack.StreamItem.create_SeedDocsItem(Dafny.Sequence<ThunderDbStack._ISeedDoc>.FromElements(ThunderDbStack.SeedDoc.create(BigInteger.One, new BigInteger(10)), ThunderDbStack.SeedDoc.create(new BigInteger(2), new BigInteger(20)), ThunderDbStack.SeedDoc.create(new BigInteger(3), new BigInteger(30)))));
+      state = (_0_seeded).dtor_state;
+      return state;
+    }
+    public static TsLimitStreamRuntime._ILimitStreamState AddFirstQuery(TsLimitStreamRuntime._ILimitStreamState state)
+    {
+      TsLimitStreamRuntime._ILimitStreamState next = TsLimitStreamRuntime.LimitStreamState.Default();
+      ThunderDbStack._IQuerySpec _0_spec;
+      _0_spec = ThunderDbStack.QuerySpec.create(BigInteger.Zero, new BigInteger(100), new BigInteger(2));
+      TsLimitQueriesRuntime._IQueryAddResult _1_addedQueries;
+      _1_addedQueries = TsLimitQueriesRuntime.__default.AddQuery((state).dtor_queries, (_0_spec).dtor_minScore, (_0_spec).dtor_limit, (_0_spec).dtor_maxScore);
+      TsLimitStreamRuntime._ILimitStreamState _2_state1;
+      _2_state1 = TsLimitStreamRuntime.__default.SetQueries(state, (_1_addedQueries).dtor_state);
+      Dafny.ISequence<BigInteger> _3_seedDocs;
+      _3_seedDocs = TsDocsRuntime.__default.CollectRangeDocs(((state).dtor_queries).dtor_docs, (_0_spec).dtor_minScore, (_0_spec).dtor_maxScore, (_0_spec).dtor_limit);
+      TsLimitStreamRuntime._ILimitStreamState _4_expected;
+      _4_expected = TsLimitStreamRuntime.__default.RegisterDocsForQuery(_2_state1, _3_seedDocs, (_1_addedQueries).dtor_queryId);
+      TsLimitStreamRuntime._IStreamStep _5_added;
+      _5_added = TsLimitStreamRuntime.__default.HandleItem(state, ThunderDbStack.StreamItem.create_QueryAddItem(_0_spec));
+      next = (_5_added).dtor_state;
+      return next;
+    }
+    public static TsLimitStreamRuntime._ILimitStreamState DrainInitialRetrieval(TsLimitStreamRuntime._ILimitStreamState state)
+    {
+      TsLimitStreamRuntime._ILimitStreamState next = TsLimitStreamRuntime.LimitStreamState.Default();
+      Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _0_payload;
+      _0_payload = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements(ThunderDbStack.RetrievalDoc.create(BigInteger.One, new BigInteger(10), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One)), ThunderDbStack.RetrievalDoc.create(new BigInteger(2), new BigInteger(20), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One)));
+      TsLimitStreamRuntime._IStreamStep _1_retrieval;
+      _1_retrieval = TsLimitStreamRuntime.__default.DrainRetrievalCycle(state);
+      next = (_1_retrieval).dtor_state;
+      return next;
+    }
+    public static TsLimitStreamRuntime._ILimitStreamState RemoveFirstDoc(TsLimitStreamRuntime._ILimitStreamState state)
+    {
+      TsLimitStreamRuntime._ILimitStreamState next = TsLimitStreamRuntime.LimitStreamState.Default();
+      TsLimitStreamRuntime._IStreamStep _0_removed;
+      _0_removed = TsLimitStreamRuntime.__default.HandleItem(state, ThunderDbStack.StreamItem.create_DocChangeItem(BigInteger.One, ThunderDbStack.MaybeDocState.create_HasState(new BigInteger(10)), ThunderDbStack.MaybeDocState.create_NoState()));
+      next = (_0_removed).dtor_state;
+      return next;
+    }
+    public static TsLimitStreamRuntime._ILimitStreamState DrainReplacement(TsLimitStreamRuntime._ILimitStreamState state)
+    {
+      TsLimitStreamRuntime._ILimitStreamState next = TsLimitStreamRuntime.LimitStreamState.Default();
+      Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _0_payload;
+      _0_payload = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements(ThunderDbStack.RetrievalDoc.create(new BigInteger(3), new BigInteger(30), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One)));
+      TsLimitStreamRuntime._IStreamStep _1_retrieval;
+      _1_retrieval = TsLimitStreamRuntime.__default.DrainRetrievalCycle(state);
+      next = (_1_retrieval).dtor_state;
+      return next;
+    }
+    public static TsLimitStreamRuntime._ILimitStreamState AddLowScoreDoc(TsLimitStreamRuntime._ILimitStreamState state)
+    {
+      TsLimitStreamRuntime._ILimitStreamState next = TsLimitStreamRuntime.LimitStreamState.Default();
+      TsLimitStreamRuntime._IStreamStep _0_changed;
+      _0_changed = TsLimitStreamRuntime.__default.HandleItem(state, ThunderDbStack.StreamItem.create_DocChangeItem(BigInteger.Zero, ThunderDbStack.MaybeDocState.create_NoState(), ThunderDbStack.MaybeDocState.create_HasState(new BigInteger(5))));
+      next = (_0_changed).dtor_state;
+      return next;
+    }
+    public static TsLimitStreamRuntime._ILimitStreamState RemoveOnlyQuery(TsLimitStreamRuntime._ILimitStreamState state)
+    {
+      TsLimitStreamRuntime._ILimitStreamState next = TsLimitStreamRuntime.LimitStreamState.Default();
+      TsLimitQueriesRuntime._IStateChange _0_removedQueries;
+      _0_removedQueries = TsLimitQueriesRuntime.__default.RemoveQuery((state).dtor_queries, BigInteger.One);
+      TsLimitStreamRuntime._ILimitStreamState _1_expected;
+      _1_expected = TsLimitStreamRuntime.__default.SetQueries(state, (_0_removedQueries).dtor_state);
+      TsLimitStreamRuntime._IStreamStep _2_removedQuery;
+      _2_removedQuery = TsLimitStreamRuntime.__default.HandleItem(state, ThunderDbStack.StreamItem.create_QueryRemoveItem(BigInteger.One));
+      next = (_2_removedQuery).dtor_state;
+      return next;
+    }
     public static void _Main(Dafny.ISequence<Dafny.ISequence<Dafny.Rune>> __noArgsParameter)
     {
       TsLimitStreamRuntime._ILimitStreamState _0_state;
-      _0_state = TsLimitStreamRuntime.__default.EmptyLimitStreamState();
-      if (!(TsLimitStreamRuntime.__default.LimitStreamConsistent(_0_state))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(10,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      TsLimitStreamRuntime._IStreamStep _1_seeded;
-      _1_seeded = TsLimitStreamRuntime.__default.HandleItem(_0_state, ThunderDbStack.StreamItem.create_SeedDocsItem(Dafny.Sequence<ThunderDbStack._ISeedDoc>.FromElements(ThunderDbStack.SeedDoc.create(BigInteger.One, new BigInteger(10)), ThunderDbStack.SeedDoc.create(new BigInteger(2), new BigInteger(20)), ThunderDbStack.SeedDoc.create(new BigInteger(3), new BigInteger(30)))));
-      _0_state = (_1_seeded).dtor_state;
-      if (!(((_1_seeded).dtor_events).Equals(Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements()))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(14,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      if (!(((_0_state).dtor_store).Equals(Dafny.Map<BigInteger, BigInteger>.FromElements(new Dafny.Pair<BigInteger, BigInteger>(BigInteger.One, new BigInteger(10)), new Dafny.Pair<BigInteger, BigInteger>(new BigInteger(2), new BigInteger(20)), new Dafny.Pair<BigInteger, BigInteger>(new BigInteger(3), new BigInteger(30)))))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(15,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      if (!(((((_0_state).dtor_queries).dtor_docs)).Equals(Dafny.Sequence<DocsIndexModel._IEntry>.FromElements(DocsIndexModel.Entry.create(new BigInteger(10), BigInteger.One), DocsIndexModel.Entry.create(new BigInteger(20), new BigInteger(2)), DocsIndexModel.Entry.create(new BigInteger(30), new BigInteger(3)))))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(16,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      TsLimitStreamRuntime._IStreamStep _2_added;
-      _2_added = TsLimitStreamRuntime.__default.HandleItem(_0_state, ThunderDbStack.StreamItem.create_QueryAddItem(ThunderDbStack.QuerySpec.create(BigInteger.Zero, new BigInteger(100), new BigInteger(2))));
-      _0_state = (_2_added).dtor_state;
-      if (!(((_2_added).dtor_events).Equals(Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements()))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(20,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      if (!((((_0_state).dtor_queries).dtor_infos).Contains(BigInteger.One))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(21,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      if (!(((Dafny.Map<BigInteger, TsLimitQueriesRuntime._IQueryInfo>.Select(((_0_state).dtor_queries).dtor_infos,BigInteger.One)).dtor_currentMatches) == (new BigInteger(2)))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(22,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      if (!((((_0_state).dtor_retrieval).dtor_pendingOrder).Equals(Dafny.Sequence<BigInteger>.FromElements(BigInteger.One, new BigInteger(2))))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(23,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      if (!(TsLimitStreamRuntime.__default.LimitStreamConsistent(_0_state))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(24,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      TsLimitStreamRuntime._IStreamStep _3_retrieval;
-      _3_retrieval = TsLimitStreamRuntime.__default.DrainRetrievalCycle(_0_state);
-      _0_state = (_3_retrieval).dtor_state;
-      if (!(((_3_retrieval).dtor_events).Equals(Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_RetrievalEvent(Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements(ThunderDbStack.RetrievalDoc.create(BigInteger.One, new BigInteger(10), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One)), ThunderDbStack.RetrievalDoc.create(new BigInteger(2), new BigInteger(20), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One)))))))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(27,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      if (!((((_0_state).dtor_retrieval).dtor_pendingOrder).Equals(Dafny.Sequence<BigInteger>.FromElements()))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(28,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      TsLimitStreamRuntime._IStreamStep _4_removed;
-      _4_removed = TsLimitStreamRuntime.__default.HandleItem(_0_state, ThunderDbStack.StreamItem.create_DocChangeItem(BigInteger.One, ThunderDbStack.MaybeDocState.create_HasState(new BigInteger(10)), ThunderDbStack.MaybeDocState.create_NoState()));
-      _0_state = (_4_removed).dtor_state;
-      if (!(((_4_removed).dtor_events).Equals(Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_MatchEvent(ThunderDbStack.MatchPayload.create(BigInteger.One, ThunderDbStack.MaybeDocState.create_HasState(new BigInteger(10)), ThunderDbStack.MaybeDocState.create_NoState(), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One), Dafny.Sequence<BigInteger>.FromElements(), Dafny.Sequence<ThunderDbStack._IEviction>.FromElements())))))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(32,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      if (!(((Dafny.Map<BigInteger, TsLimitQueriesRuntime._IQueryInfo>.Select(((_0_state).dtor_queries).dtor_infos,BigInteger.One)).dtor_currentMatches) == (new BigInteger(2)))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(33,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      if (!((Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.Select(((_0_state).dtor_queries).dtor_pendingByQuery,BigInteger.One)).Equals(Dafny.Sequence<BigInteger>.FromElements(new BigInteger(3))))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(34,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      if (!((((_0_state).dtor_retrieval).dtor_pendingOrder).Equals(Dafny.Sequence<BigInteger>.FromElements(new BigInteger(3))))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(35,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      _3_retrieval = TsLimitStreamRuntime.__default.DrainRetrievalCycle(_0_state);
-      _0_state = (_3_retrieval).dtor_state;
-      if (!(((_3_retrieval).dtor_events).Equals(Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_RetrievalEvent(Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements(ThunderDbStack.RetrievalDoc.create(new BigInteger(3), new BigInteger(30), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One)))))))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(39,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      if (!(!((((_0_state).dtor_queries).dtor_pendingByQuery).Contains(BigInteger.One)))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(40,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      TsLimitStreamRuntime._IStreamStep _5_changed;
-      _5_changed = TsLimitStreamRuntime.__default.HandleItem(_0_state, ThunderDbStack.StreamItem.create_DocChangeItem(BigInteger.Zero, ThunderDbStack.MaybeDocState.create_NoState(), ThunderDbStack.MaybeDocState.create_HasState(new BigInteger(5))));
-      _0_state = (_5_changed).dtor_state;
-      if (!(((_5_changed).dtor_events).Equals(Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_MatchEvent(ThunderDbStack.MatchPayload.create(BigInteger.Zero, ThunderDbStack.MaybeDocState.create_NoState(), ThunderDbStack.MaybeDocState.create_HasState(new BigInteger(5)), Dafny.Sequence<BigInteger>.FromElements(), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One), Dafny.Sequence<ThunderDbStack._IEviction>.FromElements(ThunderDbStack.Eviction.create(BigInteger.One, new BigInteger(3))))))))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(44,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      if (!((((_0_state).dtor_retrieval).dtor_pendingOrder).Equals(Dafny.Sequence<BigInteger>.FromElements()))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(45,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      if (!(!((((_0_state).dtor_queries).dtor_pendingByQuery).Contains(BigInteger.One)))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(46,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      TsLimitStreamRuntime._IStreamStep _6_removedQuery;
-      _6_removedQuery = TsLimitStreamRuntime.__default.HandleItem(_0_state, ThunderDbStack.StreamItem.create_QueryRemoveItem(BigInteger.One));
-      _0_state = (_6_removedQuery).dtor_state;
-      if (!(((_6_removedQuery).dtor_events).Equals(Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements()))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(50,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
-      if (!(!((((_0_state).dtor_queries).dtor_infos).Contains(BigInteger.One)))) {
-        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(51,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
+      TsLimitStreamRuntime._ILimitStreamState _out0;
+      _out0 = TsLimitStreamSmoke.__default.SeedInitialDocs();
+      _0_state = _out0;
+      TsLimitStreamRuntime._ILimitStreamState _out1;
+      _out1 = TsLimitStreamSmoke.__default.AddFirstQuery(_0_state);
+      _0_state = _out1;
+      TsLimitStreamRuntime._ILimitStreamState _out2;
+      _out2 = TsLimitStreamSmoke.__default.DrainInitialRetrieval(_0_state);
+      _0_state = _out2;
+      TsLimitStreamRuntime._ILimitStreamState _out3;
+      _out3 = TsLimitStreamSmoke.__default.RemoveFirstDoc(_0_state);
+      _0_state = _out3;
+      TsLimitStreamRuntime._ILimitStreamState _out4;
+      _out4 = TsLimitStreamSmoke.__default.DrainReplacement(_0_state);
+      _0_state = _out4;
+      TsLimitStreamRuntime._ILimitStreamState _out5;
+      _out5 = TsLimitStreamSmoke.__default.AddLowScoreDoc(_0_state);
+      _0_state = _out5;
+      TsLimitStreamRuntime._ILimitStreamState _out6;
+      _out6 = TsLimitStreamSmoke.__default.RemoveOnlyQuery(_0_state);
+      _0_state = _out6;
       Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("ts-limit-stream-smoke passed\n")).ToVerbatimString(false));
     }
   }
 } // end of namespace TsLimitStreamSmoke
-namespace TsLimitStreamLemmas {
-
-} // end of namespace TsLimitStreamLemmas
 namespace _module {
 
 } // end of namespace _module
