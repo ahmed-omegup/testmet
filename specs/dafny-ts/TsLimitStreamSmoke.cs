@@ -1096,20 +1096,39 @@ module TsQueriesRuntime {
     left.key < right.key || (left.key == right.key && (left.baseScore < right.baseScore || (left.baseScore == right.baseScore && left.id < right.id)))
   }
 
+  lemma /*{:_inductionTrigger ContainsQueryEntryId(entries, bound)}*/ /*{:_inductionTrigger EntryIdsBelow(entries, bound)}*/ /*{:_induction entries, bound}*/ EntryIdsBelowEntailsNotContained(entries: seq<QueryEntry>, bound: QueryId)
+    requires EntryIdsBelow(entries, bound)
+    ensures !ContainsQueryEntryId(entries, bound)
+    decreases |entries|
+  {
+  }
+
+  lemma BelowBoundImpliesBelowPlusOne(entries: seq<QueryEntry>, bound: QueryId)
+    requires EntryIdsBelow(entries, bound)
+    ensures EntryIdsBelow(entries, bound + 1)
+    decreases |entries|
+  {
+    if |entries| > 0 {
+      BelowBoundImpliesBelowPlusOne(entries[1..], bound);
+    }
+  }
+
   function InsertEntrySorted(entries: seq<QueryEntry>, entry: QueryEntry): seq<QueryEntry>
     requires OrderedEntries(entries)
     requires UniqueQueryEntries(entries)
     requires EntryIdsBelow(entries, entry.id)
-    ensures OrderedEntries(entries) ==> OrderedEntries(InsertEntrySorted(entries, entry))
-    ensures UniqueQueryEntries(entries) && EntryIdsBelow(entries, entry.id) ==> UniqueQueryEntries(InsertEntrySorted(entries, entry))
+    ensures OrderedEntries(InsertEntrySorted(entries, entry))
+    ensures UniqueQueryEntries(InsertEntrySorted(entries, entry))
     ensures forall id: int {:trigger ContainsQueryEntryId(entries, id)} {:trigger ContainsQueryEntryId(InsertEntrySorted(entries, entry), id)} :: ContainsQueryEntryId(InsertEntrySorted(entries, entry), id) ==> id == entry.id || ContainsQueryEntryId(entries, id)
     ensures forall bound: int {:trigger EntryIdsBelow(InsertEntrySorted(entries, entry), bound)} {:trigger EntryIdsBelow(entries, bound)} :: EntryIdsBelow(entries, bound) && entry.id < bound ==> EntryIdsBelow(InsertEntrySorted(entries, entry), bound)
-    ensures EntryIdsBelow(entries, entry.id) ==> EntryIdsBelow(InsertEntrySorted(entries, entry), entry.id + 1)
+    ensures EntryIdsBelow(InsertEntrySorted(entries, entry), entry.id + 1)
     decreases |entries|
   {
     if |entries| == 0 then
       [entry]
     else if CompareEntries(entry, entries[0]) then
+      EntryIdsBelowEntailsNotContained(entries, entry.id);
+      BelowBoundImpliesBelowPlusOne(entries, entry.id);
       [entry] + entries
     else
       [entries[0]] + InsertEntrySorted(entries[1..], entry)
@@ -1118,13 +1137,17 @@ module TsQueriesRuntime {
   function Insert(state: QueriesState, key: Score, id: QueryId, effectiveScore: int, maxCap: Score): QueriesState
     requires QueriesConsistent(state)
     requires EntryIdsBelow(state.entries, id)
-    ensures QueriesConsistent(state) && EntryIdsBelow(state.entries, id) ==> QueriesConsistent(Insert(state, key, id, effectiveScore, maxCap))
+    ensures QueriesConsistent(Insert(state, key, id, effectiveScore, maxCap))
     ensures forall bound: int {:trigger EntryIdsBelow(Insert(state, key, id, effectiveScore, maxCap).entries, bound)} {:trigger EntryIdsBelow(state.entries, bound)} :: EntryIdsBelow(state.entries, bound) && id < bound ==> EntryIdsBelow(Insert(state, key, id, effectiveScore, maxCap).entries, bound)
-    ensures EntryIdsBelow(state.entries, id) ==> EntryIdsBelow(Insert(state, key, id, effectiveScore, maxCap).entries, id + 1)
+    ensures EntryIdsBelow(Insert(state, key, id, effectiveScore, maxCap).entries, id + 1)
     decreases state, key, id, effectiveScore, maxCap
   {
     var baseScore: int := effectiveScore - AccumulatedAddAtKey(state, key);
-    QueriesState(InsertEntrySorted(state.entries, QueryEntry(id, key, baseScore, maxCap)), state.rangeAdds)
+    var entries: seq<QueryEntry> := InsertEntrySorted(state.entries, QueryEntry(id, key, baseScore, maxCap));
+    assert OrderedEntries(entries);
+    assert UniqueQueryEntries(entries);
+    assert EntryIdsBelow(entries, id + 1);
+    QueriesState(entries, state.rangeAdds)
   }
 
   function RemoveEntries(entries: seq<QueryEntry>, key: Score, id: QueryId, baseScore: int, maxCap: Score): seq<QueryEntry>
@@ -8426,7 +8449,8 @@ namespace TsQueriesRuntime {
     public static TsQueriesRuntime._IQueriesState Insert(TsQueriesRuntime._IQueriesState state, BigInteger key, BigInteger id, BigInteger effectiveScore, BigInteger maxCap)
     {
       BigInteger _0_baseScore = (effectiveScore) - (TsQueriesRuntime.__default.AccumulatedAddAtKey(state, key));
-      return TsQueriesRuntime.QueriesState.create(TsQueriesRuntime.__default.InsertEntrySorted((state).dtor_entries, TsQueriesRuntime.QueryEntry.create(id, key, _0_baseScore, maxCap)), (state).dtor_rangeAdds);
+      Dafny.ISequence<TsQueriesRuntime._IQueryEntry> _1_entries = TsQueriesRuntime.__default.InsertEntrySorted((state).dtor_entries, TsQueriesRuntime.QueryEntry.create(id, key, _0_baseScore, maxCap));
+      return TsQueriesRuntime.QueriesState.create(_1_entries, (state).dtor_rangeAdds);
     }
     public static Dafny.ISequence<TsQueriesRuntime._IQueryEntry> RemoveEntries(Dafny.ISequence<TsQueriesRuntime._IQueryEntry> entries, BigInteger key, BigInteger id, BigInteger baseScore, BigInteger maxCap)
     {
