@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="/home/asus/work/testmet/specs/clean-dafny/CleanLimitFastDriver.cs" />
+    <ProjectReference Include="/home/asus/work/testmet/specs/clean-dafny/CleanLimitPerf.csproj" />
+  </ItemGroup>
+
+</Project>

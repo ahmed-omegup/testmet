@@ -1,0 +1,15 @@
+/home/asus/work/testmet/specs/clean-dafny/bin/Release/net8.0/linux-x64/CleanLimitPerf
+/home/asus/work/testmet/specs/clean-dafny/bin/Release/net8.0/linux-x64/CleanLimitPerf.deps.json
+/home/asus/work/testmet/specs/clean-dafny/bin/Release/net8.0/linux-x64/CleanLimitPerf.runtimeconfig.json
+/home/asus/work/testmet/specs/clean-dafny/bin/Release/net8.0/linux-x64/CleanLimitPerf.dll
+/home/asus/work/testmet/specs/clean-dafny/bin/Release/net8.0/linux-x64/CleanLimitPerf.pdb
+/home/asus/work/testmet/specs/clean-dafny/obj/Release/net8.0/linux-x64/CleanLimitPerf.GeneratedMSBuildEditorConfig.editorconfig
+/home/asus/work/testmet/specs/clean-dafny/obj/Release/net8.0/linux-x64/CleanLimitPerf.AssemblyInfoInputs.cache
+/home/asus/work/testmet/specs/clean-dafny/obj/Release/net8.0/linux-x64/CleanLimitPerf.AssemblyInfo.cs
+/home/asus/work/testmet/specs/clean-dafny/obj/Release/net8.0/linux-x64/CleanLimitPerf.csproj.CoreCompileInputs.cache
+/home/asus/work/testmet/specs/clean-dafny/obj/Release/net8.0/linux-x64/CleanLimitPerf.sourcelink.json
+/home/asus/work/testmet/specs/clean-dafny/obj/Release/net8.0/linux-x64/CleanLimitPerf.dll
+/home/asus/work/testmet/specs/clean-dafny/obj/Release/net8.0/linux-x64/refint/CleanLimitPerf.dll
+/home/asus/work/testmet/specs/clean-dafny/obj/Release/net8.0/linux-x64/CleanLimitPerf.pdb
+/home/asus/work/testmet/specs/clean-dafny/obj/Release/net8.0/linux-x64/CleanLimitPerf.genruntimeconfig.cache
+/home/asus/work/testmet/specs/clean-dafny/obj/Release/net8.0/linux-x64/ref/CleanLimitPerf.dll
