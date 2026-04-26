@@ -99,6 +99,7 @@ module TsLimitStreamRuntime {
   }
 
   function SetQueries(state: LimitStreamState, queries: LimitQueriesState): LimitStreamState
+    ensures LimitQueriesConsistent(queries) && WorkerConsistent(state.retrieval) ==> LimitStreamConsistent(SetQueries(state, queries))
     decreases state, queries
   {
     LimitStreamState(state.store, queries, state.retrieval)
@@ -126,6 +127,7 @@ module TsLimitStreamRuntime {
   }
 
   function NotifyRetrievalResolved(state: LimitStreamState, docId: DocId): LimitStreamState
+    requires LimitQueriesConsistent(state.queries)
     decreases state, docId
   {
     LimitStreamState(state.store, ResolvePendingForDoc(state.queries, docId), ResolveDoc(state.retrieval, docId).state)
@@ -151,12 +153,13 @@ module TsLimitStreamRuntime {
 
   function SeedDocsQueries(queries: LimitQueriesState, docs: seq<SeedDoc>): LimitQueriesState
     requires LimitQueriesConsistent(queries)
+    ensures LimitQueriesConsistent(SeedDocsQueries(queries, docs))
     decreases |docs|
   {
     if |docs| == 0 then
       queries
     else
-      SeedDocsQueries(LimitQueriesState(AddDoc(queries.docs, GetScore(docs[0].state), docs[0].id), queries.queries, queries.nextId, queries.infos, queries.baseScores, queries.pendingByQuery, queries.pendingByDoc), docs[1..])
+      var newState: LimitQueriesState := LimitQueriesState(AddDoc(queries.docs, GetScore(docs[0].state), docs[0].id), queries.queries, queries.nextId, queries.infos, queries.baseScores, queries.pendingByQuery, queries.pendingByDoc); SeedDocsQueries(newState, docs[1..])
   }
 
   function FilterMissing(ids: seq<QueryId>, keep: seq<QueryId>): seq<QueryId>
@@ -171,7 +174,8 @@ module TsLimitStreamRuntime {
   }
 
   function HandleLostQueries(state: LimitStreamState, queries: seq<QueryId>): LimitStreamState
-    requires LimitStreamConsistent(state)
+    requires LimitQueriesConsistent(state.queries)
+    ensures LimitQueriesConsistent(HandleLostQueries(state, queries).queries)
     decreases |queries|
   {
     if |queries| == 0 then
@@ -181,7 +185,8 @@ module TsLimitStreamRuntime {
   }
 
   function HandleOverflowQueries(state: LimitStreamState, queries: seq<QueryId>): OverflowResult
-    requires LimitStreamConsistent(state)
+    requires LimitQueriesConsistent(state.queries)
+    ensures LimitQueriesConsistent(HandleOverflowQueries(state, queries).state.queries)
     decreases |queries|
   {
     if |queries| == 0 then
@@ -291,6 +296,8 @@ module TsLimitStreamRuntime {
   }
 
   function ResolveDeliveredDocs(queries: LimitQueriesState, docs: seq<RetrievalDoc>): LimitQueriesState
+    requires LimitQueriesConsistent(queries)
+    ensures LimitQueriesConsistent(ResolveDeliveredDocs(queries, docs))
     decreases |docs|
   {
     if |docs| == 0 then
@@ -479,55 +486,10 @@ module TsRetrievalRuntime {
 }
 
 module ThunderDbStack {
-  function RefInsertEntry(es: seq<Entry>, score: Score, id: DocId): seq<Entry>
-    decreases es, score, id
-  {
-    if |es| == 0 then
-      [Entry(score, id)]
-    else if es[0].score == score && es[0].id == id then
-      es
-    else if score < es[0].score || (score == es[0].score && id < es[0].id) then
-      [Entry(score, id)] + es
-    else
-      [es[0]] + RefInsertEntry(es[1..], score, id)
-  }
-
-  function RefRemoveEntry(es: seq<Entry>, score: Score, id: DocId): seq<Entry>
-    decreases es, score, id
-  {
-    if |es| == 0 then
-      es
-    else if es[0].score == score && es[0].id == id then
-      es[1..]
-    else if score < es[0].score || (score == es[0].score && id < es[0].id) then
-      es
-    else
-      [es[0]] + RefRemoveEntry(es[1..], score, id)
-  }
-
-  function RefCollectRangeIds(es: seq<Entry>, minScore: Score, maxScore: Score, limit: nat): seq<DocId>
-    decreases es, minScore, maxScore, limit
-  {
-    if |es| == 0 || limit == 0 then
-      []
-    else if es[0].score < minScore then
-      RefCollectRangeIds(es[1..], minScore, maxScore, limit)
-    else if es[0].score > maxScore then
-      []
-    else
-      [es[0].id] + RefCollectRangeIds(es[1..], minScore, maxScore, limit - 1)
-  }
-
   function GetScore(state: DocState): Score
     decreases state
   {
     state.scoreValue
-  }
-
-  function HasDoc(store: map<DocId, DocState>, id: DocId): bool
-    decreases store, id
-  {
-    id in store
   }
 
   function LookupState(store: map<DocId, DocState>, id: DocId): MaybeDocState
@@ -578,136 +540,6 @@ module ThunderDbStack {
       ids + [id]
   }
 
-  function AppendDocIdUnique(ids: seq<DocId>, id: DocId): seq<DocId>
-    decreases ids, id
-  {
-    if ContainsId(ids, id) then
-      ids
-    else
-      ids + [id]
-  }
-
-  function BuildEntriesFromStore(store: seq<StoredDoc>): seq<Entry>
-    decreases store
-  {
-    if |store| == 0 then
-      []
-    else
-      RefInsertEntry(BuildEntriesFromStore(store[1..]), GetScore(store[0].state), store[0].id)
-  }
-
-  function VisibleForSpec(entries: seq<Entry>, spec: QuerySpec): seq<DocId>
-    decreases entries, spec
-  {
-    RefCollectRangeIds(entries, spec.minScore, spec.maxScore, spec.limit)
-  }
-
-  function PriorityFor(score: Score, id: DocId): Priority
-    decreases score, id
-  {
-    ((score + 1) * 1103515245 + (id + 1) * 12345) % 2147483647
-  }
-
-  function VisibleForSpecInTreap(treap: Treap, spec: QuerySpec): seq<DocId>
-    requires SumConsistent(treap)
-    decreases treap, spec
-  {
-    TreapCollectRange(treap, spec.minScore, spec.maxScore, spec.limit)
-  }
-
-  function ScoreMatchesSpec(score: Score, spec: QuerySpec): bool
-    decreases score, spec
-  {
-    spec.minScore <= score <= spec.maxScore
-  }
-
-  function EntryBefore(score1: Score, id1: DocId, score2: Score, id2: DocId): bool
-    decreases score1, id1, score2, id2
-  {
-    score1 < score2 || (score1 == score2 && id1 < id2)
-  }
-
-  function StateMatchesSpec(state: MaybeDocState, spec: QuerySpec): bool
-    decreases state, spec
-  {
-    match state
-    case NoState() =>
-      false
-    case HasState(docState) =>
-      ScoreMatchesSpec(GetScore(docState), spec)
-  }
-
-  function DocWouldEnterVisible(visible: seq<DocId>, limit: nat, docState: DocState, docId: DocId, store: map<DocId, DocState>): bool
-    decreases visible, limit, docState, docId, store
-  {
-    if limit == 0 then
-      false
-    else if |visible| < limit then
-      true
-    else
-      match LookupState(store, visible[|visible| - 1]) case NoState() => false case HasState(lastState) => EntryBefore(GetScore(docState), docId, GetScore(lastState), visible[|visible| - 1])
-  }
-
-  function QueryNeedsRecompute(query: QueryRuntime, store: map<DocId, DocState>, id: DocId, oldState: MaybeDocState, newState: MaybeDocState): bool
-    decreases query, store, id, oldState, newState
-  {
-    if ContainsId(query.visible, id) then
-      true
-    else
-      match newState case NoState() => false case HasState(docState) => ScoreMatchesSpec(GetScore(docState), query.spec) && DocWouldEnterVisible(query.visible, query.spec.limit, docState, id, store)
-  }
-
-  function RecomputeQuery(query: QueryRuntime, treap: Treap): QueryRuntime
-    requires SumConsistent(treap)
-    decreases query, treap
-  {
-    QueryRuntime(query.id, query.spec, VisibleForSpecInTreap(treap, query.spec))
-  }
-
-  function RecomputeQueries(queries: seq<QueryRuntime>, treap: Treap): seq<QueryRuntime>
-    requires SumConsistent(treap)
-    decreases queries, treap
-  {
-    if |queries| == 0 then
-      []
-    else
-      [RecomputeQuery(queries[0], treap)] + RecomputeQueries(queries[1..], treap)
-  }
-
-  function RemoveQueryRuntime(queries: seq<QueryRuntime>, id: QueryId): seq<QueryRuntime>
-    decreases queries, id
-  {
-    if |queries| == 0 then
-      []
-    else if queries[0].id == id then
-      queries[1..]
-    else
-      [queries[0]] + RemoveQueryRuntime(queries[1..], id)
-  }
-
-  function UpdateQueriesForDocChange(queries: seq<QueryRuntime>, treap: Treap, store: map<DocId, DocState>, id: DocId, oldState: MaybeDocState, newState: MaybeDocState): seq<QueryRuntime>
-    requires SumConsistent(treap)
-    decreases queries, treap, store, id, oldState, newState
-  {
-    if |queries| == 0 then
-      []
-    else if QueryNeedsRecompute(queries[0], store, id, oldState, newState) then
-      [RecomputeQuery(queries[0], treap)] + UpdateQueriesForDocChange(queries[1..], treap, store, id, oldState, newState)
-    else
-      [queries[0]] + UpdateQueriesForDocChange(queries[1..], treap, store, id, oldState, newState)
-  }
-
-  function QueryVisible(queries: seq<QueryRuntime>, id: QueryId): seq<DocId>
-    decreases queries, id
-  {
-    if |queries| == 0 then
-      []
-    else if queries[0].id == id then
-      queries[0].visible
-    else
-      QueryVisible(queries[1..], id)
-  }
-
   function UniqueDocIds(ids: seq<DocId>): bool
     decreases ids
   {
@@ -715,17 +547,6 @@ module ThunderDbStack {
       true
     else
       !ContainsId(ids[1..], ids[0]) && UniqueDocIds(ids[1..])
-  }
-
-  function BuildEntriesFromStateStore(store: map<DocId, DocState>, docIds: seq<DocId>): seq<Entry>
-    decreases store, docIds
-  {
-    if |docIds| == 0 then
-      []
-    else if docIds[0] in store then
-      RefInsertEntry(BuildEntriesFromStateStore(store, docIds[1..]), GetScore(store[docIds[0]]), docIds[0])
-    else
-      BuildEntriesFromStateStore(store, docIds[1..])
   }
 
   function AppendDocIdIfMissing(ids: seq<DocId>, id: DocId): seq<DocId>
@@ -748,289 +569,7 @@ module ThunderDbStack {
       [ids[0]] + RemoveDocId(ids[1..], id)
   }
 
-  predicate QuerysConsistent(queries: seq<QueryRuntime>, entries: seq<Entry>)
-    decreases queries, entries
-  {
-    if |queries| == 0 then
-      true
-    else
-      queries[0].visible == VisibleForSpec(entries, queries[0].spec) && QuerysConsistent(queries[1..], entries)
-  }
-
-  predicate ValidState(state: EngineState)
-    decreases state
-  {
-    UniqueDocIds(state.docIds) &&
-    SumConsistent(state.treap) &&
-    Entries(state.treap) == BuildEntriesFromStateStore(state.store, state.docIds) &&
-    QuerysConsistent(state.queries, Entries(state.treap))
-  }
-
-  function EmptyState(): EngineState
-  {
-    EngineState(map[], [], Empty, [], 1)
-  }
-
-  function AddRetrievalQuery(plans: seq<RetrievalDoc>, docId: DocId, state: DocState, queryId: QueryId): seq<RetrievalDoc>
-    decreases plans, docId, state, queryId
-  {
-    if |plans| == 0 then
-      [RetrievalDoc(docId, state, [queryId])]
-    else if plans[0].docId == docId then
-      [RetrievalDoc(docId, state, AppendQueryIdUnique(plans[0].queries, queryId))] + plans[1..]
-    else
-      [plans[0]] + AddRetrievalQuery(plans[1..], docId, state, queryId)
-  }
-
-  function FirstEvicted(oldVisible: seq<DocId>, newVisible: seq<DocId>, changedId: DocId): seq<DocId>
-    decreases oldVisible, newVisible, changedId
-  {
-    if |oldVisible| == 0 then
-      []
-    else if oldVisible[0] != changedId && !ContainsId(newVisible, oldVisible[0]) then
-      [oldVisible[0]]
-    else
-      FirstEvicted(oldVisible[1..], newVisible, changedId)
-  }
-
-  function FirstAddedDoc(newVisible: seq<DocId>, oldVisible: seq<DocId>, changedId: DocId): seq<DocId>
-    decreases |newVisible|
-  {
-    if |newVisible| == 0 then
-      []
-    else if newVisible[0] != changedId && !ContainsId(oldVisible, newVisible[0]) then
-      [newVisible[0]]
-    else
-      FirstAddedDoc(newVisible[1..], oldVisible, changedId)
-  }
-
-  function BuildGapRetrievalForQuery(oldQuery: QueryRuntime, newQuery: QueryRuntime, store: map<DocId, DocState>, changedId: DocId): seq<RetrievalDoc>
-    decreases oldQuery, newQuery, store, changedId
-  {
-    var replacement: seq<DocId> := FirstAddedDoc(newQuery.visible, oldQuery.visible, changedId);
-    if ContainsId(oldQuery.visible, changedId) && !ContainsId(newQuery.visible, changedId) && |replacement| > 0 then
-      match LookupState(store, replacement[0])
-      case NoState() =>
-        []
-      case HasState(state) =>
-        [RetrievalDoc(replacement[0], state, [newQuery.id])]
-    else
-      []
-  }
-
-  function BuildRetrievalsFromQueryDiff(oldQueries: seq<QueryRuntime>, newQueries: seq<QueryRuntime>, store: map<DocId, DocState>, changedId: DocId): seq<RetrievalDoc>
-    decreases |newQueries|
-  {
-    if |oldQueries| == 0 || |newQueries| == 0 then
-      []
-    else
-      BuildGapRetrievalForQuery(oldQueries[0], newQueries[0], store, changedId) + BuildRetrievalsFromQueryDiff(oldQueries[1..], newQueries[1..], store, changedId)
-  }
-
-  function BuildAddQueryRetrievals(visible: seq<DocId>, store: map<DocId, DocState>, queryId: QueryId): seq<RetrievalDoc>
-    decreases |visible|
-  {
-    if |visible| == 0 then
-      []
-    else
-      match LookupState(store, visible[0]) case NoState() => BuildAddQueryRetrievals(visible[1..], store, queryId) case HasState(docState) => AddRetrievalQuery(BuildAddQueryRetrievals(visible[1..], store, queryId), visible[0], docState, queryId)
-  }
-
-  function BuildMatchPayload(oldQueries: seq<QueryRuntime>, newQueries: seq<QueryRuntime>, id: DocId, oldState: MaybeDocState, newState: MaybeDocState): MatchPayload
-    decreases oldQueries, newQueries, id, oldState, newState
-  {
-    MatchPayload(id, oldState, newState, CollectMatchesOld(oldQueries, newQueries, id), CollectMatchesNew(oldQueries, newQueries, id), CollectEvictions(oldQueries, newQueries, id))
-  }
-
-  function CollectMatchesOld(oldQueries: seq<QueryRuntime>, newQueries: seq<QueryRuntime>, id: DocId): seq<QueryId>
-    decreases |oldQueries|
-  {
-    if |oldQueries| == 0 || |newQueries| == 0 then
-      []
-    else if ContainsId(oldQueries[0].visible, id) then
-      [oldQueries[0].id] + CollectMatchesOld(oldQueries[1..], newQueries[1..], id)
-    else
-      CollectMatchesOld(oldQueries[1..], newQueries[1..], id)
-  }
-
-  function CollectMatchesNew(oldQueries: seq<QueryRuntime>, newQueries: seq<QueryRuntime>, id: DocId): seq<QueryId>
-    decreases |newQueries|
-  {
-    if |oldQueries| == 0 || |newQueries| == 0 then
-      []
-    else if ContainsId(newQueries[0].visible, id) then
-      [newQueries[0].id] + CollectMatchesNew(oldQueries[1..], newQueries[1..], id)
-    else
-      CollectMatchesNew(oldQueries[1..], newQueries[1..], id)
-  }
-
-  function CollectEvictions(oldQueries: seq<QueryRuntime>, newQueries: seq<QueryRuntime>, id: DocId): seq<Eviction>
-    decreases |newQueries|
-  {
-    if |oldQueries| == 0 || |newQueries| == 0 then
-      []
-    else
-      var oldVisible: seq<DocId> := oldQueries[0].visible; if !ContainsId(oldVisible, id) && ContainsId(newQueries[0].visible, id) && |FirstEvicted(oldVisible, newQueries[0].visible, id)| > 0 then [Eviction(newQueries[0].id, FirstEvicted(oldVisible, newQueries[0].visible, id)[0])] + CollectEvictions(oldQueries[1..], newQueries[1..], id) else CollectEvictions(oldQueries[1..], newQueries[1..], id)
-  }
-
-  function HasAnyMatchChange(payload: MatchPayload): bool
-    decreases payload
-  {
-    |payload.matchesOld| > 0 || |payload.matchesNew| > 0 || |payload.evictions| > 0
-  }
-
-  method SeedDocs(state: EngineState, docs: seq<SeedDoc>) returns (next: EngineState)
-    requires SumConsistent(state.treap)
-    ensures SumConsistent(next.treap)
-    decreases state, docs
-  {
-    var store := state.store;
-    var docIds := state.docIds;
-    var treap := state.treap;
-    var i := 0;
-    while i < |docs|
-      invariant 0 <= i <= |docs|
-      invariant SumConsistent(treap)
-      decreases |docs| - i
-    {
-      store := PutStoredDoc(store, docs[i].id, docs[i].state);
-      docIds := AppendDocIdIfMissing(docIds, docs[i].id);
-      treap := Add(treap, docs[i].state.scoreValue, docs[i].id, PriorityFor(docs[i].state.scoreValue, docs[i].id));
-      i := i + 1;
-    }
-    next := EngineState(store, docIds, treap, RecomputeQueries(state.queries, treap), state.nextQueryId);
-  }
-
-  method AddQuery(state: EngineState, spec: QuerySpec)
-      returns (next: EngineState, events: seq<DownstreamEvent>, queryId: QueryId)
-    requires SumConsistent(state.treap)
-    ensures SumConsistent(next.treap)
-    ensures queryId == state.nextQueryId
-    decreases state, spec
-  {
-    queryId := state.nextQueryId;
-    var visible := VisibleForSpecInTreap(state.treap, spec);
-    var query := QueryRuntime(queryId, spec, visible);
-    next := EngineState(state.store, state.docIds, state.treap, state.queries + [query], state.nextQueryId + 1);
-    var retrievals := BuildAddQueryRetrievals(visible, state.store, queryId);
-    if |retrievals| == 0 {
-      events := [];
-    } else {
-      events := [RetrievalEvent(retrievals)];
-    }
-  }
-
-  method RemoveQuery(state: EngineState, id: QueryId)
-      returns (next: EngineState, events: seq<DownstreamEvent>)
-    requires SumConsistent(state.treap)
-    ensures SumConsistent(next.treap)
-    decreases state, id
-  {
-    next := EngineState(state.store, state.docIds, state.treap, RemoveQueryRuntime(state.queries, id), state.nextQueryId);
-    events := [];
-  }
-
-  method ApplyDocChange(state: EngineState, id: DocId, oldState: MaybeDocState, newState: MaybeDocState)
-      returns (next: EngineState, events: seq<DownstreamEvent>)
-    requires SumConsistent(state.treap)
-    ensures SumConsistent(next.treap)
-    decreases state, id, oldState, newState
-  {
-    next := state;
-    events := [];
-    var store := state.store;
-    var docIds := state.docIds;
-    var treap := state.treap;
-    if oldState.HasState? {
-      var oldDoc := oldState.state;
-      if newState.NoState? {
-        store := RemoveStoredDoc(store, id);
-        docIds := RemoveDocId(docIds, id);
-      }
-      treap := Remove(treap, GetScore(oldDoc), id);
-    }
-    if newState.HasState? {
-      var newDoc := newState.state;
-      store := PutStoredDoc(store, id, newDoc);
-      docIds := AppendDocIdIfMissing(docIds, id);
-      treap := Add(treap, GetScore(newDoc), id, PriorityFor(GetScore(newDoc), id));
-    }
-    var newQueries := UpdateQueriesForDocChange(state.queries, treap, store, id, oldState, newState);
-    next := EngineState(store, docIds, treap, newQueries, state.nextQueryId);
-    var payload := BuildMatchPayload(state.queries, newQueries, id, oldState, newState);
-    var retrievals := BuildRetrievalsFromQueryDiff(state.queries, newQueries, store, id);
-    if HasAnyMatchChange(payload) && |retrievals| > 0 {
-      events := [MatchEvent(payload), RetrievalEvent(retrievals)];
-    } else if HasAnyMatchChange(payload) {
-      events := [MatchEvent(payload)];
-    } else if |retrievals| > 0 {
-      events := [RetrievalEvent(retrievals)];
-    } else {
-      events := [];
-    }
-  }
-
-  method ProcessItem(state: EngineState, item: StreamItem)
-      returns (next: EngineState, events: seq<DownstreamEvent>, queryId: QueryId)
-    requires SumConsistent(state.treap)
-    ensures SumConsistent(next.treap)
-    decreases state, item
-  {
-    next := state;
-    events := [];
-    queryId := 0;
-    match item
-    case {:split false} SeedDocsItem(docs) =>
-      {
-        next := SeedDocs(state, docs);
-        events := [];
-      }
-    case {:split false} QueryAddItem(spec) =>
-      {
-        next, events, queryId := AddQuery(state, spec);
-      }
-    case {:split false} QueryRemoveItem(id) =>
-      {
-        next, events := RemoveQuery(state, id);
-      }
-    case {:split false} DocChangeItem(id, oldState, newState) =>
-      {
-        next, events := ApplyDocChange(state, id, oldState, newState);
-      }
-  }
-
-  function SummaryZero(): WorkerRunSummary
-  {
-    WorkerRunSummary(0, 0, 0, 0, 0)
-  }
-
-  function CountEvictions(evictions: seq<Eviction>): nat
-    decreases evictions
-  {
-    |evictions|
-  }
-
-  function UpdateSummary(summary: WorkerRunSummary, events: seq<DownstreamEvent>): WorkerRunSummary
-    decreases summary, events
-  {
-    if |events| == 0 then
-      WorkerRunSummary(summary.matchEvents, summary.evictions, summary.retrievalBatches, summary.retrievalDocs, summary.eventsProcessed + 1)
-    else
-      UpdateSummaryOne(WorkerRunSummary(summary.matchEvents, summary.evictions, summary.retrievalBatches, summary.retrievalDocs, summary.eventsProcessed + 1), events)
-  }
-
-  function UpdateSummaryOne(summary: WorkerRunSummary, events: seq<DownstreamEvent>): WorkerRunSummary
-    decreases |events|
-  {
-    if |events| == 0 then
-      summary
-    else
-      match events[0] case MatchEvent(payload) => UpdateSummaryOne(WorkerRunSummary(summary.matchEvents + 1, summary.evictions + CountEvictions(payload.evictions), summary.retrievalBatches, summary.retrievalDocs, summary.eventsProcessed), events[1..]) case RetrievalEvent(docs) => UpdateSummaryOne(WorkerRunSummary(summary.matchEvents, summary.evictions, summary.retrievalBatches + 1, summary.retrievalDocs + |docs|, summary.eventsProcessed), events[1..])
-  }
-
   import opened DocsIndexModel
-
-  import opened DocsIndexTreap
 
   type QueryId = int
 
@@ -1038,13 +577,9 @@ module ThunderDbStack {
 
   datatype MaybeDocState = NoState | HasState(state: DocState)
 
-  datatype StoredDoc = StoredDoc(id: DocId, state: DocState)
-
   datatype SeedDoc = SeedDoc(id: DocId, state: DocState)
 
   datatype QuerySpec = QuerySpec(minScore: Score, maxScore: Score, limit: nat)
-
-  datatype QueryRuntime = QueryRuntime(id: QueryId, spec: QuerySpec, visible: seq<DocId>)
 
   datatype Eviction = Eviction(queryId: QueryId, docId: DocId)
 
@@ -1055,1065 +590,6 @@ module ThunderDbStack {
   datatype DownstreamEvent = MatchEvent(payload: MatchPayload) | RetrievalEvent(docs: seq<RetrievalDoc>)
 
   datatype StreamItem = DocChangeItem(id: DocId, oldState: MaybeDocState, newState: MaybeDocState) | QueryAddItem(spec: QuerySpec) | QueryRemoveItem(id: QueryId) | SeedDocsItem(docs: seq<SeedDoc>)
-
-  datatype WorkerRunSummary = WorkerRunSummary(matchEvents: nat, evictions: nat, retrievalBatches: nat, retrievalDocs: nat, eventsProcessed: nat)
-
-  datatype EngineState = EngineState(store: map<DocId, DocState>, docIds: seq<DocId>, treap: Treap, queries: seq<QueryRuntime>, nextQueryId: QueryId)
-}
-
-module DocsIndexTreap {
-  function NodeCount(t: Treap): nat
-    decreases t
-  {
-    if t.Empty? then
-      0
-    else
-      1 + NodeCount(t.left) + NodeCount(t.right)
-  }
-
-  function Sum(t: Treap): nat
-    decreases t
-  {
-    if t.Empty? then
-      0
-    else
-      t.sum
-  }
-
-  function StructuralSum(t: Treap): nat
-    decreases t
-  {
-    if t.Empty? then
-      0
-    else
-      |t.ids| + StructuralSum(t.left) + StructuralSum(t.right)
-  }
-
-  predicate SortedStrictIds(ids: seq<DocId>)
-    decreases ids
-  {
-    forall i: int, j: int {:trigger ids[j], ids[i]} :: 
-      0 <= i < j < |ids| ==>
-        ids[i] < ids[j]
-  }
-
-  predicate ScoreAboveLower(score: Score, lo: MaybeScore)
-    decreases score, lo
-  {
-    match lo
-    case NoScore() =>
-      true
-    case SomeScore(v) =>
-      v < score
-  }
-
-  predicate ScoreBelowUpper(score: Score, hi: MaybeScore)
-    decreases score, hi
-  {
-    match hi
-    case NoScore() =>
-      true
-    case SomeScore(v) =>
-      score < v
-  }
-
-  function RootPrio(t: Treap): Priority
-    decreases t
-  {
-    if t.Node? then
-      t.prio
-    else
-      0
-  }
-
-  predicate SumConsistent(t: Treap)
-    decreases t
-  {
-    if t.Empty? then
-      true
-    else
-      SumConsistent(t.left) && SumConsistent(t.right) && t.sum == |t.ids| + Sum(t.left) + Sum(t.right)
-  }
-
-  predicate HeapOrdered(t: Treap)
-    decreases t
-  {
-    if t.Empty? then
-      true
-    else
-      (if t.left.Node? then t.left.prio <= t.prio else true) && (if t.right.Node? then t.right.prio <= t.prio else true) && HeapOrdered(t.left) && HeapOrdered(t.right)
-  }
-
-  predicate OrderedByScore(t: Treap, lo: MaybeScore, hi: MaybeScore)
-    decreases t, lo, hi
-  {
-    if t.Empty? then
-      true
-    else
-      ScoreAboveLower(t.score, lo) && ScoreBelowUpper(t.score, hi) && OrderedByScore(t.left, lo, SomeScore(t.score)) && OrderedByScore(t.right, SomeScore(t.score), hi)
-  }
-
-  predicate IdsSortedInTree(t: Treap)
-    decreases t
-  {
-    if t.Empty? then
-      true
-    else
-      SortedStrictIds(t.ids) && IdsSortedInTree(t.left) && IdsSortedInTree(t.right)
-  }
-
-  predicate NonEmptyBuckets(t: Treap)
-    decreases t
-  {
-    if t.Empty? then
-      true
-    else
-      |t.ids| > 0 && NonEmptyBuckets(t.left) && NonEmptyBuckets(t.right)
-  }
-
-  predicate ValidTreap(t: Treap)
-    decreases t
-  {
-    SumConsistent(t) &&
-    HeapOrdered(t) &&
-    OrderedByScore(t, NoScore, NoScore) &&
-    IdsSortedInTree(t) &&
-    NonEmptyBuckets(t)
-  }
-
-  function EntriesFromIds(score: Score, ids: seq<DocId>): seq<Entry>
-    decreases score, ids
-  {
-    if |ids| == 0 then
-      []
-    else
-      [Entry(score, ids[0])] + EntriesFromIds(score, ids[1..])
-  }
-
-  function Entries(t: Treap): seq<Entry>
-    decreases t
-  {
-    if t.Empty? then
-      []
-    else
-      Entries(t.left) + EntriesFromIds(t.score, t.ids) + Entries(t.right)
-  }
-
-  function InsertId(ids: seq<DocId>, id: DocId): seq<DocId>
-    decreases ids, id
-  {
-    if |ids| == 0 then
-      [id]
-    else if ids[0] == id then
-      ids
-    else if id < ids[0] then
-      [id] + ids
-    else
-      [ids[0]] + InsertId(ids[1..], id)
-  }
-
-  function RemoveId(ids: seq<DocId>, id: DocId): seq<DocId>
-    decreases ids, id
-  {
-    if |ids| == 0 then
-      ids
-    else if ids[0] == id then
-      ids[1..]
-    else if id < ids[0] then
-      ids
-    else
-      [ids[0]] + RemoveId(ids[1..], id)
-  }
-
-  function InsertionIndex(ids: seq<DocId>, id: DocId): nat
-    decreases ids, id
-  {
-    if |ids| == 0 then
-      0
-    else if ids[0] < id then
-      1 + InsertionIndex(ids[1..], id)
-    else
-      0
-  }
-
-  function Pull(t: Treap): Treap
-    requires t.Node?
-    decreases t
-  {
-    Node(t.score, t.ids, t.prio, |t.ids| + Sum(t.left) + Sum(t.right), t.left, t.right)
-  }
-
-  function RotateRight(t: Treap): Treap
-    requires t.Node? && t.left.Node?
-    decreases t
-  {
-    var demoted: Treap := Pull(Node(t.score, t.ids, t.prio, 0, t.left.right, t.right));
-    Pull(Node(t.left.score, t.left.ids, t.left.prio, 0, t.left.left, demoted))
-  }
-
-  function RotateLeft(t: Treap): Treap
-    requires t.Node? && t.right.Node?
-    decreases t
-  {
-    var demoted: Treap := Pull(Node(t.score, t.ids, t.prio, 0, t.left, t.right.left));
-    Pull(Node(t.right.score, t.right.ids, t.right.prio, 0, demoted, t.right.right))
-  }
-
-  function Join(left: Treap, right: Treap): Treap
-    requires SumConsistent(left)
-    requires SumConsistent(right)
-    ensures SumConsistent(Join(left, right))
-    decreases NodeCount(left) + NodeCount(right)
-  {
-    if left.Empty? then
-      right
-    else if right.Empty? then
-      left
-    else if left.prio > right.prio then
-      Pull(Node(left.score, left.ids, left.prio, 0, left.left, Join(left.right, right)))
-    else
-      Pull(Node(right.score, right.ids, right.prio, 0, Join(left, right.left), right.right))
-  }
-
-  function Add(t: Treap, score: Score, id: DocId, prioForNew: Priority): Treap
-    requires SumConsistent(t)
-    ensures SumConsistent(Add(t, score, id, prioForNew))
-    decreases NodeCount(t)
-  {
-    if t.Empty? then
-      Node(score, [id], prioForNew, 1, Empty, Empty)
-    else if score == t.score then
-      Pull(Node(t.score, InsertId(t.ids, id), t.prio, 0, t.left, t.right))
-    else if score < t.score then
-      var left2: Treap := Add(t.left, score, id, prioForNew);
-      var n: Treap := Pull(Node(t.score, t.ids, t.prio, 0, left2, t.right));
-      if left2.Node? && left2.prio > t.prio then
-        RotateRight(n)
-      else
-        n
-    else
-      var right2: Treap := Add(t.right, score, id, prioForNew); var n: Treap := Pull(Node(t.score, t.ids, t.prio, 0, t.left, right2)); if right2.Node? && right2.prio > t.prio then RotateLeft(n) else n
-  }
-
-  function Remove(t: Treap, score: Score, id: DocId): Treap
-    requires SumConsistent(t)
-    ensures SumConsistent(Remove(t, score, id))
-    decreases NodeCount(t)
-  {
-    if t.Empty? then
-      Empty
-    else if score == t.score then
-      var ids2: seq<DocId> := RemoveId(t.ids, id);
-      if |ids2| == |t.ids| then
-        Pull(Node(t.score, t.ids, t.prio, 0, t.left, t.right))
-      else if |ids2| == 0 then
-        Join(t.left, t.right)
-      else
-        Pull(Node(t.score, ids2, t.prio, 0, t.left, t.right))
-    else if score < t.score then
-      Pull(Node(t.score, t.ids, t.prio, 0, Remove(t.left, score, id), t.right))
-    else
-      Pull(Node(t.score, t.ids, t.prio, 0, t.left, Remove(t.right, score, id)))
-  }
-
-  function TreapRank(t: Treap, score: Score, id: MaybeDocId): nat
-    requires SumConsistent(t)
-    decreases NodeCount(t)
-  {
-    if t.Empty? then
-      0
-    else if score < t.score then
-      TreapRank(t.left, score, id)
-    else if score > t.score then
-      Sum(t.left) + |t.ids| + TreapRank(t.right, score, id)
-    else
-      Sum(t.left) + match id case NoDoc() => 0 case SomeDoc(doc) => InsertionIndex(t.ids, doc)
-  }
-
-  function TreapCountAtMost(t: Treap, score: Score): nat
-    requires SumConsistent(t)
-    decreases NodeCount(t)
-  {
-    if t.Empty? then
-      0
-    else if score < t.score then
-      TreapCountAtMost(t.left, score)
-    else
-      Sum(t.left) + |t.ids| + TreapCountAtMost(t.right, score)
-  }
-
-  function TreapGetAtRank(t: Treap, rank: nat): AtRank
-    requires SumConsistent(t)
-    decreases NodeCount(t), rank
-  {
-    if t.Empty? then
-      Missing
-    else if rank < Sum(t.left) then
-      TreapGetAtRank(t.left, rank)
-    else if rank < Sum(t.left) + |t.ids| then
-      var pos: int := rank - Sum(t.left);
-      Found(t.score, t.ids[pos], pos)
-    else
-      TreapGetAtRank(t.right, rank - (Sum(t.left) + |t.ids|))
-  }
-
-  function TakePrefix<T>(xs: seq<T>, limit: nat): seq<T>
-    decreases xs, limit
-  {
-    if |xs| == 0 || limit == 0 then
-      []
-    else
-      [xs[0]] + TakePrefix(xs[1..], limit - 1)
-  }
-
-  function SatSub(a: nat, b: nat): nat
-    decreases a, b
-  {
-    if b <= a then
-      a - b
-    else
-      0
-  }
-
-  function TreapCollectRange(t: Treap, minScore: Score, maxScore: Score, limit: nat): seq<DocId>
-    requires SumConsistent(t)
-    decreases NodeCount(t)
-  {
-    if t.Empty? || limit == 0 then
-      []
-    else
-      var leftOut: seq<DocId> := if minScore < t.score then TreapCollectRange(t.left, minScore, maxScore, limit) else []; var rem1: nat := SatSub(limit, |leftOut|); if rem1 == 0 then leftOut else var selfOut: seq<int> := if t.score >= minScore && t.score <= maxScore then TakePrefix(t.ids, rem1) else []; var rem2: nat := SatSub(rem1, |selfOut|); if rem2 == 0 then leftOut + selfOut else var rightOut: seq<DocId> := if t.score < maxScore then TreapCollectRange(t.right, minScore, maxScore, rem2) else []; leftOut + selfOut + rightOut
-  }
-
-  function ModelRankOnEntries(t: Treap, score: Score, id: MaybeDocId): nat
-    decreases t, score, id
-  {
-    Rank(Entries(t), score, id)
-  }
-
-  function ModelCountAtMostOnEntries(t: Treap, score: Score): nat
-    decreases t, score
-  {
-    CountAtMost(Entries(t), score)
-  }
-
-  function ModelGetAtRankOnEntries(t: Treap, rank: nat): AtRank
-    requires SortedEntries(Entries(t))
-    decreases t, rank
-  {
-    GetAtRank(Entries(t), rank)
-  }
-
-  function ModelCollectRangeOnEntries(t: Treap, minScore: Score, maxScore: Score, limit: nat): seq<DocId>
-    requires SortedEntries(Entries(t))
-    decreases t, minScore, maxScore, limit
-  {
-    CollectRange(Entries(t), minScore, maxScore, limit)
-  }
-
-  predicate AllScoresLt(es: seq<Entry>, score: Score)
-    decreases es, score
-  {
-    if |es| == 0 then
-      true
-    else
-      es[0].score < score && AllScoresLt(es[1..], score)
-  }
-
-  predicate AllScoresLe(es: seq<Entry>, score: Score)
-    decreases es, score
-  {
-    if |es| == 0 then
-      true
-    else
-      es[0].score <= score && AllScoresLe(es[1..], score)
-  }
-
-  predicate AllScoresGt(es: seq<Entry>, score: Score)
-    decreases es, score
-  {
-    if |es| == 0 then
-      true
-    else
-      es[0].score > score && AllScoresGt(es[1..], score)
-  }
-
-  lemma /*{:_inductionTrigger EntriesFromIds(score, ids)}*/ /*{:_induction score, ids}*/ EntriesFromIdsLength(score: Score, ids: seq<DocId>)
-    ensures |EntriesFromIds(score, ids)| == |ids|
-    decreases |ids|
-  {
-    if |ids| > 0 {
-      EntriesFromIdsLength(score, ids[1..]);
-    }
-  }
-
-  lemma /*{:_inductionTrigger Entries(t)}*/ /*{:_inductionTrigger Sum(t)}*/ /*{:_inductionTrigger SumConsistent(t)}*/ /*{:_induction t}*/ SumEqualsEntriesLength(t: Treap)
-    requires SumConsistent(t)
-    ensures Sum(t) == |Entries(t)|
-    decreases NodeCount(t)
-  {
-    if t.Empty? {
-    } else {
-      SumEqualsEntriesLength(t.left);
-      SumEqualsEntriesLength(t.right);
-      EntriesFromIdsLength(t.score, t.ids);
-      assert |Entries(t)| == |Entries(t.left)| + |EntriesFromIds(t.score, t.ids)| + |Entries(t.right)|;
-      assert Sum(t) == |t.ids| + Sum(t.left) + Sum(t.right);
-    }
-  }
-
-  lemma /*{:_inductionTrigger AllScoresLt(EntriesFromIds(score, ids), bound)}*/ /*{:_induction score, ids, bound}*/ EntriesFromIdsAllLt(score: Score, ids: seq<DocId>, bound: Score)
-    requires score < bound
-    ensures AllScoresLt(EntriesFromIds(score, ids), bound)
-    decreases |ids|
-  {
-    if |ids| > 0 {
-      EntriesFromIdsAllLt(score, ids[1..], bound);
-    }
-  }
-
-  lemma /*{:_inductionTrigger AllScoresLe(EntriesFromIds(score, ids), bound)}*/ /*{:_induction score, ids, bound}*/ EntriesFromIdsAllLe(score: Score, ids: seq<DocId>, bound: Score)
-    requires score <= bound
-    ensures AllScoresLe(EntriesFromIds(score, ids), bound)
-    decreases |ids|
-  {
-    if |ids| > 0 {
-      EntriesFromIdsAllLe(score, ids[1..], bound);
-    }
-  }
-
-  lemma /*{:_inductionTrigger AllScoresGt(EntriesFromIds(score, ids), bound)}*/ /*{:_induction score, ids, bound}*/ EntriesFromIdsAllGt(score: Score, ids: seq<DocId>, bound: Score)
-    requires score > bound
-    ensures AllScoresGt(EntriesFromIds(score, ids), bound)
-    decreases |ids|
-  {
-    if |ids| > 0 {
-      EntriesFromIdsAllGt(score, ids[1..], bound);
-    }
-  }
-
-  lemma /*{:_inductionTrigger AllScoresLt(xs + ys, score)}*/ /*{:_induction xs, ys, score}*/ AllScoresLtConcat(xs: seq<Entry>, ys: seq<Entry>, score: Score)
-    requires AllScoresLt(xs, score)
-    requires AllScoresLt(ys, score)
-    ensures AllScoresLt(xs + ys, score)
-    decreases |xs|
-  {
-    if |xs| == 0 {
-      assert xs == [];
-      assert xs + ys == ys;
-    } else {
-      assert xs + ys == [xs[0]] + (xs[1..] + ys);
-      assert (xs + ys)[0] == xs[0];
-      assert (xs + ys)[1..] == xs[1..] + ys;
-      assert xs[0].score < score;
-      AllScoresLtConcat(xs[1..], ys, score);
-    }
-  }
-
-  lemma /*{:_inductionTrigger AllScoresLe(xs + ys, score)}*/ /*{:_induction xs, ys, score}*/ AllScoresLeConcat(xs: seq<Entry>, ys: seq<Entry>, score: Score)
-    requires AllScoresLe(xs, score)
-    requires AllScoresLe(ys, score)
-    ensures AllScoresLe(xs + ys, score)
-    decreases |xs|
-  {
-    if |xs| == 0 {
-      assert xs == [];
-      assert xs + ys == ys;
-    } else {
-      assert xs + ys == [xs[0]] + (xs[1..] + ys);
-      assert (xs + ys)[0] == xs[0];
-      assert (xs + ys)[1..] == xs[1..] + ys;
-      assert xs[0].score <= score;
-      AllScoresLeConcat(xs[1..], ys, score);
-    }
-  }
-
-  lemma /*{:_inductionTrigger AllScoresGt(xs + ys, score)}*/ /*{:_induction xs, ys, score}*/ AllScoresGtConcat(xs: seq<Entry>, ys: seq<Entry>, score: Score)
-    requires AllScoresGt(xs, score)
-    requires AllScoresGt(ys, score)
-    ensures AllScoresGt(xs + ys, score)
-    decreases |xs|
-  {
-    if |xs| == 0 {
-      assert xs == [];
-      assert xs + ys == ys;
-    } else {
-      assert xs + ys == [xs[0]] + (xs[1..] + ys);
-      assert (xs + ys)[0] == xs[0];
-      assert (xs + ys)[1..] == xs[1..] + ys;
-      assert xs[0].score > score;
-      AllScoresGtConcat(xs[1..], ys, score);
-    }
-  }
-
-  lemma /*{:_inductionTrigger AllScoresLe(xs, score)}*/ /*{:_inductionTrigger AllScoresLt(xs, score)}*/ /*{:_induction xs, score}*/ AllScoresLtImpliesLe(xs: seq<Entry>, score: Score)
-    requires AllScoresLt(xs, score)
-    ensures AllScoresLe(xs, score)
-    decreases |xs|
-  {
-    if |xs| > 0 {
-      AllScoresLtImpliesLe(xs[1..], score);
-    }
-  }
-
-  lemma /*{:_inductionTrigger AllScoresLt(xs, wide), AllScoresLt(xs, tight)}*/ /*{:_induction xs, tight, wide}*/ AllScoresLtWeaken(xs: seq<Entry>, tight: Score, wide: Score)
-    requires tight < wide
-    requires AllScoresLt(xs, tight)
-    ensures AllScoresLt(xs, wide)
-    decreases |xs|
-  {
-    if |xs| > 0 {
-      AllScoresLtWeaken(xs[1..], tight, wide);
-    }
-  }
-
-  lemma /*{:_inductionTrigger AllScoresGt(xs, wide), AllScoresGt(xs, tight)}*/ /*{:_induction xs, tight, wide}*/ AllScoresGtWeaken(xs: seq<Entry>, tight: Score, wide: Score)
-    requires wide < tight
-    requires AllScoresGt(xs, tight)
-    ensures AllScoresGt(xs, wide)
-    decreases |xs|
-  {
-    if |xs| > 0 {
-      AllScoresGtWeaken(xs[1..], tight, wide);
-    }
-  }
-
-  lemma /*{:_inductionTrigger OrderedByScore(t, lo, MaybeScore.SomeScore(bound))}*/ /*{:_induction t, lo, bound}*/ EntriesLtFromOrdered(t: Treap, lo: MaybeScore, bound: Score)
-    requires OrderedByScore(t, lo, SomeScore(bound))
-    ensures AllScoresLt(Entries(t), bound)
-    decreases NodeCount(t)
-  {
-    if t.Empty? {
-    } else {
-      assert t.score < bound;
-      EntriesLtFromOrdered(t.left, lo, t.score);
-      AllScoresLtWeaken(Entries(t.left), t.score, bound);
-      EntriesFromIdsAllLt(t.score, t.ids, bound);
-      EntriesLtFromOrdered(t.right, SomeScore(t.score), bound);
-      AllScoresLtConcat(Entries(t.left), EntriesFromIds(t.score, t.ids), bound);
-      AllScoresLtConcat(Entries(t.left) + EntriesFromIds(t.score, t.ids), Entries(t.right), bound);
-    }
-  }
-
-  lemma /*{:_inductionTrigger OrderedByScore(t, MaybeScore.SomeScore(bound), hi)}*/ /*{:_induction t, bound, hi}*/ EntriesGtFromOrdered(t: Treap, bound: Score, hi: MaybeScore)
-    requires OrderedByScore(t, SomeScore(bound), hi)
-    ensures AllScoresGt(Entries(t), bound)
-    decreases NodeCount(t)
-  {
-    if t.Empty? {
-    } else {
-      assert bound < t.score;
-      EntriesGtFromOrdered(t.left, bound, SomeScore(t.score));
-      EntriesFromIdsAllGt(t.score, t.ids, bound);
-      EntriesGtFromOrdered(t.right, t.score, hi);
-      AllScoresGtWeaken(Entries(t.right), t.score, bound);
-      AllScoresGtConcat(Entries(t.left), EntriesFromIds(t.score, t.ids), bound);
-      AllScoresGtConcat(Entries(t.left) + EntriesFromIds(t.score, t.ids), Entries(t.right), bound);
-    }
-  }
-
-  lemma /*{:_inductionTrigger CountStrictLessScore(es, score)}*/ /*{:_inductionTrigger AllScoresGt(es, score)}*/ /*{:_induction es, score}*/ CountStrictLessAllGtZero(es: seq<Entry>, score: Score)
-    requires AllScoresGt(es, score)
-    ensures CountStrictLessScore(es, score) == 0
-    decreases |es|
-  {
-    if |es| > 0 {
-      CountStrictLessAllGtZero(es[1..], score);
-    }
-  }
-
-  lemma /*{:_inductionTrigger prefix + rest, AllScoresLt(prefix, score)}*/ /*{:_induction prefix, rest, score}*/ CountStrictLessPrefixLt(prefix: seq<Entry>, rest: seq<Entry>, score: Score)
-    requires AllScoresLt(prefix, score)
-    ensures CountStrictLessScore(prefix + rest, score) == |prefix| + CountStrictLessScore(rest, score)
-    decreases |prefix|
-  {
-    if |prefix| == 0 {
-      assert prefix == [];
-      assert prefix + rest == rest;
-    } else {
-      assert prefix + rest == [prefix[0]] + (prefix[1..] + rest);
-      assert prefix[0].score < score;
-      CountStrictLessPrefixLt(prefix[1..], rest, score);
-      assert CountStrictLessScore(prefix + rest, score) == 1 + CountStrictLessScore(prefix[1..] + rest, score);
-      assert CountStrictLessScore(prefix[1..] + rest, score) == |prefix[1..]| + CountStrictLessScore(rest, score);
-      assert |prefix| == 1 + |prefix[1..]|;
-    }
-  }
-
-  lemma /*{:_inductionTrigger prefix + suffix, AllScoresGt(suffix, score)}*/ /*{:_induction prefix, suffix, score}*/ CountStrictLessSuffixGt(prefix: seq<Entry>, suffix: seq<Entry>, score: Score)
-    requires AllScoresGt(suffix, score)
-    ensures CountStrictLessScore(prefix + suffix, score) == CountStrictLessScore(prefix, score)
-    decreases |prefix|
-  {
-    if |prefix| == 0 {
-      assert prefix == [];
-      assert prefix + suffix == suffix;
-      CountStrictLessAllGtZero(suffix, score);
-    } else {
-      assert prefix + suffix == [prefix[0]] + (prefix[1..] + suffix);
-      CountStrictLessSuffixGt(prefix[1..], suffix, score);
-      if prefix[0].score < score {
-        assert CountStrictLessScore(prefix + suffix, score) == 1 + CountStrictLessScore(prefix[1..] + suffix, score);
-        assert CountStrictLessScore(prefix, score) == 1 + CountStrictLessScore(prefix[1..], score);
-      } else {
-        assert CountStrictLessScore(prefix + suffix, score) == CountStrictLessScore(prefix[1..] + suffix, score);
-        assert CountStrictLessScore(prefix, score) == CountStrictLessScore(prefix[1..], score);
-      }
-    }
-  }
-
-  lemma /*{:_inductionTrigger EntriesFromIds(score, ids)}*/ /*{:_induction score, ids}*/ CountStrictLessEntriesFromIdsEq(score: Score, ids: seq<DocId>)
-    ensures CountStrictLessScore(EntriesFromIds(score, ids), score) == 0
-    decreases |ids|
-  {
-    if |ids| > 0 {
-      CountStrictLessEntriesFromIdsEq(score, ids[1..]);
-    }
-  }
-
-  lemma /*{:_inductionTrigger RankWithId(es, score, id)}*/ /*{:_induction es, score, id}*/ RankWithIdAllGtZero(es: seq<Entry>, score: Score, id: DocId)
-    requires AllScoresGt(es, score)
-    ensures RankWithId(es, score, id) == 0
-    decreases es, score, id
-  {
-    if |es| > 0 {
-      assert es[0].score > score;
-    }
-  }
-
-  lemma /*{:_inductionTrigger RankWithId(prefix + rest, score, id)}*/ /*{:_induction prefix, rest, score, id}*/ RankWithIdPrefixLt(prefix: seq<Entry>, rest: seq<Entry>, score: Score, id: DocId)
-    requires AllScoresLt(prefix, score)
-    ensures RankWithId(prefix + rest, score, id) == |prefix| + RankWithId(rest, score, id)
-    decreases |prefix|
-  {
-    if |prefix| == 0 {
-      assert prefix == [];
-      assert prefix + rest == rest;
-    } else {
-      assert prefix + rest == [prefix[0]] + (prefix[1..] + rest);
-      assert prefix[0].score < score;
-      RankWithIdPrefixLt(prefix[1..], rest, score, id);
-      assert RankWithId(prefix + rest, score, id) == 1 + RankWithId(prefix[1..] + rest, score, id);
-      assert RankWithId(prefix[1..] + rest, score, id) == |prefix[1..]| + RankWithId(rest, score, id);
-      assert |prefix| == 1 + |prefix[1..]|;
-    }
-  }
-
-  lemma /*{:_inductionTrigger RankWithId(prefix + suffix, score, id)}*/ /*{:_induction prefix, suffix, score, id}*/ RankWithIdSuffixGt(prefix: seq<Entry>, suffix: seq<Entry>, score: Score, id: DocId)
-    requires AllScoresGt(suffix, score)
-    ensures RankWithId(prefix + suffix, score, id) == RankWithId(prefix, score, id)
-    decreases |prefix|
-  {
-    if |prefix| == 0 {
-      RankWithIdAllGtZero(suffix, score, id);
-    } else {
-      assert prefix + suffix == [prefix[0]] + (prefix[1..] + suffix);
-      if prefix[0].score < score || (prefix[0].score == score && prefix[0].id < id) {
-        RankWithIdSuffixGt(prefix[1..], suffix, score, id);
-        assert RankWithId(prefix + suffix, score, id) == 1 + RankWithId(prefix[1..] + suffix, score, id);
-        assert RankWithId(prefix, score, id) == 1 + RankWithId(prefix[1..], score, id);
-      } else {
-        assert RankWithId(prefix + suffix, score, id) == 0;
-        assert RankWithId(prefix, score, id) == 0;
-      }
-    }
-  }
-
-  lemma /*{:_inductionTrigger RankWithId(EntriesFromIds(score, ids), score, doc)}*/ /*{:_induction score, ids, doc}*/ RankWithIdEntriesFromIds(score: Score, ids: seq<DocId>, doc: DocId)
-    requires SortedStrictIds(ids)
-    ensures RankWithId(EntriesFromIds(score, ids), score, doc) == InsertionIndex(ids, doc)
-    decreases |ids|
-  {
-    if |ids| == 0 {
-    } else if ids[0] < doc {
-      RankWithIdEntriesFromIds(score, ids[1..], doc);
-    }
-  }
-
-  lemma /*{:_inductionTrigger CountAtMost(es, score)}*/ /*{:_inductionTrigger AllScoresGt(es, score)}*/ /*{:_induction es, score}*/ CountAtMostAllGtZero(es: seq<Entry>, score: Score)
-    requires AllScoresGt(es, score)
-    ensures CountAtMost(es, score) == 0
-    decreases |es|
-  {
-    if |es| > 0 {
-      CountAtMostAllGtZero(es[1..], score);
-    }
-  }
-
-  lemma /*{:_inductionTrigger prefix + rest, AllScoresLe(prefix, score)}*/ /*{:_induction prefix, rest, score}*/ CountAtMostPrefixLe(prefix: seq<Entry>, rest: seq<Entry>, score: Score)
-    requires AllScoresLe(prefix, score)
-    ensures CountAtMost(prefix + rest, score) == |prefix| + CountAtMost(rest, score)
-    decreases |prefix|
-  {
-    if |prefix| == 0 {
-      assert prefix == [];
-      assert prefix + rest == rest;
-    } else {
-      assert prefix + rest == [prefix[0]] + (prefix[1..] + rest);
-      assert prefix[0].score <= score;
-      CountAtMostPrefixLe(prefix[1..], rest, score);
-      assert CountAtMost(prefix + rest, score) == 1 + CountAtMost(prefix[1..] + rest, score);
-      assert CountAtMost(prefix[1..] + rest, score) == |prefix[1..]| + CountAtMost(rest, score);
-      assert |prefix| == 1 + |prefix[1..]|;
-    }
-  }
-
-  lemma /*{:_inductionTrigger prefix + suffix, AllScoresGt(suffix, score)}*/ /*{:_induction prefix, suffix, score}*/ CountAtMostSuffixGt(prefix: seq<Entry>, suffix: seq<Entry>, score: Score)
-    requires AllScoresGt(suffix, score)
-    ensures CountAtMost(prefix + suffix, score) == CountAtMost(prefix, score)
-    decreases |prefix|
-  {
-    if |prefix| == 0 {
-      assert prefix == [];
-      assert prefix + suffix == suffix;
-      CountAtMostAllGtZero(suffix, score);
-    } else {
-      assert prefix + suffix == [prefix[0]] + (prefix[1..] + suffix);
-      CountAtMostSuffixGt(prefix[1..], suffix, score);
-      if prefix[0].score <= score {
-        assert CountAtMost(prefix + suffix, score) == 1 + CountAtMost(prefix[1..] + suffix, score);
-        assert CountAtMost(prefix, score) == 1 + CountAtMost(prefix[1..], score);
-      } else {
-        assert CountAtMost(prefix + suffix, score) == CountAtMost(prefix[1..] + suffix, score);
-        assert CountAtMost(prefix, score) == CountAtMost(prefix[1..], score);
-      }
-    }
-  }
-
-  lemma /*{:_inductionTrigger TreapRank(t, score, MaybeDocId.NoDoc), OrderedByScore(t, lo, hi)}*/ /*{:_induction t, lo, hi, score}*/ TreapRankNoDocRefinesBounded(t: Treap, lo: MaybeScore, hi: MaybeScore, score: Score)
-    requires SumConsistent(t)
-    requires OrderedByScore(t, lo, hi)
-    ensures TreapRank(t, score, NoDoc) == CountStrictLessScore(Entries(t), score)
-    decreases NodeCount(t)
-  {
-    if t.Empty? {
-    } else if score < t.score {
-      TreapRankNoDocRefinesBounded(t.left, lo, SomeScore(t.score), score);
-      EntriesFromIdsAllGt(t.score, t.ids, score);
-      EntriesGtFromOrdered(t.right, t.score, hi);
-      AllScoresGtWeaken(Entries(t.right), t.score, score);
-      AllScoresGtConcat(EntriesFromIds(t.score, t.ids), Entries(t.right), score);
-      CountStrictLessSuffixGt(Entries(t.left), EntriesFromIds(t.score, t.ids) + Entries(t.right), score);
-      assert Entries(t) == Entries(t.left) + (EntriesFromIds(t.score, t.ids) + Entries(t.right));
-      assert CountStrictLessScore(Entries(t.left) + (EntriesFromIds(t.score, t.ids) + Entries(t.right)), score) == CountStrictLessScore(Entries(t.left), score);
-      calc {
-        TreapRank(t, score, NoDoc);
-      ==
-        {
-        }
-        TreapRank(t.left, score, NoDoc);
-      ==
-        {
-        }
-        CountStrictLessScore(Entries(t.left), score);
-      ==
-        {
-        }
-        CountStrictLessScore(Entries(t.left) + (EntriesFromIds(t.score, t.ids) + Entries(t.right)), score);
-      ==
-        {
-        }
-        CountStrictLessScore(Entries(t), score);
-      }
-    } else if score > t.score {
-      TreapRankNoDocRefinesBounded(t.right, SomeScore(t.score), hi, score);
-      EntriesLtFromOrdered(t.left, lo, t.score);
-      AllScoresLtWeaken(Entries(t.left), t.score, score);
-      EntriesFromIdsAllLt(t.score, t.ids, score);
-      AllScoresLtConcat(Entries(t.left), EntriesFromIds(t.score, t.ids), score);
-      CountStrictLessPrefixLt(Entries(t.left) + EntriesFromIds(t.score, t.ids), Entries(t.right), score);
-      SumEqualsEntriesLength(t.left);
-      EntriesFromIdsLength(t.score, t.ids);
-      assert |Entries(t.left) + EntriesFromIds(t.score, t.ids)| == |Entries(t.left)| + |EntriesFromIds(t.score, t.ids)|;
-      assert Entries(t) == Entries(t.left) + EntriesFromIds(t.score, t.ids) + Entries(t.right);
-      calc {
-        TreapRank(t, score, NoDoc);
-      ==
-        {
-        }
-        Sum(t.left) + |t.ids| + TreapRank(t.right, score, NoDoc);
-      ==
-        {
-        }
-        |Entries(t.left)| + |EntriesFromIds(t.score, t.ids)| + CountStrictLessScore(Entries(t.right), score);
-      ==
-        {
-        }
-        |Entries(t.left) + EntriesFromIds(t.score, t.ids)| + CountStrictLessScore(Entries(t.right), score);
-      ==
-        {
-        }
-        CountStrictLessScore(Entries(t.left) + EntriesFromIds(t.score, t.ids) + Entries(t.right), score);
-      ==
-        {
-        }
-        CountStrictLessScore(Entries(t), score);
-      }
-    } else {
-      EntriesLtFromOrdered(t.left, lo, t.score);
-      CountStrictLessPrefixLt(Entries(t.left), EntriesFromIds(t.score, t.ids) + Entries(t.right), score);
-      EntriesGtFromOrdered(t.right, t.score, hi);
-      CountStrictLessSuffixGt(EntriesFromIds(t.score, t.ids), Entries(t.right), score);
-      CountStrictLessEntriesFromIdsEq(t.score, t.ids);
-      SumEqualsEntriesLength(t.left);
-      assert CountStrictLessScore(EntriesFromIds(t.score, t.ids) + Entries(t.right), score) == 0;
-      assert Entries(t) == Entries(t.left) + (EntriesFromIds(t.score, t.ids) + Entries(t.right));
-      calc {
-        TreapRank(t, score, NoDoc);
-      ==
-        {
-        }
-        Sum(t.left);
-      ==
-        {
-        }
-        |Entries(t.left)|;
-      ==
-        {
-        }
-        CountStrictLessScore(Entries(t.left) + (EntriesFromIds(t.score, t.ids) + Entries(t.right)), score);
-      ==
-        {
-        }
-        CountStrictLessScore(Entries(t), score);
-      }
-    }
-  }
-
-  lemma /*{:_inductionTrigger TreapRank(t, score, MaybeDocId.SomeDoc(doc)), OrderedByScore(t, lo, hi)}*/ /*{:_induction t, lo, hi, score, doc}*/ TreapRankSomeDocRefinesBounded(t: Treap, lo: MaybeScore, hi: MaybeScore, score: Score, doc: DocId)
-    requires SumConsistent(t)
-    requires OrderedByScore(t, lo, hi)
-    requires IdsSortedInTree(t)
-    ensures TreapRank(t, score, SomeDoc(doc)) == RankWithId(Entries(t), score, doc)
-    decreases NodeCount(t)
-  {
-    if t.Empty? {
-    } else if score < t.score {
-      TreapRankSomeDocRefinesBounded(t.left, lo, SomeScore(t.score), score, doc);
-      EntriesFromIdsAllGt(t.score, t.ids, score);
-      EntriesGtFromOrdered(t.right, t.score, hi);
-      AllScoresGtWeaken(Entries(t.right), t.score, score);
-      AllScoresGtConcat(EntriesFromIds(t.score, t.ids), Entries(t.right), score);
-      RankWithIdSuffixGt(Entries(t.left), EntriesFromIds(t.score, t.ids) + Entries(t.right), score, doc);
-      assert Entries(t) == Entries(t.left) + (EntriesFromIds(t.score, t.ids) + Entries(t.right));
-      assert RankWithId(Entries(t.left) + (EntriesFromIds(t.score, t.ids) + Entries(t.right)), score, doc) == RankWithId(Entries(t.left), score, doc);
-      calc {
-        TreapRank(t, score, SomeDoc(doc));
-      ==
-        {
-        }
-        TreapRank(t.left, score, SomeDoc(doc));
-      ==
-        {
-        }
-        RankWithId(Entries(t.left), score, doc);
-      ==
-        {
-        }
-        RankWithId(Entries(t.left) + (EntriesFromIds(t.score, t.ids) + Entries(t.right)), score, doc);
-      ==
-        {
-        }
-        RankWithId(Entries(t), score, doc);
-      }
-    } else if score > t.score {
-      TreapRankSomeDocRefinesBounded(t.right, SomeScore(t.score), hi, score, doc);
-      EntriesLtFromOrdered(t.left, lo, t.score);
-      AllScoresLtWeaken(Entries(t.left), t.score, score);
-      EntriesFromIdsAllLt(t.score, t.ids, score);
-      AllScoresLtConcat(Entries(t.left), EntriesFromIds(t.score, t.ids), score);
-      RankWithIdPrefixLt(Entries(t.left) + EntriesFromIds(t.score, t.ids), Entries(t.right), score, doc);
-      SumEqualsEntriesLength(t.left);
-      EntriesFromIdsLength(t.score, t.ids);
-      assert |Entries(t.left) + EntriesFromIds(t.score, t.ids)| == |Entries(t.left)| + |EntriesFromIds(t.score, t.ids)|;
-      assert Entries(t) == Entries(t.left) + EntriesFromIds(t.score, t.ids) + Entries(t.right);
-      calc {
-        TreapRank(t, score, SomeDoc(doc));
-      ==
-        {
-        }
-        Sum(t.left) + |t.ids| + TreapRank(t.right, score, SomeDoc(doc));
-      ==
-        {
-        }
-        |Entries(t.left)| + |EntriesFromIds(t.score, t.ids)| + RankWithId(Entries(t.right), score, doc);
-      ==
-        {
-        }
-        |Entries(t.left) + EntriesFromIds(t.score, t.ids)| + RankWithId(Entries(t.right), score, doc);
-      ==
-        {
-        }
-        RankWithId(Entries(t.left) + EntriesFromIds(t.score, t.ids) + Entries(t.right), score, doc);
-      ==
-        {
-        }
-        RankWithId(Entries(t), score, doc);
-      }
-    } else {
-      EntriesLtFromOrdered(t.left, lo, t.score);
-      RankWithIdPrefixLt(Entries(t.left), [], score, doc);
-      RankWithIdPrefixLt(Entries(t.left), EntriesFromIds(t.score, t.ids) + Entries(t.right), score, doc);
-      EntriesGtFromOrdered(t.right, t.score, hi);
-      RankWithIdSuffixGt(EntriesFromIds(t.score, t.ids), Entries(t.right), score, doc);
-      RankWithIdEntriesFromIds(t.score, t.ids, doc);
-      SumEqualsEntriesLength(t.left);
-      assert Entries(t.left) + [] == Entries(t.left);
-      assert RankWithId(Entries(t.left), score, doc) == |Entries(t.left)|;
-      assert RankWithId(EntriesFromIds(t.score, t.ids) + Entries(t.right), score, doc) == RankWithId(EntriesFromIds(t.score, t.ids), score, doc);
-      assert RankWithId(Entries(t.left) + (EntriesFromIds(t.score, t.ids) + Entries(t.right)), score, doc) == |Entries(t.left)| + RankWithId(EntriesFromIds(t.score, t.ids), score, doc);
-      assert Entries(t) == Entries(t.left) + (EntriesFromIds(t.score, t.ids) + Entries(t.right));
-      calc {
-        TreapRank(t, score, SomeDoc(doc));
-      ==
-        {
-        }
-        Sum(t.left) + InsertionIndex(t.ids, doc);
-      ==
-        {
-        }
-        |Entries(t.left)| + RankWithId(EntriesFromIds(t.score, t.ids), score, doc);
-      ==
-        {
-        }
-        RankWithId(Entries(t.left) + (EntriesFromIds(t.score, t.ids) + Entries(t.right)), score, doc);
-      ==
-        {
-        }
-        RankWithId(Entries(t), score, doc);
-      }
-    }
-  }
-
-  lemma /*{:_inductionTrigger Rank(Entries(t), score, id)}*/ /*{:_inductionTrigger TreapRank(t, score, id)}*/ /*{:_induction t, score, id}*/ TreapRankRefinesModel(t: Treap, score: Score, id: MaybeDocId)
-    requires ValidTreap(t)
-    ensures TreapRank(t, score, id) == Rank(Entries(t), score, id)
-    decreases t, score, id
-  {
-    match id
-    case {:split false} NoDoc() =>
-      TreapRankNoDocRefinesBounded(t, NoScore, NoScore, score);
-      assert Rank(Entries(t), score, NoDoc) == CountStrictLessScore(Entries(t), score);
-    case {:split false} SomeDoc(doc) =>
-      TreapRankSomeDocRefinesBounded(t, NoScore, NoScore, score, doc);
-      assert Rank(Entries(t), score, SomeDoc(doc)) == RankWithId(Entries(t), score, doc);
-  }
-
-  lemma /*{:_inductionTrigger TreapCountAtMost(t, score), OrderedByScore(t, lo, hi)}*/ /*{:_induction t, lo, hi, score}*/ TreapCountAtMostRefinesModelBounded(t: Treap, lo: MaybeScore, hi: MaybeScore, score: Score)
-    requires SumConsistent(t)
-    requires OrderedByScore(t, lo, hi)
-    ensures TreapCountAtMost(t, score) == CountAtMost(Entries(t), score)
-    decreases NodeCount(t)
-  {
-    if t.Empty? {
-    } else if score < t.score {
-      TreapCountAtMostRefinesModelBounded(t.left, lo, SomeScore(t.score), score);
-      EntriesFromIdsAllGt(t.score, t.ids, score);
-      EntriesGtFromOrdered(t.right, t.score, hi);
-      AllScoresGtWeaken(Entries(t.right), t.score, score);
-      AllScoresGtConcat(EntriesFromIds(t.score, t.ids), Entries(t.right), score);
-      CountAtMostSuffixGt(Entries(t.left), EntriesFromIds(t.score, t.ids) + Entries(t.right), score);
-      assert Entries(t) == Entries(t.left) + (EntriesFromIds(t.score, t.ids) + Entries(t.right));
-      assert CountAtMost(Entries(t.left) + (EntriesFromIds(t.score, t.ids) + Entries(t.right)), score) == CountAtMost(Entries(t.left), score);
-      calc {
-        TreapCountAtMost(t, score);
-      ==
-        {
-        }
-        TreapCountAtMost(t.left, score);
-      ==
-        {
-        }
-        CountAtMost(Entries(t.left), score);
-      ==
-        {
-        }
-        CountAtMost(Entries(t.left) + (EntriesFromIds(t.score, t.ids) + Entries(t.right)), score);
-      ==
-        {
-        }
-        CountAtMost(Entries(t), score);
-      }
-    } else {
-      TreapCountAtMostRefinesModelBounded(t.right, SomeScore(t.score), hi, score);
-      EntriesLtFromOrdered(t.left, lo, t.score);
-      if score == t.score {
-        AllScoresLtImpliesLe(Entries(t.left), t.score);
-      } else {
-        assert t.score < score;
-        AllScoresLtWeaken(Entries(t.left), t.score, score);
-        AllScoresLtImpliesLe(Entries(t.left), score);
-      }
-      EntriesFromIdsAllLe(t.score, t.ids, score);
-      AllScoresLeConcat(Entries(t.left), EntriesFromIds(t.score, t.ids), score);
-      CountAtMostPrefixLe(Entries(t.left) + EntriesFromIds(t.score, t.ids), Entries(t.right), score);
-      SumEqualsEntriesLength(t.left);
-      EntriesFromIdsLength(t.score, t.ids);
-      assert |Entries(t.left) + EntriesFromIds(t.score, t.ids)| == |Entries(t.left)| + |EntriesFromIds(t.score, t.ids)|;
-      assert CountAtMost(Entries(t.left) + EntriesFromIds(t.score, t.ids) + Entries(t.right), score) == |Entries(t.left) + EntriesFromIds(t.score, t.ids)| + CountAtMost(Entries(t.right), score);
-      assert Entries(t) == Entries(t.left) + EntriesFromIds(t.score, t.ids) + Entries(t.right);
-      calc {
-        TreapCountAtMost(t, score);
-      ==
-        {
-        }
-        Sum(t.left) + |t.ids| + TreapCountAtMost(t.right, score);
-      ==
-        {
-        }
-        |Entries(t.left)| + |EntriesFromIds(t.score, t.ids)| + CountAtMost(Entries(t.right), score);
-      ==
-        {
-        }
-        |Entries(t.left) + EntriesFromIds(t.score, t.ids)| + CountAtMost(Entries(t.right), score);
-      ==
-        {
-        }
-        CountAtMost(Entries(t.left) + EntriesFromIds(t.score, t.ids) + Entries(t.right), score);
-      ==
-        {
-        }
-        CountAtMost(Entries(t), score);
-      }
-    }
-  }
-
-  lemma /*{:_inductionTrigger CountAtMost(Entries(t), score)}*/ /*{:_inductionTrigger TreapCountAtMost(t, score)}*/ /*{:_induction t, score}*/ TreapCountAtMostRefinesModel(t: Treap, score: Score)
-    requires ValidTreap(t)
-    ensures TreapCountAtMost(t, score) == CountAtMost(Entries(t), score)
-    decreases t, score
-  {
-    TreapCountAtMostRefinesModelBounded(t, NoScore, NoScore, score);
-  }
-
-  lemma /*{:_inductionTrigger Pull(t)}*/ /*{:_inductionTrigger t.Node?}*/ /*{:_induction t}*/ PullPreservesEntries(t: Treap)
-    requires t.Node?
-    ensures Entries(Pull(t)) == Entries(t)
-    decreases t
-  {
-  }
-
-  lemma /*{:_inductionTrigger RotateRight(t)}*/ /*{:_inductionTrigger t.left}*/ /*{:_induction t}*/ RotateRightPreservesEntries(t: Treap)
-    requires t.Node? && t.left.Node?
-    ensures Entries(RotateRight(t)) == Entries(t)
-    decreases t
-  {
-  }
-
-  lemma /*{:_inductionTrigger RotateLeft(t)}*/ /*{:_inductionTrigger t.right}*/ /*{:_induction t}*/ RotateLeftPreservesEntries(t: Treap)
-    requires t.Node? && t.right.Node?
-    ensures Entries(RotateLeft(t)) == Entries(t)
-    decreases t
-  {
-  }
-
-  import opened DocsIndexModel
-
-  type Priority = int
-
-  datatype MaybeScore = NoScore | SomeScore(v: Score)
-
-  datatype Treap = Empty | Node(score: Score, ids: seq<DocId>, prio: Priority, sum: nat, left: Treap, right: Treap)
 }
 
 module DocsIndexModel {
@@ -2126,9 +602,10 @@ module DocsIndexModel {
   predicate SortedEntries(es: seq<Entry>)
     decreases es
   {
-    forall i: int, j: int {:trigger es[j], es[i]} :: 
-      0 <= i < j < |es| ==>
-        LexLt(es[i], es[j])
+    if |es| < 2 then
+      true
+    else
+      LexLt(es[0], es[1]) && SortedEntries(es[1..])
   }
 
   function CountStrictLessScore(es: seq<Entry>, score: Score): nat
@@ -2172,6 +649,7 @@ module DocsIndexModel {
 
   function InsertUnique(es: seq<Entry>, score: Score, id: DocId): seq<Entry>
     requires SortedEntries(es)
+    ensures SortedEntries(InsertUnique(es, score, id))
     decreases es, score, id
   {
     if |es| == 0 then
@@ -2186,6 +664,7 @@ module DocsIndexModel {
 
   function RemoveOne(es: seq<Entry>, score: Score, id: DocId): seq<Entry>
     requires SortedEntries(es)
+    ensures SortedEntries(RemoveOne(es, score, id))
     decreases es, score, id
   {
     if |es| == 0 then
@@ -2235,63 +714,6 @@ module DocsIndexModel {
       [es[0].id] + CollectRange(es[1..], minScore, maxScore, limit - 1)
   }
 
-  lemma /*{:_inductionTrigger CountStrictLessScore(es, score)}*/ /*{:_inductionTrigger Rank(es, score, MaybeDocId.NoDoc)}*/ /*{:_induction es, score}*/ RankNoDocMatchesPrefix(es: seq<Entry>, score: Score)
-    ensures Rank(es, score, NoDoc) == CountStrictLessScore(es, score)
-    decreases es, score
-  {
-  }
-
-  lemma RankWithinBounds(es: seq<Entry>, score: Score, id: MaybeDocId)
-    ensures Rank(es, score, id) <= |es|
-    decreases es, score, id
-  {
-    match id
-    case {:split false} NoDoc() =>
-      CountStrictLessWithinBounds(es, score);
-    case {:split false} SomeDoc(doc) =>
-      RankWithIdWithinBounds(es, score, doc);
-  }
-
-  lemma /*{:_inductionTrigger CountStrictLessScore(es, score)}*/ /*{:_induction es, score}*/ CountStrictLessWithinBounds(es: seq<Entry>, score: Score)
-    ensures CountStrictLessScore(es, score) <= |es|
-    decreases es, score
-  {
-    if |es| == 0 {
-    } else {
-      CountStrictLessWithinBounds(es[1..], score);
-      if es[0].score < score {
-        assert CountStrictLessScore(es, score) == 1 + CountStrictLessScore(es[1..], score);
-        assert |es| == 1 + |es[1..]|;
-      }
-    }
-  }
-
-  lemma /*{:_inductionTrigger RankWithId(es, score, id)}*/ /*{:_induction es, score, id}*/ RankWithIdWithinBounds(es: seq<Entry>, score: Score, id: DocId)
-    ensures RankWithId(es, score, id) <= |es|
-    decreases es, score, id
-  {
-    if |es| == 0 {
-    } else if es[0].score < score || (es[0].score == score && es[0].id < id) {
-      RankWithIdWithinBounds(es[1..], score, id);
-      assert RankWithId(es, score, id) == 1 + RankWithId(es[1..], score, id);
-      assert |es| == 1 + |es[1..]|;
-    }
-  }
-
-  lemma /*{:_inductionTrigger CountAtMost(es, hi), CountAtMost(es, lo)}*/ /*{:_induction es, lo, hi}*/ CountAtMostMonotone(es: seq<Entry>, lo: Score, hi: Score)
-    requires lo <= hi
-    ensures CountAtMost(es, lo) <= CountAtMost(es, hi)
-    decreases es, lo, hi
-  {
-    if |es| == 0 {
-    } else {
-      CountAtMostMonotone(es[1..], lo, hi);
-      if es[0].score <= lo {
-        assert es[0].score <= hi;
-      }
-    }
-  }
-
   type Score = int
 
   type DocId = int
@@ -2315,6 +737,7 @@ module TsLimitQueriesRuntime {
     DocsConsistent(state.docs) &&
     QueriesConsistent(state.queries) &&
     1 <= state.nextId &&
+    EntryIdsBelow(state.queries.entries, state.nextId) &&
     forall id: int {:trigger state.infos[id]} {:trigger id in state.baseScores} {:trigger id in state.infos} :: 
       (id in state.infos ==>
         id in state.baseScores) &&
@@ -2344,6 +767,7 @@ module TsLimitQueriesRuntime {
 
   function SetCurrentMatches(state: LimitQueriesState, queryId: QueryId, currentMatches: nat): LimitQueriesState
     requires queryId in state.infos
+    ensures LimitQueriesConsistent(state) ==> LimitQueriesConsistent(SetCurrentMatches(state, queryId, currentMatches))
     decreases state, queryId, currentMatches
   {
     var info: QueryInfo := state.infos[queryId];
@@ -2351,6 +775,7 @@ module TsLimitQueriesRuntime {
   }
 
   function AddPendingPair(state: LimitQueriesState, queryId: QueryId, docId: DocId): LimitQueriesState
+    ensures LimitQueriesConsistent(state) ==> LimitQueriesConsistent(AddPendingPair(state, queryId, docId))
     decreases state, queryId, docId
   {
     var docsForQuery: seq<DocId> := if queryId in state.pendingByQuery then AppendDocIdIfMissing(state.pendingByQuery[queryId], docId) else [docId];
@@ -2359,6 +784,7 @@ module TsLimitQueriesRuntime {
   }
 
   function RemovePendingPair(state: LimitQueriesState, queryId: QueryId, docId: DocId): LimitQueriesState
+    ensures LimitQueriesConsistent(state) ==> LimitQueriesConsistent(RemovePendingPair(state, queryId, docId))
     decreases state, queryId, docId
   {
     var nextPendingByQuery: map<int, seq<DocId>> := if queryId in state.pendingByQuery && ContainsId(state.pendingByQuery[queryId], docId) then var nextDocs: seq<DocId> := RemoveDocId(state.pendingByQuery[queryId], docId); if |nextDocs| == 0 then map key: int {:trigger state.pendingByQuery[key]} {:trigger key in state.pendingByQuery} | key in state.pendingByQuery && key != queryId :: state.pendingByQuery[key] else state.pendingByQuery[queryId := nextDocs] else state.pendingByQuery;
@@ -2380,17 +806,20 @@ module TsLimitQueriesRuntime {
 
   function AddQuery(state: LimitQueriesState, a: Score, k: nat, max: Score): QueryAddResult
     requires LimitQueriesConsistent(state)
+    ensures LimitQueriesConsistent(AddQuery(state, a, k, max).state)
     decreases state, a, k, max
   {
     var queryId: QueryId := state.nextId;
     var effectiveScore: int := RankDoc(state.docs, a, NoDoc) + k;
-    var nextQueries: QueriesState := Insert(state.queries, a, queryId, effectiveScore, max);
+    var nextQueries: QueriesState := Insert(state.queries, a, state.nextId, effectiveScore, max);
     var baseScore: int := effectiveScore - AccumulatedAddAtKey(state.queries, a);
     var currentMatches: nat := NatMin(CountDocsInRange(state, a, max), k);
     QueryAddResult(LimitQueriesState(state.docs, nextQueries, queryId + 1, state.infos[queryId := QueryInfo(queryId, a, k, max, currentMatches)], state.baseScores[queryId := baseScore], state.pendingByQuery, state.pendingByDoc), queryId)
   }
 
   function RemovePendingDocsForQuery(state: LimitQueriesState, docs: seq<DocId>, queryId: QueryId): LimitQueriesState
+    requires LimitQueriesConsistent(state)
+    ensures LimitQueriesConsistent(RemovePendingDocsForQuery(state, docs, queryId))
     decreases |docs|
   {
     if |docs| == 0 then
@@ -2401,6 +830,7 @@ module TsLimitQueriesRuntime {
 
   function RemoveQuery(state: LimitQueriesState, queryId: QueryId): StateChange
     requires LimitQueriesConsistent(state)
+    ensures LimitQueriesConsistent(RemoveQuery(state, queryId).state)
     decreases state, queryId
   {
     if !(queryId in state.infos) || !(queryId in state.baseScores) then
@@ -2427,6 +857,8 @@ module TsLimitQueriesRuntime {
   }
 
   function DecrementCurrentMatchesFor(state: LimitQueriesState, affected: seq<QueryId>): LimitQueriesState
+    requires LimitQueriesConsistent(state)
+    ensures LimitQueriesConsistent(DecrementCurrentMatchesFor(state, affected))
     decreases |affected|
   {
     if |affected| == 0 then
@@ -2439,6 +871,7 @@ module TsLimitQueriesRuntime {
 
   function RemoveDocument(state: LimitQueriesState, score: Score, docId: DocId): RemoveDocumentResult
     requires LimitQueriesConsistent(state)
+    ensures LimitQueriesConsistent(RemoveDocument(state, score, docId).state)
     decreases state, score, docId
   {
     var affected: seq<QueryId> := GetQueriesCovering(state, score, SomeDoc(docId));
@@ -2449,6 +882,8 @@ module TsLimitQueriesRuntime {
   }
 
   function ProcessAddedQueries(state: LimitQueriesState, affected: seq<QueryId>, docId: DocId): AddDocumentResult
+    requires LimitQueriesConsistent(state)
+    ensures LimitQueriesConsistent(ProcessAddedQueries(state, affected, docId).state)
     decreases |affected|
   {
     if |affected| == 0 then
@@ -2459,6 +894,7 @@ module TsLimitQueriesRuntime {
 
   function AddDocument(state: LimitQueriesState, score: Score, docId: DocId): AddDocumentResult
     requires LimitQueriesConsistent(state)
+    ensures LimitQueriesConsistent(AddDocument(state, score, docId).state)
     decreases state, score, docId
   {
     var affected: seq<QueryId> := GetQueriesCovering(state, score, SomeDoc(docId));
@@ -2532,6 +968,8 @@ module TsLimitQueriesRuntime {
   }
 
   function ResolvePendingDocQueries(state: LimitQueriesState, queryIds: seq<QueryId>, docId: DocId): LimitQueriesState
+    requires LimitQueriesConsistent(state)
+    ensures LimitQueriesConsistent(ResolvePendingDocQueries(state, queryIds, docId))
     decreases |queryIds|
   {
     if |queryIds| == 0 then
@@ -2541,6 +979,8 @@ module TsLimitQueriesRuntime {
   }
 
   function ResolvePendingForDoc(state: LimitQueriesState, docId: DocId): LimitQueriesState
+    requires LimitQueriesConsistent(state)
+    ensures LimitQueriesConsistent(ResolvePendingForDoc(state, docId))
     decreases state, docId
   {
     if !(docId in state.pendingByDoc) then
@@ -2587,6 +1027,15 @@ module TsQueriesRuntime {
       !ContainsQueryEntryId(entries[1..], entries[0].id) && UniqueQueryEntries(entries[1..])
   }
 
+  predicate EntryIdsBelow(entries: seq<QueryEntry>, bound: QueryId)
+    decreases entries, bound
+  {
+    if |entries| == 0 then
+      true
+    else
+      entries[0].id < bound && EntryIdsBelow(entries[1..], bound)
+  }
+
   function ContainsQueryEntryId(entries: seq<QueryEntry>, id: QueryId): bool
     decreases entries, id
   {
@@ -2599,9 +1048,10 @@ module TsQueriesRuntime {
   predicate OrderedEntries(entries: seq<QueryEntry>)
     decreases entries
   {
-    forall i: int, j: int {:trigger entries[j], entries[i]} :: 
-      0 <= i < j < |entries| ==>
-        entries[i].key < entries[j].key || (entries[i].key == entries[j].key && (entries[i].baseScore < entries[j].baseScore || (entries[i].baseScore == entries[j].baseScore && entries[i].id < entries[j].id)))
+    if |entries| < 2 then
+      true
+    else
+      CompareEntries(entries[0], entries[1]) && OrderedEntries(entries[1..])
   }
 
   predicate QueriesConsistent(state: QueriesState)
@@ -2633,6 +1083,8 @@ module TsQueriesRuntime {
   }
 
   function RangeAddKeysGreaterThan(state: QueriesState, threshold: Score, delta: int): QueriesState
+    requires QueriesConsistent(state)
+    ensures QueriesConsistent(state) ==> QueriesConsistent(RangeAddKeysGreaterThan(state, threshold, delta))
     decreases state, threshold, delta
   {
     QueriesState(state.entries, state.rangeAdds + [RangeAddOp(threshold, delta)])
@@ -2645,6 +1097,14 @@ module TsQueriesRuntime {
   }
 
   function InsertEntrySorted(entries: seq<QueryEntry>, entry: QueryEntry): seq<QueryEntry>
+    requires OrderedEntries(entries)
+    requires UniqueQueryEntries(entries)
+    requires EntryIdsBelow(entries, entry.id)
+    ensures OrderedEntries(entries) ==> OrderedEntries(InsertEntrySorted(entries, entry))
+    ensures UniqueQueryEntries(entries) && EntryIdsBelow(entries, entry.id) ==> UniqueQueryEntries(InsertEntrySorted(entries, entry))
+    ensures forall id: int {:trigger ContainsQueryEntryId(entries, id)} {:trigger ContainsQueryEntryId(InsertEntrySorted(entries, entry), id)} :: ContainsQueryEntryId(InsertEntrySorted(entries, entry), id) ==> id == entry.id || ContainsQueryEntryId(entries, id)
+    ensures forall bound: int {:trigger EntryIdsBelow(InsertEntrySorted(entries, entry), bound)} {:trigger EntryIdsBelow(entries, bound)} :: EntryIdsBelow(entries, bound) && entry.id < bound ==> EntryIdsBelow(InsertEntrySorted(entries, entry), bound)
+    ensures EntryIdsBelow(entries, entry.id) ==> EntryIdsBelow(InsertEntrySorted(entries, entry), entry.id + 1)
     decreases |entries|
   {
     if |entries| == 0 then
@@ -2656,6 +1116,11 @@ module TsQueriesRuntime {
   }
 
   function Insert(state: QueriesState, key: Score, id: QueryId, effectiveScore: int, maxCap: Score): QueriesState
+    requires QueriesConsistent(state)
+    requires EntryIdsBelow(state.entries, id)
+    ensures QueriesConsistent(state) && EntryIdsBelow(state.entries, id) ==> QueriesConsistent(Insert(state, key, id, effectiveScore, maxCap))
+    ensures forall bound: int {:trigger EntryIdsBelow(Insert(state, key, id, effectiveScore, maxCap).entries, bound)} {:trigger EntryIdsBelow(state.entries, bound)} :: EntryIdsBelow(state.entries, bound) && id < bound ==> EntryIdsBelow(Insert(state, key, id, effectiveScore, maxCap).entries, bound)
+    ensures EntryIdsBelow(state.entries, id) ==> EntryIdsBelow(Insert(state, key, id, effectiveScore, maxCap).entries, id + 1)
     decreases state, key, id, effectiveScore, maxCap
   {
     var baseScore: int := effectiveScore - AccumulatedAddAtKey(state, key);
@@ -2663,6 +1128,12 @@ module TsQueriesRuntime {
   }
 
   function RemoveEntries(entries: seq<QueryEntry>, key: Score, id: QueryId, baseScore: int, maxCap: Score): seq<QueryEntry>
+    requires OrderedEntries(entries)
+    requires UniqueQueryEntries(entries)
+    ensures OrderedEntries(entries) ==> OrderedEntries(RemoveEntries(entries, key, id, baseScore, maxCap))
+    ensures UniqueQueryEntries(entries) ==> UniqueQueryEntries(RemoveEntries(entries, key, id, baseScore, maxCap))
+    ensures forall id2: QueryId {:trigger ContainsQueryEntryId(entries, id2)} {:trigger ContainsQueryEntryId(RemoveEntries(entries, key, id, baseScore, maxCap), id2)} :: ContainsQueryEntryId(RemoveEntries(entries, key, id, baseScore, maxCap), id2) ==> ContainsQueryEntryId(entries, id2)
+    ensures forall bound: QueryId {:trigger EntryIdsBelow(RemoveEntries(entries, key, id, baseScore, maxCap), bound)} {:trigger EntryIdsBelow(entries, bound)} :: EntryIdsBelow(entries, bound) ==> EntryIdsBelow(RemoveEntries(entries, key, id, baseScore, maxCap), bound)
     decreases |entries|
   {
     if |entries| == 0 then
@@ -2674,6 +1145,9 @@ module TsQueriesRuntime {
   }
 
   function Remove(state: QueriesState, key: Score, id: QueryId, baseScore: int, maxCap: Score): QueriesState
+    requires QueriesConsistent(state)
+    ensures QueriesConsistent(state) ==> QueriesConsistent(Remove(state, key, id, baseScore, maxCap))
+    ensures forall bound: QueryId {:trigger EntryIdsBelow(Remove(state, key, id, baseScore, maxCap).entries, bound)} {:trigger EntryIdsBelow(state.entries, bound)} :: EntryIdsBelow(state.entries, bound) ==> EntryIdsBelow(Remove(state, key, id, baseScore, maxCap).entries, bound)
     decreases state, key, id, baseScore, maxCap
   {
     QueriesState(RemoveEntries(state.entries, key, id, baseScore, maxCap), state.rangeAdds)
@@ -2721,6 +1195,7 @@ module TsDocsRuntime {
 
   function AddDoc(state: DocsState, score: Score, id: DocId): DocsState
     requires DocsConsistent(state)
+    ensures DocsConsistent(AddDoc(state, score, id))
     decreases state, score, id
   {
     DocsState(InsertUnique(state.entries, score, id))
@@ -2728,6 +1203,7 @@ module TsDocsRuntime {
 
   function RemoveDoc(state: DocsState, score: Score, id: DocId): DocsState
     requires DocsConsistent(state)
+    ensures DocsConsistent(RemoveDoc(state, score, id))
     decreases state, score, id
   {
     DocsState(RemoveOne(state.entries, score, id))
@@ -8460,13 +6936,11 @@ namespace DocsIndexModel {
       return (((a).dtor_score) < ((b).dtor_score)) || ((((a).dtor_score) == ((b).dtor_score)) && (((a).dtor_id) < ((b).dtor_id)));
     }
     public static bool SortedEntries(Dafny.ISequence<DocsIndexModel._IEntry> es) {
-      return Dafny.Helpers.Id<Func<Dafny.ISequence<DocsIndexModel._IEntry>, bool>>((_0_es) => Dafny.Helpers.Quantifier<BigInteger>(Dafny.Helpers.IntegerRange(BigInteger.Zero, new BigInteger((_0_es).Count)), true, (((_forall_var_0) => {
-        BigInteger _1_i = (BigInteger)_forall_var_0;
-        return Dafny.Helpers.Quantifier<BigInteger>(Dafny.Helpers.IntegerRange((_1_i) + (BigInteger.One), new BigInteger((_0_es).Count)), true, (((_forall_var_1) => {
-          BigInteger _2_j = (BigInteger)_forall_var_1;
-          return !((((_1_i).Sign != -1) && ((_1_i) < (_2_j))) && ((_2_j) < (new BigInteger((_0_es).Count)))) || (DocsIndexModel.__default.LexLt((_0_es).Select(_1_i), (_0_es).Select(_2_j)));
-        })));
-      }))))(es);
+      if ((new BigInteger((es).Count)) < (new BigInteger(2))) {
+        return true;
+      } else {
+        return (DocsIndexModel.__default.LexLt((es).Select(BigInteger.Zero), (es).Select(BigInteger.One))) && (DocsIndexModel.__default.SortedEntries((es).Drop(BigInteger.One)));
+      }
     }
     public static BigInteger CountStrictLessScore(Dafny.ISequence<DocsIndexModel._IEntry> es, BigInteger score)
     {
@@ -8882,727 +7356,11 @@ namespace DocsIndexModel {
     }
   }
 } // end of namespace DocsIndexModel
-namespace DocsIndexTreap {
-
-  public partial class __default {
-    public static BigInteger NodeCount(DocsIndexTreap._ITreap t) {
-      if ((t).is_Empty) {
-        return BigInteger.Zero;
-      } else {
-        return ((BigInteger.One) + (DocsIndexTreap.__default.NodeCount((t).dtor_left))) + (DocsIndexTreap.__default.NodeCount((t).dtor_right));
-      }
-    }
-    public static BigInteger Sum(DocsIndexTreap._ITreap t) {
-      if ((t).is_Empty) {
-        return BigInteger.Zero;
-      } else {
-        return (t).dtor_sum;
-      }
-    }
-    public static BigInteger StructuralSum(DocsIndexTreap._ITreap t) {
-      if ((t).is_Empty) {
-        return BigInteger.Zero;
-      } else {
-        return ((new BigInteger(((t).dtor_ids).Count)) + (DocsIndexTreap.__default.StructuralSum((t).dtor_left))) + (DocsIndexTreap.__default.StructuralSum((t).dtor_right));
-      }
-    }
-    public static bool SortedStrictIds(Dafny.ISequence<BigInteger> ids) {
-      return Dafny.Helpers.Id<Func<Dafny.ISequence<BigInteger>, bool>>((_0_ids) => Dafny.Helpers.Quantifier<BigInteger>(Dafny.Helpers.IntegerRange(BigInteger.Zero, new BigInteger((_0_ids).Count)), true, (((_forall_var_0) => {
-        BigInteger _1_i = (BigInteger)_forall_var_0;
-        return Dafny.Helpers.Quantifier<BigInteger>(Dafny.Helpers.IntegerRange((_1_i) + (BigInteger.One), new BigInteger((_0_ids).Count)), true, (((_forall_var_1) => {
-          BigInteger _2_j = (BigInteger)_forall_var_1;
-          return !((((_1_i).Sign != -1) && ((_1_i) < (_2_j))) && ((_2_j) < (new BigInteger((_0_ids).Count)))) || (((_0_ids).Select(_1_i)) < ((_0_ids).Select(_2_j)));
-        })));
-      }))))(ids);
-    }
-    public static bool ScoreAboveLower(BigInteger score, DocsIndexTreap._IMaybeScore lo)
-    {
-      DocsIndexTreap._IMaybeScore _source0 = lo;
-      {
-        if (_source0.is_NoScore) {
-          return true;
-        }
-      }
-      {
-        BigInteger _0_v = _source0.dtor_v;
-        return (_0_v) < (score);
-      }
-    }
-    public static bool ScoreBelowUpper(BigInteger score, DocsIndexTreap._IMaybeScore hi)
-    {
-      DocsIndexTreap._IMaybeScore _source0 = hi;
-      {
-        if (_source0.is_NoScore) {
-          return true;
-        }
-      }
-      {
-        BigInteger _0_v = _source0.dtor_v;
-        return (score) < (_0_v);
-      }
-    }
-    public static BigInteger RootPrio(DocsIndexTreap._ITreap t) {
-      if ((t).is_Node) {
-        return (t).dtor_prio;
-      } else {
-        return BigInteger.Zero;
-      }
-    }
-    public static bool SumConsistent(DocsIndexTreap._ITreap t) {
-      if ((t).is_Empty) {
-        return true;
-      } else {
-        return ((DocsIndexTreap.__default.SumConsistent((t).dtor_left)) && (DocsIndexTreap.__default.SumConsistent((t).dtor_right))) && (((t).dtor_sum) == (((new BigInteger(((t).dtor_ids).Count)) + (DocsIndexTreap.__default.Sum((t).dtor_left))) + (DocsIndexTreap.__default.Sum((t).dtor_right))));
-      }
-    }
-    public static bool HeapOrdered(DocsIndexTreap._ITreap t) {
-      if ((t).is_Empty) {
-        return true;
-      } else {
-        return (((((((t).dtor_left).is_Node) ? ((((t).dtor_left).dtor_prio) <= ((t).dtor_prio)) : (true))) && (((((t).dtor_right).is_Node) ? ((((t).dtor_right).dtor_prio) <= ((t).dtor_prio)) : (true)))) && (DocsIndexTreap.__default.HeapOrdered((t).dtor_left))) && (DocsIndexTreap.__default.HeapOrdered((t).dtor_right));
-      }
-    }
-    public static bool OrderedByScore(DocsIndexTreap._ITreap t, DocsIndexTreap._IMaybeScore lo, DocsIndexTreap._IMaybeScore hi)
-    {
-      if ((t).is_Empty) {
-        return true;
-      } else {
-        return (((DocsIndexTreap.__default.ScoreAboveLower((t).dtor_score, lo)) && (DocsIndexTreap.__default.ScoreBelowUpper((t).dtor_score, hi))) && (DocsIndexTreap.__default.OrderedByScore((t).dtor_left, lo, DocsIndexTreap.MaybeScore.create_SomeScore((t).dtor_score)))) && (DocsIndexTreap.__default.OrderedByScore((t).dtor_right, DocsIndexTreap.MaybeScore.create_SomeScore((t).dtor_score), hi));
-      }
-    }
-    public static bool IdsSortedInTree(DocsIndexTreap._ITreap t) {
-      if ((t).is_Empty) {
-        return true;
-      } else {
-        return ((DocsIndexTreap.__default.SortedStrictIds((t).dtor_ids)) && (DocsIndexTreap.__default.IdsSortedInTree((t).dtor_left))) && (DocsIndexTreap.__default.IdsSortedInTree((t).dtor_right));
-      }
-    }
-    public static bool NonEmptyBuckets(DocsIndexTreap._ITreap t) {
-      if ((t).is_Empty) {
-        return true;
-      } else {
-        return (((new BigInteger(((t).dtor_ids).Count)).Sign == 1) && (DocsIndexTreap.__default.NonEmptyBuckets((t).dtor_left))) && (DocsIndexTreap.__default.NonEmptyBuckets((t).dtor_right));
-      }
-    }
-    public static bool ValidTreap(DocsIndexTreap._ITreap t) {
-      return ((((DocsIndexTreap.__default.SumConsistent(t)) && (DocsIndexTreap.__default.HeapOrdered(t))) && (DocsIndexTreap.__default.OrderedByScore(t, DocsIndexTreap.MaybeScore.create_NoScore(), DocsIndexTreap.MaybeScore.create_NoScore()))) && (DocsIndexTreap.__default.IdsSortedInTree(t))) && (DocsIndexTreap.__default.NonEmptyBuckets(t));
-    }
-    public static Dafny.ISequence<DocsIndexModel._IEntry> EntriesFromIds(BigInteger score, Dafny.ISequence<BigInteger> ids)
-    {
-      Dafny.ISequence<DocsIndexModel._IEntry> _0___accumulator = Dafny.Sequence<DocsIndexModel._IEntry>.FromElements();
-    TAIL_CALL_START: ;
-      if ((new BigInteger((ids).Count)).Sign == 0) {
-        return Dafny.Sequence<DocsIndexModel._IEntry>.Concat(_0___accumulator, Dafny.Sequence<DocsIndexModel._IEntry>.FromElements());
-      } else {
-        _0___accumulator = Dafny.Sequence<DocsIndexModel._IEntry>.Concat(_0___accumulator, Dafny.Sequence<DocsIndexModel._IEntry>.FromElements(DocsIndexModel.Entry.create(score, (ids).Select(BigInteger.Zero))));
-        BigInteger _in0 = score;
-        Dafny.ISequence<BigInteger> _in1 = (ids).Drop(BigInteger.One);
-        score = _in0;
-        ids = _in1;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static Dafny.ISequence<DocsIndexModel._IEntry> Entries(DocsIndexTreap._ITreap t) {
-      if ((t).is_Empty) {
-        return Dafny.Sequence<DocsIndexModel._IEntry>.FromElements();
-      } else {
-        return Dafny.Sequence<DocsIndexModel._IEntry>.Concat(Dafny.Sequence<DocsIndexModel._IEntry>.Concat(DocsIndexTreap.__default.Entries((t).dtor_left), DocsIndexTreap.__default.EntriesFromIds((t).dtor_score, (t).dtor_ids)), DocsIndexTreap.__default.Entries((t).dtor_right));
-      }
-    }
-    public static Dafny.ISequence<BigInteger> InsertId(Dafny.ISequence<BigInteger> ids, BigInteger id)
-    {
-      Dafny.ISequence<BigInteger> _0___accumulator = Dafny.Sequence<BigInteger>.FromElements();
-    TAIL_CALL_START: ;
-      if ((new BigInteger((ids).Count)).Sign == 0) {
-        return Dafny.Sequence<BigInteger>.Concat(_0___accumulator, Dafny.Sequence<BigInteger>.FromElements(id));
-      } else if (((ids).Select(BigInteger.Zero)) == (id)) {
-        return Dafny.Sequence<BigInteger>.Concat(_0___accumulator, ids);
-      } else if ((id) < ((ids).Select(BigInteger.Zero))) {
-        return Dafny.Sequence<BigInteger>.Concat(_0___accumulator, Dafny.Sequence<BigInteger>.Concat(Dafny.Sequence<BigInteger>.FromElements(id), ids));
-      } else {
-        _0___accumulator = Dafny.Sequence<BigInteger>.Concat(_0___accumulator, Dafny.Sequence<BigInteger>.FromElements((ids).Select(BigInteger.Zero)));
-        Dafny.ISequence<BigInteger> _in0 = (ids).Drop(BigInteger.One);
-        BigInteger _in1 = id;
-        ids = _in0;
-        id = _in1;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static Dafny.ISequence<BigInteger> RemoveId(Dafny.ISequence<BigInteger> ids, BigInteger id)
-    {
-      Dafny.ISequence<BigInteger> _0___accumulator = Dafny.Sequence<BigInteger>.FromElements();
-    TAIL_CALL_START: ;
-      if ((new BigInteger((ids).Count)).Sign == 0) {
-        return Dafny.Sequence<BigInteger>.Concat(_0___accumulator, ids);
-      } else if (((ids).Select(BigInteger.Zero)) == (id)) {
-        return Dafny.Sequence<BigInteger>.Concat(_0___accumulator, (ids).Drop(BigInteger.One));
-      } else if ((id) < ((ids).Select(BigInteger.Zero))) {
-        return Dafny.Sequence<BigInteger>.Concat(_0___accumulator, ids);
-      } else {
-        _0___accumulator = Dafny.Sequence<BigInteger>.Concat(_0___accumulator, Dafny.Sequence<BigInteger>.FromElements((ids).Select(BigInteger.Zero)));
-        Dafny.ISequence<BigInteger> _in0 = (ids).Drop(BigInteger.One);
-        BigInteger _in1 = id;
-        ids = _in0;
-        id = _in1;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static BigInteger InsertionIndex(Dafny.ISequence<BigInteger> ids, BigInteger id)
-    {
-      BigInteger _0___accumulator = BigInteger.Zero;
-    TAIL_CALL_START: ;
-      if ((new BigInteger((ids).Count)).Sign == 0) {
-        return (BigInteger.Zero) + (_0___accumulator);
-      } else if (((ids).Select(BigInteger.Zero)) < (id)) {
-        _0___accumulator = (_0___accumulator) + (BigInteger.One);
-        Dafny.ISequence<BigInteger> _in0 = (ids).Drop(BigInteger.One);
-        BigInteger _in1 = id;
-        ids = _in0;
-        id = _in1;
-        goto TAIL_CALL_START;
-      } else {
-        return (BigInteger.Zero) + (_0___accumulator);
-      }
-    }
-    public static DocsIndexTreap._ITreap Pull(DocsIndexTreap._ITreap t) {
-      return DocsIndexTreap.Treap.create_Node((t).dtor_score, (t).dtor_ids, (t).dtor_prio, ((new BigInteger(((t).dtor_ids).Count)) + (DocsIndexTreap.__default.Sum((t).dtor_left))) + (DocsIndexTreap.__default.Sum((t).dtor_right)), (t).dtor_left, (t).dtor_right);
-    }
-    public static DocsIndexTreap._ITreap RotateRight(DocsIndexTreap._ITreap t) {
-      DocsIndexTreap._ITreap _0_demoted = DocsIndexTreap.__default.Pull(DocsIndexTreap.Treap.create_Node((t).dtor_score, (t).dtor_ids, (t).dtor_prio, BigInteger.Zero, ((t).dtor_left).dtor_right, (t).dtor_right));
-      return DocsIndexTreap.__default.Pull(DocsIndexTreap.Treap.create_Node(((t).dtor_left).dtor_score, ((t).dtor_left).dtor_ids, ((t).dtor_left).dtor_prio, BigInteger.Zero, ((t).dtor_left).dtor_left, _0_demoted));
-    }
-    public static DocsIndexTreap._ITreap RotateLeft(DocsIndexTreap._ITreap t) {
-      DocsIndexTreap._ITreap _0_demoted = DocsIndexTreap.__default.Pull(DocsIndexTreap.Treap.create_Node((t).dtor_score, (t).dtor_ids, (t).dtor_prio, BigInteger.Zero, (t).dtor_left, ((t).dtor_right).dtor_left));
-      return DocsIndexTreap.__default.Pull(DocsIndexTreap.Treap.create_Node(((t).dtor_right).dtor_score, ((t).dtor_right).dtor_ids, ((t).dtor_right).dtor_prio, BigInteger.Zero, _0_demoted, ((t).dtor_right).dtor_right));
-    }
-    public static DocsIndexTreap._ITreap Join(DocsIndexTreap._ITreap left, DocsIndexTreap._ITreap right)
-    {
-      if ((left).is_Empty) {
-        return right;
-      } else if ((right).is_Empty) {
-        return left;
-      } else if (((left).dtor_prio) > ((right).dtor_prio)) {
-        return DocsIndexTreap.__default.Pull(DocsIndexTreap.Treap.create_Node((left).dtor_score, (left).dtor_ids, (left).dtor_prio, BigInteger.Zero, (left).dtor_left, DocsIndexTreap.__default.Join((left).dtor_right, right)));
-      } else {
-        return DocsIndexTreap.__default.Pull(DocsIndexTreap.Treap.create_Node((right).dtor_score, (right).dtor_ids, (right).dtor_prio, BigInteger.Zero, DocsIndexTreap.__default.Join(left, (right).dtor_left), (right).dtor_right));
-      }
-    }
-    public static DocsIndexTreap._ITreap Add(DocsIndexTreap._ITreap t, BigInteger score, BigInteger id, BigInteger prioForNew)
-    {
-      if ((t).is_Empty) {
-        return DocsIndexTreap.Treap.create_Node(score, Dafny.Sequence<BigInteger>.FromElements(id), prioForNew, BigInteger.One, DocsIndexTreap.Treap.create_Empty(), DocsIndexTreap.Treap.create_Empty());
-      } else if ((score) == ((t).dtor_score)) {
-        return DocsIndexTreap.__default.Pull(DocsIndexTreap.Treap.create_Node((t).dtor_score, DocsIndexTreap.__default.InsertId((t).dtor_ids, id), (t).dtor_prio, BigInteger.Zero, (t).dtor_left, (t).dtor_right));
-      } else if ((score) < ((t).dtor_score)) {
-        DocsIndexTreap._ITreap _0_left2 = DocsIndexTreap.__default.Add((t).dtor_left, score, id, prioForNew);
-        DocsIndexTreap._ITreap _1_n = DocsIndexTreap.__default.Pull(DocsIndexTreap.Treap.create_Node((t).dtor_score, (t).dtor_ids, (t).dtor_prio, BigInteger.Zero, _0_left2, (t).dtor_right));
-        if (((_0_left2).is_Node) && (((_0_left2).dtor_prio) > ((t).dtor_prio))) {
-          return DocsIndexTreap.__default.RotateRight(_1_n);
-        } else {
-          return _1_n;
-        }
-      } else {
-        DocsIndexTreap._ITreap _2_right2 = DocsIndexTreap.__default.Add((t).dtor_right, score, id, prioForNew);
-        DocsIndexTreap._ITreap _3_n = DocsIndexTreap.__default.Pull(DocsIndexTreap.Treap.create_Node((t).dtor_score, (t).dtor_ids, (t).dtor_prio, BigInteger.Zero, (t).dtor_left, _2_right2));
-        if (((_2_right2).is_Node) && (((_2_right2).dtor_prio) > ((t).dtor_prio))) {
-          return DocsIndexTreap.__default.RotateLeft(_3_n);
-        } else {
-          return _3_n;
-        }
-      }
-    }
-    public static DocsIndexTreap._ITreap Remove(DocsIndexTreap._ITreap t, BigInteger score, BigInteger id)
-    {
-      if ((t).is_Empty) {
-        return DocsIndexTreap.Treap.create_Empty();
-      } else if ((score) == ((t).dtor_score)) {
-        Dafny.ISequence<BigInteger> _0_ids2 = DocsIndexTreap.__default.RemoveId((t).dtor_ids, id);
-        if ((new BigInteger((_0_ids2).Count)) == (new BigInteger(((t).dtor_ids).Count))) {
-          return DocsIndexTreap.__default.Pull(DocsIndexTreap.Treap.create_Node((t).dtor_score, (t).dtor_ids, (t).dtor_prio, BigInteger.Zero, (t).dtor_left, (t).dtor_right));
-        } else if ((new BigInteger((_0_ids2).Count)).Sign == 0) {
-          return DocsIndexTreap.__default.Join((t).dtor_left, (t).dtor_right);
-        } else {
-          return DocsIndexTreap.__default.Pull(DocsIndexTreap.Treap.create_Node((t).dtor_score, _0_ids2, (t).dtor_prio, BigInteger.Zero, (t).dtor_left, (t).dtor_right));
-        }
-      } else if ((score) < ((t).dtor_score)) {
-        return DocsIndexTreap.__default.Pull(DocsIndexTreap.Treap.create_Node((t).dtor_score, (t).dtor_ids, (t).dtor_prio, BigInteger.Zero, DocsIndexTreap.__default.Remove((t).dtor_left, score, id), (t).dtor_right));
-      } else {
-        return DocsIndexTreap.__default.Pull(DocsIndexTreap.Treap.create_Node((t).dtor_score, (t).dtor_ids, (t).dtor_prio, BigInteger.Zero, (t).dtor_left, DocsIndexTreap.__default.Remove((t).dtor_right, score, id)));
-      }
-    }
-    public static BigInteger TreapRank(DocsIndexTreap._ITreap t, BigInteger score, DocsIndexModel._IMaybeDocId id)
-    {
-      BigInteger _0___accumulator = BigInteger.Zero;
-    TAIL_CALL_START: ;
-      if ((t).is_Empty) {
-        return (BigInteger.Zero) + (_0___accumulator);
-      } else if ((score) < ((t).dtor_score)) {
-        DocsIndexTreap._ITreap _in0 = (t).dtor_left;
-        BigInteger _in1 = score;
-        DocsIndexModel._IMaybeDocId _in2 = id;
-        t = _in0;
-        score = _in1;
-        id = _in2;
-        goto TAIL_CALL_START;
-      } else if ((score) > ((t).dtor_score)) {
-        _0___accumulator = (_0___accumulator) + ((DocsIndexTreap.__default.Sum((t).dtor_left)) + (new BigInteger(((t).dtor_ids).Count)));
-        DocsIndexTreap._ITreap _in3 = (t).dtor_right;
-        BigInteger _in4 = score;
-        DocsIndexModel._IMaybeDocId _in5 = id;
-        t = _in3;
-        score = _in4;
-        id = _in5;
-        goto TAIL_CALL_START;
-      } else {
-        return ((DocsIndexTreap.__default.Sum((t).dtor_left)) + (((System.Func<BigInteger>)(() => {
-          DocsIndexModel._IMaybeDocId _source0 = id;
-          {
-            if (_source0.is_NoDoc) {
-              return BigInteger.Zero;
-            }
-          }
-          {
-            BigInteger _1_doc = _source0.dtor_doc;
-            return DocsIndexTreap.__default.InsertionIndex((t).dtor_ids, _1_doc);
-          }
-        }))())) + (_0___accumulator);
-      }
-    }
-    public static BigInteger TreapCountAtMost(DocsIndexTreap._ITreap t, BigInteger score)
-    {
-      BigInteger _0___accumulator = BigInteger.Zero;
-    TAIL_CALL_START: ;
-      if ((t).is_Empty) {
-        return (BigInteger.Zero) + (_0___accumulator);
-      } else if ((score) < ((t).dtor_score)) {
-        DocsIndexTreap._ITreap _in0 = (t).dtor_left;
-        BigInteger _in1 = score;
-        t = _in0;
-        score = _in1;
-        goto TAIL_CALL_START;
-      } else {
-        _0___accumulator = (_0___accumulator) + ((DocsIndexTreap.__default.Sum((t).dtor_left)) + (new BigInteger(((t).dtor_ids).Count)));
-        DocsIndexTreap._ITreap _in2 = (t).dtor_right;
-        BigInteger _in3 = score;
-        t = _in2;
-        score = _in3;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static DocsIndexModel._IAtRank TreapGetAtRank(DocsIndexTreap._ITreap t, BigInteger rank)
-    {
-    TAIL_CALL_START: ;
-      if ((t).is_Empty) {
-        return DocsIndexModel.AtRank.create_Missing();
-      } else if ((rank) < (DocsIndexTreap.__default.Sum((t).dtor_left))) {
-        DocsIndexTreap._ITreap _in0 = (t).dtor_left;
-        BigInteger _in1 = rank;
-        t = _in0;
-        rank = _in1;
-        goto TAIL_CALL_START;
-      } else if ((rank) < ((DocsIndexTreap.__default.Sum((t).dtor_left)) + (new BigInteger(((t).dtor_ids).Count)))) {
-        BigInteger _0_pos = (rank) - (DocsIndexTreap.__default.Sum((t).dtor_left));
-        return DocsIndexModel.AtRank.create_Found((t).dtor_score, ((t).dtor_ids).Select(_0_pos), _0_pos);
-      } else {
-        DocsIndexTreap._ITreap _in2 = (t).dtor_right;
-        BigInteger _in3 = (rank) - ((DocsIndexTreap.__default.Sum((t).dtor_left)) + (new BigInteger(((t).dtor_ids).Count)));
-        t = _in2;
-        rank = _in3;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static Dafny.ISequence<__T> TakePrefix<__T>(Dafny.ISequence<__T> xs, BigInteger limit)
-    {
-      Dafny.ISequence<__T> _0___accumulator = Dafny.Sequence<__T>.FromElements();
-    TAIL_CALL_START: ;
-      if (((new BigInteger((xs).Count)).Sign == 0) || ((limit).Sign == 0)) {
-        return Dafny.Sequence<__T>.Concat(_0___accumulator, Dafny.Sequence<__T>.FromElements());
-      } else {
-        _0___accumulator = Dafny.Sequence<__T>.Concat(_0___accumulator, Dafny.Sequence<__T>.FromElements((xs).Select(BigInteger.Zero)));
-        Dafny.ISequence<__T> _in0 = (xs).Drop(BigInteger.One);
-        BigInteger _in1 = (limit) - (BigInteger.One);
-        xs = _in0;
-        limit = _in1;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static BigInteger SatSub(BigInteger a, BigInteger b)
-    {
-      if ((b) <= (a)) {
-        return (a) - (b);
-      } else {
-        return BigInteger.Zero;
-      }
-    }
-    public static Dafny.ISequence<BigInteger> TreapCollectRange(DocsIndexTreap._ITreap t, BigInteger minScore, BigInteger maxScore, BigInteger limit)
-    {
-      if (((t).is_Empty) || ((limit).Sign == 0)) {
-        return Dafny.Sequence<BigInteger>.FromElements();
-      } else {
-        Dafny.ISequence<BigInteger> _0_leftOut = (((minScore) < ((t).dtor_score)) ? (DocsIndexTreap.__default.TreapCollectRange((t).dtor_left, minScore, maxScore, limit)) : (Dafny.Sequence<BigInteger>.FromElements()));
-        BigInteger _1_rem1 = DocsIndexTreap.__default.SatSub(limit, new BigInteger((_0_leftOut).Count));
-        if ((_1_rem1).Sign == 0) {
-          return _0_leftOut;
-        } else {
-          Dafny.ISequence<BigInteger> _2_selfOut = (((((t).dtor_score) >= (minScore)) && (((t).dtor_score) <= (maxScore))) ? (DocsIndexTreap.__default.TakePrefix<BigInteger>((t).dtor_ids, _1_rem1)) : (Dafny.Sequence<BigInteger>.FromElements()));
-          BigInteger _3_rem2 = DocsIndexTreap.__default.SatSub(_1_rem1, new BigInteger((_2_selfOut).Count));
-          if ((_3_rem2).Sign == 0) {
-            return Dafny.Sequence<BigInteger>.Concat(_0_leftOut, _2_selfOut);
-          } else {
-            Dafny.ISequence<BigInteger> _4_rightOut = ((((t).dtor_score) < (maxScore)) ? (DocsIndexTreap.__default.TreapCollectRange((t).dtor_right, minScore, maxScore, _3_rem2)) : (Dafny.Sequence<BigInteger>.FromElements()));
-            return Dafny.Sequence<BigInteger>.Concat(Dafny.Sequence<BigInteger>.Concat(_0_leftOut, _2_selfOut), _4_rightOut);
-          }
-        }
-      }
-    }
-    public static BigInteger ModelRankOnEntries(DocsIndexTreap._ITreap t, BigInteger score, DocsIndexModel._IMaybeDocId id)
-    {
-      return DocsIndexModel.__default.Rank(DocsIndexTreap.__default.Entries(t), score, id);
-    }
-    public static BigInteger ModelCountAtMostOnEntries(DocsIndexTreap._ITreap t, BigInteger score)
-    {
-      return DocsIndexModel.__default.CountAtMost(DocsIndexTreap.__default.Entries(t), score);
-    }
-    public static DocsIndexModel._IAtRank ModelGetAtRankOnEntries(DocsIndexTreap._ITreap t, BigInteger rank)
-    {
-      return DocsIndexModel.__default.GetAtRank(DocsIndexTreap.__default.Entries(t), rank);
-    }
-    public static Dafny.ISequence<BigInteger> ModelCollectRangeOnEntries(DocsIndexTreap._ITreap t, BigInteger minScore, BigInteger maxScore, BigInteger limit)
-    {
-      return DocsIndexModel.__default.CollectRange(DocsIndexTreap.__default.Entries(t), minScore, maxScore, limit);
-    }
-    public static bool AllScoresLt(Dafny.ISequence<DocsIndexModel._IEntry> es, BigInteger score)
-    {
-      if ((new BigInteger((es).Count)).Sign == 0) {
-        return true;
-      } else {
-        return ((((es).Select(BigInteger.Zero)).dtor_score) < (score)) && (DocsIndexTreap.__default.AllScoresLt((es).Drop(BigInteger.One), score));
-      }
-    }
-    public static bool AllScoresLe(Dafny.ISequence<DocsIndexModel._IEntry> es, BigInteger score)
-    {
-      if ((new BigInteger((es).Count)).Sign == 0) {
-        return true;
-      } else {
-        return ((((es).Select(BigInteger.Zero)).dtor_score) <= (score)) && (DocsIndexTreap.__default.AllScoresLe((es).Drop(BigInteger.One), score));
-      }
-    }
-    public static bool AllScoresGt(Dafny.ISequence<DocsIndexModel._IEntry> es, BigInteger score)
-    {
-      if ((new BigInteger((es).Count)).Sign == 0) {
-        return true;
-      } else {
-        return ((((es).Select(BigInteger.Zero)).dtor_score) > (score)) && (DocsIndexTreap.__default.AllScoresGt((es).Drop(BigInteger.One), score));
-      }
-    }
-  }
-
-  public interface _IMaybeScore {
-    bool is_NoScore { get; }
-    bool is_SomeScore { get; }
-    BigInteger dtor_v { get; }
-    _IMaybeScore DowncastClone();
-  }
-  public abstract class MaybeScore : _IMaybeScore {
-    public MaybeScore() {
-    }
-    private static readonly DocsIndexTreap._IMaybeScore theDefault = create_NoScore();
-    public static DocsIndexTreap._IMaybeScore Default() {
-      return theDefault;
-    }
-    private static readonly Dafny.TypeDescriptor<DocsIndexTreap._IMaybeScore> _TYPE = new Dafny.TypeDescriptor<DocsIndexTreap._IMaybeScore>(DocsIndexTreap.MaybeScore.Default());
-    public static Dafny.TypeDescriptor<DocsIndexTreap._IMaybeScore> _TypeDescriptor() {
-      return _TYPE;
-    }
-    public static _IMaybeScore create_NoScore() {
-      return new MaybeScore_NoScore();
-    }
-    public static _IMaybeScore create_SomeScore(BigInteger v) {
-      return new MaybeScore_SomeScore(v);
-    }
-    public bool is_NoScore { get { return this is MaybeScore_NoScore; } }
-    public bool is_SomeScore { get { return this is MaybeScore_SomeScore; } }
-    public BigInteger dtor_v {
-      get {
-        var d = this;
-        return ((MaybeScore_SomeScore)d)._v;
-      }
-    }
-    public abstract _IMaybeScore DowncastClone();
-  }
-  public class MaybeScore_NoScore : MaybeScore {
-    public MaybeScore_NoScore() : base() {
-    }
-    public override _IMaybeScore DowncastClone() {
-      if (this is _IMaybeScore dt) { return dt; }
-      return new MaybeScore_NoScore();
-    }
-    public override bool Equals(object other) {
-      var oth = other as DocsIndexTreap.MaybeScore_NoScore;
-      return oth != null;
-    }
-    public override int GetHashCode() {
-      ulong hash = 5381;
-      hash = ((hash << 5) + hash) + 0;
-      return (int) hash;
-    }
-    public override string ToString() {
-      string s = "DocsIndexTreap.MaybeScore.NoScore";
-      return s;
-    }
-  }
-  public class MaybeScore_SomeScore : MaybeScore {
-    public readonly BigInteger _v;
-    public MaybeScore_SomeScore(BigInteger v) : base() {
-      this._v = v;
-    }
-    public override _IMaybeScore DowncastClone() {
-      if (this is _IMaybeScore dt) { return dt; }
-      return new MaybeScore_SomeScore(_v);
-    }
-    public override bool Equals(object other) {
-      var oth = other as DocsIndexTreap.MaybeScore_SomeScore;
-      return oth != null && this._v == oth._v;
-    }
-    public override int GetHashCode() {
-      ulong hash = 5381;
-      hash = ((hash << 5) + hash) + 1;
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._v));
-      return (int) hash;
-    }
-    public override string ToString() {
-      string s = "DocsIndexTreap.MaybeScore.SomeScore";
-      s += "(";
-      s += Dafny.Helpers.ToString(this._v);
-      s += ")";
-      return s;
-    }
-  }
-
-  public interface _ITreap {
-    bool is_Empty { get; }
-    bool is_Node { get; }
-    BigInteger dtor_score { get; }
-    Dafny.ISequence<BigInteger> dtor_ids { get; }
-    BigInteger dtor_prio { get; }
-    BigInteger dtor_sum { get; }
-    DocsIndexTreap._ITreap dtor_left { get; }
-    DocsIndexTreap._ITreap dtor_right { get; }
-    _ITreap DowncastClone();
-  }
-  public abstract class Treap : _ITreap {
-    public Treap() {
-    }
-    private static readonly DocsIndexTreap._ITreap theDefault = create_Empty();
-    public static DocsIndexTreap._ITreap Default() {
-      return theDefault;
-    }
-    private static readonly Dafny.TypeDescriptor<DocsIndexTreap._ITreap> _TYPE = new Dafny.TypeDescriptor<DocsIndexTreap._ITreap>(DocsIndexTreap.Treap.Default());
-    public static Dafny.TypeDescriptor<DocsIndexTreap._ITreap> _TypeDescriptor() {
-      return _TYPE;
-    }
-    public static _ITreap create_Empty() {
-      return new Treap_Empty();
-    }
-    public static _ITreap create_Node(BigInteger score, Dafny.ISequence<BigInteger> ids, BigInteger prio, BigInteger sum, DocsIndexTreap._ITreap left, DocsIndexTreap._ITreap right) {
-      return new Treap_Node(score, ids, prio, sum, left, right);
-    }
-    public bool is_Empty { get { return this is Treap_Empty; } }
-    public bool is_Node { get { return this is Treap_Node; } }
-    public BigInteger dtor_score {
-      get {
-        var d = this;
-        return ((Treap_Node)d)._score;
-      }
-    }
-    public Dafny.ISequence<BigInteger> dtor_ids {
-      get {
-        var d = this;
-        return ((Treap_Node)d)._ids;
-      }
-    }
-    public BigInteger dtor_prio {
-      get {
-        var d = this;
-        return ((Treap_Node)d)._prio;
-      }
-    }
-    public BigInteger dtor_sum {
-      get {
-        var d = this;
-        return ((Treap_Node)d)._sum;
-      }
-    }
-    public DocsIndexTreap._ITreap dtor_left {
-      get {
-        var d = this;
-        return ((Treap_Node)d)._left;
-      }
-    }
-    public DocsIndexTreap._ITreap dtor_right {
-      get {
-        var d = this;
-        return ((Treap_Node)d)._right;
-      }
-    }
-    public abstract _ITreap DowncastClone();
-  }
-  public class Treap_Empty : Treap {
-    public Treap_Empty() : base() {
-    }
-    public override _ITreap DowncastClone() {
-      if (this is _ITreap dt) { return dt; }
-      return new Treap_Empty();
-    }
-    public override bool Equals(object other) {
-      var oth = other as DocsIndexTreap.Treap_Empty;
-      return oth != null;
-    }
-    public override int GetHashCode() {
-      ulong hash = 5381;
-      hash = ((hash << 5) + hash) + 0;
-      return (int) hash;
-    }
-    public override string ToString() {
-      string s = "DocsIndexTreap.Treap.Empty";
-      return s;
-    }
-  }
-  public class Treap_Node : Treap {
-    public readonly BigInteger _score;
-    public readonly Dafny.ISequence<BigInteger> _ids;
-    public readonly BigInteger _prio;
-    public readonly BigInteger _sum;
-    public readonly DocsIndexTreap._ITreap _left;
-    public readonly DocsIndexTreap._ITreap _right;
-    public Treap_Node(BigInteger score, Dafny.ISequence<BigInteger> ids, BigInteger prio, BigInteger sum, DocsIndexTreap._ITreap left, DocsIndexTreap._ITreap right) : base() {
-      this._score = score;
-      this._ids = ids;
-      this._prio = prio;
-      this._sum = sum;
-      this._left = left;
-      this._right = right;
-    }
-    public override _ITreap DowncastClone() {
-      if (this is _ITreap dt) { return dt; }
-      return new Treap_Node(_score, _ids, _prio, _sum, _left, _right);
-    }
-    public override bool Equals(object other) {
-      var oth = other as DocsIndexTreap.Treap_Node;
-      return oth != null && this._score == oth._score && object.Equals(this._ids, oth._ids) && this._prio == oth._prio && this._sum == oth._sum && object.Equals(this._left, oth._left) && object.Equals(this._right, oth._right);
-    }
-    public override int GetHashCode() {
-      ulong hash = 5381;
-      hash = ((hash << 5) + hash) + 1;
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._score));
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._ids));
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._prio));
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._sum));
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._left));
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._right));
-      return (int) hash;
-    }
-    public override string ToString() {
-      string s = "DocsIndexTreap.Treap.Node";
-      s += "(";
-      s += Dafny.Helpers.ToString(this._score);
-      s += ", ";
-      s += Dafny.Helpers.ToString(this._ids);
-      s += ", ";
-      s += Dafny.Helpers.ToString(this._prio);
-      s += ", ";
-      s += Dafny.Helpers.ToString(this._sum);
-      s += ", ";
-      s += Dafny.Helpers.ToString(this._left);
-      s += ", ";
-      s += Dafny.Helpers.ToString(this._right);
-      s += ")";
-      return s;
-    }
-  }
-} // end of namespace DocsIndexTreap
 namespace ThunderDbStack {
 
   public partial class __default {
-    public static Dafny.ISequence<DocsIndexModel._IEntry> RefInsertEntry(Dafny.ISequence<DocsIndexModel._IEntry> es, BigInteger score, BigInteger id)
-    {
-      Dafny.ISequence<DocsIndexModel._IEntry> _0___accumulator = Dafny.Sequence<DocsIndexModel._IEntry>.FromElements();
-    TAIL_CALL_START: ;
-      if ((new BigInteger((es).Count)).Sign == 0) {
-        return Dafny.Sequence<DocsIndexModel._IEntry>.Concat(_0___accumulator, Dafny.Sequence<DocsIndexModel._IEntry>.FromElements(DocsIndexModel.Entry.create(score, id)));
-      } else if (((((es).Select(BigInteger.Zero)).dtor_score) == (score)) && ((((es).Select(BigInteger.Zero)).dtor_id) == (id))) {
-        return Dafny.Sequence<DocsIndexModel._IEntry>.Concat(_0___accumulator, es);
-      } else if (((score) < (((es).Select(BigInteger.Zero)).dtor_score)) || (((score) == (((es).Select(BigInteger.Zero)).dtor_score)) && ((id) < (((es).Select(BigInteger.Zero)).dtor_id)))) {
-        return Dafny.Sequence<DocsIndexModel._IEntry>.Concat(_0___accumulator, Dafny.Sequence<DocsIndexModel._IEntry>.Concat(Dafny.Sequence<DocsIndexModel._IEntry>.FromElements(DocsIndexModel.Entry.create(score, id)), es));
-      } else {
-        _0___accumulator = Dafny.Sequence<DocsIndexModel._IEntry>.Concat(_0___accumulator, Dafny.Sequence<DocsIndexModel._IEntry>.FromElements((es).Select(BigInteger.Zero)));
-        Dafny.ISequence<DocsIndexModel._IEntry> _in0 = (es).Drop(BigInteger.One);
-        BigInteger _in1 = score;
-        BigInteger _in2 = id;
-        es = _in0;
-        score = _in1;
-        id = _in2;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static Dafny.ISequence<DocsIndexModel._IEntry> RefRemoveEntry(Dafny.ISequence<DocsIndexModel._IEntry> es, BigInteger score, BigInteger id)
-    {
-      Dafny.ISequence<DocsIndexModel._IEntry> _0___accumulator = Dafny.Sequence<DocsIndexModel._IEntry>.FromElements();
-    TAIL_CALL_START: ;
-      if ((new BigInteger((es).Count)).Sign == 0) {
-        return Dafny.Sequence<DocsIndexModel._IEntry>.Concat(_0___accumulator, es);
-      } else if (((((es).Select(BigInteger.Zero)).dtor_score) == (score)) && ((((es).Select(BigInteger.Zero)).dtor_id) == (id))) {
-        return Dafny.Sequence<DocsIndexModel._IEntry>.Concat(_0___accumulator, (es).Drop(BigInteger.One));
-      } else if (((score) < (((es).Select(BigInteger.Zero)).dtor_score)) || (((score) == (((es).Select(BigInteger.Zero)).dtor_score)) && ((id) < (((es).Select(BigInteger.Zero)).dtor_id)))) {
-        return Dafny.Sequence<DocsIndexModel._IEntry>.Concat(_0___accumulator, es);
-      } else {
-        _0___accumulator = Dafny.Sequence<DocsIndexModel._IEntry>.Concat(_0___accumulator, Dafny.Sequence<DocsIndexModel._IEntry>.FromElements((es).Select(BigInteger.Zero)));
-        Dafny.ISequence<DocsIndexModel._IEntry> _in0 = (es).Drop(BigInteger.One);
-        BigInteger _in1 = score;
-        BigInteger _in2 = id;
-        es = _in0;
-        score = _in1;
-        id = _in2;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static Dafny.ISequence<BigInteger> RefCollectRangeIds(Dafny.ISequence<DocsIndexModel._IEntry> es, BigInteger minScore, BigInteger maxScore, BigInteger limit)
-    {
-      Dafny.ISequence<BigInteger> _0___accumulator = Dafny.Sequence<BigInteger>.FromElements();
-    TAIL_CALL_START: ;
-      if (((new BigInteger((es).Count)).Sign == 0) || ((limit).Sign == 0)) {
-        return Dafny.Sequence<BigInteger>.Concat(_0___accumulator, Dafny.Sequence<BigInteger>.FromElements());
-      } else if ((((es).Select(BigInteger.Zero)).dtor_score) < (minScore)) {
-        Dafny.ISequence<DocsIndexModel._IEntry> _in0 = (es).Drop(BigInteger.One);
-        BigInteger _in1 = minScore;
-        BigInteger _in2 = maxScore;
-        BigInteger _in3 = limit;
-        es = _in0;
-        minScore = _in1;
-        maxScore = _in2;
-        limit = _in3;
-        goto TAIL_CALL_START;
-      } else if ((((es).Select(BigInteger.Zero)).dtor_score) > (maxScore)) {
-        return Dafny.Sequence<BigInteger>.Concat(_0___accumulator, Dafny.Sequence<BigInteger>.FromElements());
-      } else {
-        _0___accumulator = Dafny.Sequence<BigInteger>.Concat(_0___accumulator, Dafny.Sequence<BigInteger>.FromElements(((es).Select(BigInteger.Zero)).dtor_id));
-        Dafny.ISequence<DocsIndexModel._IEntry> _in4 = (es).Drop(BigInteger.One);
-        BigInteger _in5 = minScore;
-        BigInteger _in6 = maxScore;
-        BigInteger _in7 = (limit) - (BigInteger.One);
-        es = _in4;
-        minScore = _in5;
-        maxScore = _in6;
-        limit = _in7;
-        goto TAIL_CALL_START;
-      }
-    }
     public static BigInteger GetScore(BigInteger state) {
       return (state);
-    }
-    public static bool HasDoc(Dafny.IMap<BigInteger,BigInteger> store, BigInteger id)
-    {
-      return (store).Contains(id);
     }
     public static ThunderDbStack._IMaybeDocState LookupState(Dafny.IMap<BigInteger,BigInteger> store, BigInteger id)
     {
@@ -9653,194 +7411,11 @@ namespace ThunderDbStack {
         return Dafny.Sequence<BigInteger>.Concat(ids, Dafny.Sequence<BigInteger>.FromElements(id));
       }
     }
-    public static Dafny.ISequence<BigInteger> AppendDocIdUnique(Dafny.ISequence<BigInteger> ids, BigInteger id)
-    {
-      if (ThunderDbStack.__default.ContainsId(ids, id)) {
-        return ids;
-      } else {
-        return Dafny.Sequence<BigInteger>.Concat(ids, Dafny.Sequence<BigInteger>.FromElements(id));
-      }
-    }
-    public static Dafny.ISequence<DocsIndexModel._IEntry> BuildEntriesFromStore(Dafny.ISequence<ThunderDbStack._IStoredDoc> store) {
-      if ((new BigInteger((store).Count)).Sign == 0) {
-        return Dafny.Sequence<DocsIndexModel._IEntry>.FromElements();
-      } else {
-        return ThunderDbStack.__default.RefInsertEntry(ThunderDbStack.__default.BuildEntriesFromStore((store).Drop(BigInteger.One)), ThunderDbStack.__default.GetScore(((store).Select(BigInteger.Zero)).dtor_state), ((store).Select(BigInteger.Zero)).dtor_id);
-      }
-    }
-    public static Dafny.ISequence<BigInteger> VisibleForSpec(Dafny.ISequence<DocsIndexModel._IEntry> entries, ThunderDbStack._IQuerySpec spec)
-    {
-      return ThunderDbStack.__default.RefCollectRangeIds(entries, (spec).dtor_minScore, (spec).dtor_maxScore, (spec).dtor_limit);
-    }
-    public static BigInteger PriorityFor(BigInteger score, BigInteger id)
-    {
-      return Dafny.Helpers.EuclideanModulus((((score) + (BigInteger.One)) * (new BigInteger(1103515245))) + (((id) + (BigInteger.One)) * (new BigInteger(12345))), new BigInteger(2147483647));
-    }
-    public static Dafny.ISequence<BigInteger> VisibleForSpecInTreap(DocsIndexTreap._ITreap treap, ThunderDbStack._IQuerySpec spec)
-    {
-      return DocsIndexTreap.__default.TreapCollectRange(treap, (spec).dtor_minScore, (spec).dtor_maxScore, (spec).dtor_limit);
-    }
-    public static bool ScoreMatchesSpec(BigInteger score, ThunderDbStack._IQuerySpec spec)
-    {
-      return (((spec).dtor_minScore) <= (score)) && ((score) <= ((spec).dtor_maxScore));
-    }
-    public static bool EntryBefore(BigInteger score1, BigInteger id1, BigInteger score2, BigInteger id2)
-    {
-      return ((score1) < (score2)) || (((score1) == (score2)) && ((id1) < (id2)));
-    }
-    public static bool StateMatchesSpec(ThunderDbStack._IMaybeDocState state, ThunderDbStack._IQuerySpec spec)
-    {
-      ThunderDbStack._IMaybeDocState _source0 = state;
-      {
-        if (_source0.is_NoState) {
-          return false;
-        }
-      }
-      {
-        BigInteger _0_docState = _source0.dtor_state;
-        return ThunderDbStack.__default.ScoreMatchesSpec(ThunderDbStack.__default.GetScore(_0_docState), spec);
-      }
-    }
-    public static bool DocWouldEnterVisible(Dafny.ISequence<BigInteger> visible, BigInteger limit, BigInteger docState, BigInteger docId, Dafny.IMap<BigInteger,BigInteger> store)
-    {
-      if ((limit).Sign == 0) {
-        return false;
-      } else if ((new BigInteger((visible).Count)) < (limit)) {
-        return true;
-      } else {
-        ThunderDbStack._IMaybeDocState _source0 = ThunderDbStack.__default.LookupState(store, (visible).Select((new BigInteger((visible).Count)) - (BigInteger.One)));
-        {
-          if (_source0.is_NoState) {
-            return false;
-          }
-        }
-        {
-          BigInteger _0_lastState = _source0.dtor_state;
-          return ThunderDbStack.__default.EntryBefore(ThunderDbStack.__default.GetScore(docState), docId, ThunderDbStack.__default.GetScore(_0_lastState), (visible).Select((new BigInteger((visible).Count)) - (BigInteger.One)));
-        }
-      }
-    }
-    public static bool QueryNeedsRecompute(ThunderDbStack._IQueryRuntime query, Dafny.IMap<BigInteger,BigInteger> store, BigInteger id, ThunderDbStack._IMaybeDocState oldState, ThunderDbStack._IMaybeDocState newState)
-    {
-      if (ThunderDbStack.__default.ContainsId((query).dtor_visible, id)) {
-        return true;
-      } else {
-        ThunderDbStack._IMaybeDocState _source0 = newState;
-        {
-          if (_source0.is_NoState) {
-            return false;
-          }
-        }
-        {
-          BigInteger _0_docState = _source0.dtor_state;
-          return (ThunderDbStack.__default.ScoreMatchesSpec(ThunderDbStack.__default.GetScore(_0_docState), (query).dtor_spec)) && (ThunderDbStack.__default.DocWouldEnterVisible((query).dtor_visible, ((query).dtor_spec).dtor_limit, _0_docState, id, store));
-        }
-      }
-    }
-    public static ThunderDbStack._IQueryRuntime RecomputeQuery(ThunderDbStack._IQueryRuntime query, DocsIndexTreap._ITreap treap)
-    {
-      return ThunderDbStack.QueryRuntime.create((query).dtor_id, (query).dtor_spec, ThunderDbStack.__default.VisibleForSpecInTreap(treap, (query).dtor_spec));
-    }
-    public static Dafny.ISequence<ThunderDbStack._IQueryRuntime> RecomputeQueries(Dafny.ISequence<ThunderDbStack._IQueryRuntime> queries, DocsIndexTreap._ITreap treap)
-    {
-      Dafny.ISequence<ThunderDbStack._IQueryRuntime> _0___accumulator = Dafny.Sequence<ThunderDbStack._IQueryRuntime>.FromElements();
-    TAIL_CALL_START: ;
-      if ((new BigInteger((queries).Count)).Sign == 0) {
-        return Dafny.Sequence<ThunderDbStack._IQueryRuntime>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IQueryRuntime>.FromElements());
-      } else {
-        _0___accumulator = Dafny.Sequence<ThunderDbStack._IQueryRuntime>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IQueryRuntime>.FromElements(ThunderDbStack.__default.RecomputeQuery((queries).Select(BigInteger.Zero), treap)));
-        Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in0 = (queries).Drop(BigInteger.One);
-        DocsIndexTreap._ITreap _in1 = treap;
-        queries = _in0;
-        treap = _in1;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static Dafny.ISequence<ThunderDbStack._IQueryRuntime> RemoveQueryRuntime(Dafny.ISequence<ThunderDbStack._IQueryRuntime> queries, BigInteger id)
-    {
-      Dafny.ISequence<ThunderDbStack._IQueryRuntime> _0___accumulator = Dafny.Sequence<ThunderDbStack._IQueryRuntime>.FromElements();
-    TAIL_CALL_START: ;
-      if ((new BigInteger((queries).Count)).Sign == 0) {
-        return Dafny.Sequence<ThunderDbStack._IQueryRuntime>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IQueryRuntime>.FromElements());
-      } else if ((((queries).Select(BigInteger.Zero)).dtor_id) == (id)) {
-        return Dafny.Sequence<ThunderDbStack._IQueryRuntime>.Concat(_0___accumulator, (queries).Drop(BigInteger.One));
-      } else {
-        _0___accumulator = Dafny.Sequence<ThunderDbStack._IQueryRuntime>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IQueryRuntime>.FromElements((queries).Select(BigInteger.Zero)));
-        Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in0 = (queries).Drop(BigInteger.One);
-        BigInteger _in1 = id;
-        queries = _in0;
-        id = _in1;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static Dafny.ISequence<ThunderDbStack._IQueryRuntime> UpdateQueriesForDocChange(Dafny.ISequence<ThunderDbStack._IQueryRuntime> queries, DocsIndexTreap._ITreap treap, Dafny.IMap<BigInteger,BigInteger> store, BigInteger id, ThunderDbStack._IMaybeDocState oldState, ThunderDbStack._IMaybeDocState newState)
-    {
-      Dafny.ISequence<ThunderDbStack._IQueryRuntime> _0___accumulator = Dafny.Sequence<ThunderDbStack._IQueryRuntime>.FromElements();
-    TAIL_CALL_START: ;
-      if ((new BigInteger((queries).Count)).Sign == 0) {
-        return Dafny.Sequence<ThunderDbStack._IQueryRuntime>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IQueryRuntime>.FromElements());
-      } else if (ThunderDbStack.__default.QueryNeedsRecompute((queries).Select(BigInteger.Zero), store, id, oldState, newState)) {
-        _0___accumulator = Dafny.Sequence<ThunderDbStack._IQueryRuntime>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IQueryRuntime>.FromElements(ThunderDbStack.__default.RecomputeQuery((queries).Select(BigInteger.Zero), treap)));
-        Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in0 = (queries).Drop(BigInteger.One);
-        DocsIndexTreap._ITreap _in1 = treap;
-        Dafny.IMap<BigInteger,BigInteger> _in2 = store;
-        BigInteger _in3 = id;
-        ThunderDbStack._IMaybeDocState _in4 = oldState;
-        ThunderDbStack._IMaybeDocState _in5 = newState;
-        queries = _in0;
-        treap = _in1;
-        store = _in2;
-        id = _in3;
-        oldState = _in4;
-        newState = _in5;
-        goto TAIL_CALL_START;
-      } else {
-        _0___accumulator = Dafny.Sequence<ThunderDbStack._IQueryRuntime>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IQueryRuntime>.FromElements((queries).Select(BigInteger.Zero)));
-        Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in6 = (queries).Drop(BigInteger.One);
-        DocsIndexTreap._ITreap _in7 = treap;
-        Dafny.IMap<BigInteger,BigInteger> _in8 = store;
-        BigInteger _in9 = id;
-        ThunderDbStack._IMaybeDocState _in10 = oldState;
-        ThunderDbStack._IMaybeDocState _in11 = newState;
-        queries = _in6;
-        treap = _in7;
-        store = _in8;
-        id = _in9;
-        oldState = _in10;
-        newState = _in11;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static Dafny.ISequence<BigInteger> QueryVisible(Dafny.ISequence<ThunderDbStack._IQueryRuntime> queries, BigInteger id)
-    {
-    TAIL_CALL_START: ;
-      if ((new BigInteger((queries).Count)).Sign == 0) {
-        return Dafny.Sequence<BigInteger>.FromElements();
-      } else if ((((queries).Select(BigInteger.Zero)).dtor_id) == (id)) {
-        return ((queries).Select(BigInteger.Zero)).dtor_visible;
-      } else {
-        Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in0 = (queries).Drop(BigInteger.One);
-        BigInteger _in1 = id;
-        queries = _in0;
-        id = _in1;
-        goto TAIL_CALL_START;
-      }
-    }
     public static bool UniqueDocIds(Dafny.ISequence<BigInteger> ids) {
       if ((new BigInteger((ids).Count)).Sign == 0) {
         return true;
       } else {
         return (!(ThunderDbStack.__default.ContainsId((ids).Drop(BigInteger.One), (ids).Select(BigInteger.Zero)))) && (ThunderDbStack.__default.UniqueDocIds((ids).Drop(BigInteger.One)));
-      }
-    }
-    public static Dafny.ISequence<DocsIndexModel._IEntry> BuildEntriesFromStateStore(Dafny.IMap<BigInteger,BigInteger> store, Dafny.ISequence<BigInteger> docIds)
-    {
-      if ((new BigInteger((docIds).Count)).Sign == 0) {
-        return Dafny.Sequence<DocsIndexModel._IEntry>.FromElements();
-      } else if ((store).Contains((docIds).Select(BigInteger.Zero))) {
-        return ThunderDbStack.__default.RefInsertEntry(ThunderDbStack.__default.BuildEntriesFromStateStore(store, (docIds).Drop(BigInteger.One)), ThunderDbStack.__default.GetScore(Dafny.Map<BigInteger, BigInteger>.Select(store,(docIds).Select(BigInteger.Zero))), (docIds).Select(BigInteger.Zero));
-      } else {
-        return ThunderDbStack.__default.BuildEntriesFromStateStore(store, (docIds).Drop(BigInteger.One));
       }
     }
     public static Dafny.ISequence<BigInteger> AppendDocIdIfMissing(Dafny.ISequence<BigInteger> ids, BigInteger id)
@@ -9866,409 +7441,6 @@ namespace ThunderDbStack {
         ids = _in0;
         id = _in1;
         goto TAIL_CALL_START;
-      }
-    }
-    public static bool QuerysConsistent(Dafny.ISequence<ThunderDbStack._IQueryRuntime> queries, Dafny.ISequence<DocsIndexModel._IEntry> entries)
-    {
-      if ((new BigInteger((queries).Count)).Sign == 0) {
-        return true;
-      } else {
-        return ((((queries).Select(BigInteger.Zero)).dtor_visible).Equals(ThunderDbStack.__default.VisibleForSpec(entries, ((queries).Select(BigInteger.Zero)).dtor_spec))) && (ThunderDbStack.__default.QuerysConsistent((queries).Drop(BigInteger.One), entries));
-      }
-    }
-    public static bool ValidState(ThunderDbStack._IEngineState state) {
-      return (((ThunderDbStack.__default.UniqueDocIds((state).dtor_docIds)) && (DocsIndexTreap.__default.SumConsistent((state).dtor_treap))) && ((DocsIndexTreap.__default.Entries((state).dtor_treap)).Equals(ThunderDbStack.__default.BuildEntriesFromStateStore((state).dtor_store, (state).dtor_docIds)))) && (ThunderDbStack.__default.QuerysConsistent((state).dtor_queries, DocsIndexTreap.__default.Entries((state).dtor_treap)));
-    }
-    public static ThunderDbStack._IEngineState EmptyState() {
-      return ThunderDbStack.EngineState.create(Dafny.Map<BigInteger, BigInteger>.FromElements(), Dafny.Sequence<BigInteger>.FromElements(), DocsIndexTreap.Treap.create_Empty(), Dafny.Sequence<ThunderDbStack._IQueryRuntime>.FromElements(), BigInteger.One);
-    }
-    public static Dafny.ISequence<ThunderDbStack._IRetrievalDoc> AddRetrievalQuery(Dafny.ISequence<ThunderDbStack._IRetrievalDoc> plans, BigInteger docId, BigInteger state, BigInteger queryId)
-    {
-      Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _0___accumulator = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements();
-    TAIL_CALL_START: ;
-      if ((new BigInteger((plans).Count)).Sign == 0) {
-        return Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements(ThunderDbStack.RetrievalDoc.create(docId, state, Dafny.Sequence<BigInteger>.FromElements(queryId))));
-      } else if ((((plans).Select(BigInteger.Zero)).dtor_docId) == (docId)) {
-        return Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements(ThunderDbStack.RetrievalDoc.create(docId, state, ThunderDbStack.__default.AppendQueryIdUnique(((plans).Select(BigInteger.Zero)).dtor_queries, queryId))), (plans).Drop(BigInteger.One)));
-      } else {
-        _0___accumulator = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements((plans).Select(BigInteger.Zero)));
-        Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _in0 = (plans).Drop(BigInteger.One);
-        BigInteger _in1 = docId;
-        BigInteger _in2 = state;
-        BigInteger _in3 = queryId;
-        plans = _in0;
-        docId = _in1;
-        state = _in2;
-        queryId = _in3;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static Dafny.ISequence<BigInteger> FirstEvicted(Dafny.ISequence<BigInteger> oldVisible, Dafny.ISequence<BigInteger> newVisible, BigInteger changedId)
-    {
-    TAIL_CALL_START: ;
-      if ((new BigInteger((oldVisible).Count)).Sign == 0) {
-        return Dafny.Sequence<BigInteger>.FromElements();
-      } else if ((((oldVisible).Select(BigInteger.Zero)) != (changedId)) && (!(ThunderDbStack.__default.ContainsId(newVisible, (oldVisible).Select(BigInteger.Zero))))) {
-        return Dafny.Sequence<BigInteger>.FromElements((oldVisible).Select(BigInteger.Zero));
-      } else {
-        Dafny.ISequence<BigInteger> _in0 = (oldVisible).Drop(BigInteger.One);
-        Dafny.ISequence<BigInteger> _in1 = newVisible;
-        BigInteger _in2 = changedId;
-        oldVisible = _in0;
-        newVisible = _in1;
-        changedId = _in2;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static Dafny.ISequence<BigInteger> FirstAddedDoc(Dafny.ISequence<BigInteger> newVisible, Dafny.ISequence<BigInteger> oldVisible, BigInteger changedId)
-    {
-    TAIL_CALL_START: ;
-      if ((new BigInteger((newVisible).Count)).Sign == 0) {
-        return Dafny.Sequence<BigInteger>.FromElements();
-      } else if ((((newVisible).Select(BigInteger.Zero)) != (changedId)) && (!(ThunderDbStack.__default.ContainsId(oldVisible, (newVisible).Select(BigInteger.Zero))))) {
-        return Dafny.Sequence<BigInteger>.FromElements((newVisible).Select(BigInteger.Zero));
-      } else {
-        Dafny.ISequence<BigInteger> _in0 = (newVisible).Drop(BigInteger.One);
-        Dafny.ISequence<BigInteger> _in1 = oldVisible;
-        BigInteger _in2 = changedId;
-        newVisible = _in0;
-        oldVisible = _in1;
-        changedId = _in2;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static Dafny.ISequence<ThunderDbStack._IRetrievalDoc> BuildGapRetrievalForQuery(ThunderDbStack._IQueryRuntime oldQuery, ThunderDbStack._IQueryRuntime newQuery, Dafny.IMap<BigInteger,BigInteger> store, BigInteger changedId)
-    {
-      Dafny.ISequence<BigInteger> _0_replacement = ThunderDbStack.__default.FirstAddedDoc((newQuery).dtor_visible, (oldQuery).dtor_visible, changedId);
-      if (((ThunderDbStack.__default.ContainsId((oldQuery).dtor_visible, changedId)) && (!(ThunderDbStack.__default.ContainsId((newQuery).dtor_visible, changedId)))) && ((new BigInteger((_0_replacement).Count)).Sign == 1)) {
-        ThunderDbStack._IMaybeDocState _source0 = ThunderDbStack.__default.LookupState(store, (_0_replacement).Select(BigInteger.Zero));
-        {
-          if (_source0.is_NoState) {
-            return Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements();
-          }
-        }
-        {
-          BigInteger _1_state = _source0.dtor_state;
-          return Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements(ThunderDbStack.RetrievalDoc.create((_0_replacement).Select(BigInteger.Zero), _1_state, Dafny.Sequence<BigInteger>.FromElements((newQuery).dtor_id)));
-        }
-      } else {
-        return Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements();
-      }
-    }
-    public static Dafny.ISequence<ThunderDbStack._IRetrievalDoc> BuildRetrievalsFromQueryDiff(Dafny.ISequence<ThunderDbStack._IQueryRuntime> oldQueries, Dafny.ISequence<ThunderDbStack._IQueryRuntime> newQueries, Dafny.IMap<BigInteger,BigInteger> store, BigInteger changedId)
-    {
-      Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _0___accumulator = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements();
-    TAIL_CALL_START: ;
-      if (((new BigInteger((oldQueries).Count)).Sign == 0) || ((new BigInteger((newQueries).Count)).Sign == 0)) {
-        return Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements());
-      } else {
-        _0___accumulator = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.Concat(_0___accumulator, ThunderDbStack.__default.BuildGapRetrievalForQuery((oldQueries).Select(BigInteger.Zero), (newQueries).Select(BigInteger.Zero), store, changedId));
-        Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in0 = (oldQueries).Drop(BigInteger.One);
-        Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in1 = (newQueries).Drop(BigInteger.One);
-        Dafny.IMap<BigInteger,BigInteger> _in2 = store;
-        BigInteger _in3 = changedId;
-        oldQueries = _in0;
-        newQueries = _in1;
-        store = _in2;
-        changedId = _in3;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static Dafny.ISequence<ThunderDbStack._IRetrievalDoc> BuildAddQueryRetrievals(Dafny.ISequence<BigInteger> visible, Dafny.IMap<BigInteger,BigInteger> store, BigInteger queryId)
-    {
-      if ((new BigInteger((visible).Count)).Sign == 0) {
-        return Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements();
-      } else {
-        ThunderDbStack._IMaybeDocState _source0 = ThunderDbStack.__default.LookupState(store, (visible).Select(BigInteger.Zero));
-        {
-          if (_source0.is_NoState) {
-            return ThunderDbStack.__default.BuildAddQueryRetrievals((visible).Drop(BigInteger.One), store, queryId);
-          }
-        }
-        {
-          BigInteger _0_docState = _source0.dtor_state;
-          return ThunderDbStack.__default.AddRetrievalQuery(ThunderDbStack.__default.BuildAddQueryRetrievals((visible).Drop(BigInteger.One), store, queryId), (visible).Select(BigInteger.Zero), _0_docState, queryId);
-        }
-      }
-    }
-    public static ThunderDbStack._IMatchPayload BuildMatchPayload(Dafny.ISequence<ThunderDbStack._IQueryRuntime> oldQueries, Dafny.ISequence<ThunderDbStack._IQueryRuntime> newQueries, BigInteger id, ThunderDbStack._IMaybeDocState oldState, ThunderDbStack._IMaybeDocState newState)
-    {
-      return ThunderDbStack.MatchPayload.create(id, oldState, newState, ThunderDbStack.__default.CollectMatchesOld(oldQueries, newQueries, id), ThunderDbStack.__default.CollectMatchesNew(oldQueries, newQueries, id), ThunderDbStack.__default.CollectEvictions(oldQueries, newQueries, id));
-    }
-    public static Dafny.ISequence<BigInteger> CollectMatchesOld(Dafny.ISequence<ThunderDbStack._IQueryRuntime> oldQueries, Dafny.ISequence<ThunderDbStack._IQueryRuntime> newQueries, BigInteger id)
-    {
-      Dafny.ISequence<BigInteger> _0___accumulator = Dafny.Sequence<BigInteger>.FromElements();
-    TAIL_CALL_START: ;
-      if (((new BigInteger((oldQueries).Count)).Sign == 0) || ((new BigInteger((newQueries).Count)).Sign == 0)) {
-        return Dafny.Sequence<BigInteger>.Concat(_0___accumulator, Dafny.Sequence<BigInteger>.FromElements());
-      } else if (ThunderDbStack.__default.ContainsId(((oldQueries).Select(BigInteger.Zero)).dtor_visible, id)) {
-        _0___accumulator = Dafny.Sequence<BigInteger>.Concat(_0___accumulator, Dafny.Sequence<BigInteger>.FromElements(((oldQueries).Select(BigInteger.Zero)).dtor_id));
-        Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in0 = (oldQueries).Drop(BigInteger.One);
-        Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in1 = (newQueries).Drop(BigInteger.One);
-        BigInteger _in2 = id;
-        oldQueries = _in0;
-        newQueries = _in1;
-        id = _in2;
-        goto TAIL_CALL_START;
-      } else {
-        Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in3 = (oldQueries).Drop(BigInteger.One);
-        Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in4 = (newQueries).Drop(BigInteger.One);
-        BigInteger _in5 = id;
-        oldQueries = _in3;
-        newQueries = _in4;
-        id = _in5;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static Dafny.ISequence<BigInteger> CollectMatchesNew(Dafny.ISequence<ThunderDbStack._IQueryRuntime> oldQueries, Dafny.ISequence<ThunderDbStack._IQueryRuntime> newQueries, BigInteger id)
-    {
-      Dafny.ISequence<BigInteger> _0___accumulator = Dafny.Sequence<BigInteger>.FromElements();
-    TAIL_CALL_START: ;
-      if (((new BigInteger((oldQueries).Count)).Sign == 0) || ((new BigInteger((newQueries).Count)).Sign == 0)) {
-        return Dafny.Sequence<BigInteger>.Concat(_0___accumulator, Dafny.Sequence<BigInteger>.FromElements());
-      } else if (ThunderDbStack.__default.ContainsId(((newQueries).Select(BigInteger.Zero)).dtor_visible, id)) {
-        _0___accumulator = Dafny.Sequence<BigInteger>.Concat(_0___accumulator, Dafny.Sequence<BigInteger>.FromElements(((newQueries).Select(BigInteger.Zero)).dtor_id));
-        Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in0 = (oldQueries).Drop(BigInteger.One);
-        Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in1 = (newQueries).Drop(BigInteger.One);
-        BigInteger _in2 = id;
-        oldQueries = _in0;
-        newQueries = _in1;
-        id = _in2;
-        goto TAIL_CALL_START;
-      } else {
-        Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in3 = (oldQueries).Drop(BigInteger.One);
-        Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in4 = (newQueries).Drop(BigInteger.One);
-        BigInteger _in5 = id;
-        oldQueries = _in3;
-        newQueries = _in4;
-        id = _in5;
-        goto TAIL_CALL_START;
-      }
-    }
-    public static Dafny.ISequence<ThunderDbStack._IEviction> CollectEvictions(Dafny.ISequence<ThunderDbStack._IQueryRuntime> oldQueries, Dafny.ISequence<ThunderDbStack._IQueryRuntime> newQueries, BigInteger id)
-    {
-      Dafny.ISequence<ThunderDbStack._IEviction> _0___accumulator = Dafny.Sequence<ThunderDbStack._IEviction>.FromElements();
-    TAIL_CALL_START: ;
-      if (((new BigInteger((oldQueries).Count)).Sign == 0) || ((new BigInteger((newQueries).Count)).Sign == 0)) {
-        return Dafny.Sequence<ThunderDbStack._IEviction>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IEviction>.FromElements());
-      } else {
-        Dafny.ISequence<BigInteger> _1_oldVisible = ((oldQueries).Select(BigInteger.Zero)).dtor_visible;
-        if (((!(ThunderDbStack.__default.ContainsId(_1_oldVisible, id))) && (ThunderDbStack.__default.ContainsId(((newQueries).Select(BigInteger.Zero)).dtor_visible, id))) && ((new BigInteger((ThunderDbStack.__default.FirstEvicted(_1_oldVisible, ((newQueries).Select(BigInteger.Zero)).dtor_visible, id)).Count)).Sign == 1)) {
-          _0___accumulator = Dafny.Sequence<ThunderDbStack._IEviction>.Concat(_0___accumulator, Dafny.Sequence<ThunderDbStack._IEviction>.FromElements(ThunderDbStack.Eviction.create(((newQueries).Select(BigInteger.Zero)).dtor_id, (ThunderDbStack.__default.FirstEvicted(_1_oldVisible, ((newQueries).Select(BigInteger.Zero)).dtor_visible, id)).Select(BigInteger.Zero))));
-          Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in0 = (oldQueries).Drop(BigInteger.One);
-          Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in1 = (newQueries).Drop(BigInteger.One);
-          BigInteger _in2 = id;
-          oldQueries = _in0;
-          newQueries = _in1;
-          id = _in2;
-          goto TAIL_CALL_START;
-        } else {
-          Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in3 = (oldQueries).Drop(BigInteger.One);
-          Dafny.ISequence<ThunderDbStack._IQueryRuntime> _in4 = (newQueries).Drop(BigInteger.One);
-          BigInteger _in5 = id;
-          oldQueries = _in3;
-          newQueries = _in4;
-          id = _in5;
-          goto TAIL_CALL_START;
-        }
-      }
-    }
-    public static bool HasAnyMatchChange(ThunderDbStack._IMatchPayload payload) {
-      return (((new BigInteger(((payload).dtor_matchesOld).Count)).Sign == 1) || ((new BigInteger(((payload).dtor_matchesNew).Count)).Sign == 1)) || ((new BigInteger(((payload).dtor_evictions).Count)).Sign == 1);
-    }
-    public static ThunderDbStack._IEngineState SeedDocs(ThunderDbStack._IEngineState state, Dafny.ISequence<ThunderDbStack._ISeedDoc> docs)
-    {
-      ThunderDbStack._IEngineState next = ThunderDbStack.EngineState.Default();
-      Dafny.IMap<BigInteger,BigInteger> _0_store;
-      _0_store = (state).dtor_store;
-      Dafny.ISequence<BigInteger> _1_docIds;
-      _1_docIds = (state).dtor_docIds;
-      DocsIndexTreap._ITreap _2_treap;
-      _2_treap = (state).dtor_treap;
-      BigInteger _3_i;
-      _3_i = BigInteger.Zero;
-      while ((_3_i) < (new BigInteger((docs).Count))) {
-        _0_store = ThunderDbStack.__default.PutStoredDoc(_0_store, ((docs).Select(_3_i)).dtor_id, ((docs).Select(_3_i)).dtor_state);
-        _1_docIds = ThunderDbStack.__default.AppendDocIdIfMissing(_1_docIds, ((docs).Select(_3_i)).dtor_id);
-        _2_treap = DocsIndexTreap.__default.Add(_2_treap, (((docs).Select(_3_i)).dtor_state), ((docs).Select(_3_i)).dtor_id, ThunderDbStack.__default.PriorityFor((((docs).Select(_3_i)).dtor_state), ((docs).Select(_3_i)).dtor_id));
-        _3_i = (_3_i) + (BigInteger.One);
-      }
-      next = ThunderDbStack.EngineState.create(_0_store, _1_docIds, _2_treap, ThunderDbStack.__default.RecomputeQueries((state).dtor_queries, _2_treap), (state).dtor_nextQueryId);
-      return next;
-    }
-    public static void AddQuery(ThunderDbStack._IEngineState state, ThunderDbStack._IQuerySpec spec, out ThunderDbStack._IEngineState next, out Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events, out BigInteger queryId)
-    {
-      next = ThunderDbStack.EngineState.Default();
-      events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Empty;
-      queryId = BigInteger.Zero;
-      queryId = (state).dtor_nextQueryId;
-      Dafny.ISequence<BigInteger> _0_visible;
-      _0_visible = ThunderDbStack.__default.VisibleForSpecInTreap((state).dtor_treap, spec);
-      ThunderDbStack._IQueryRuntime _1_query;
-      _1_query = ThunderDbStack.QueryRuntime.create(queryId, spec, _0_visible);
-      next = ThunderDbStack.EngineState.create((state).dtor_store, (state).dtor_docIds, (state).dtor_treap, Dafny.Sequence<ThunderDbStack._IQueryRuntime>.Concat((state).dtor_queries, Dafny.Sequence<ThunderDbStack._IQueryRuntime>.FromElements(_1_query)), ((state).dtor_nextQueryId) + (BigInteger.One));
-      Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _2_retrievals;
-      _2_retrievals = ThunderDbStack.__default.BuildAddQueryRetrievals(_0_visible, (state).dtor_store, queryId);
-      if ((new BigInteger((_2_retrievals).Count)).Sign == 0) {
-        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements();
-      } else {
-        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_RetrievalEvent(_2_retrievals));
-      }
-    }
-    public static void RemoveQuery(ThunderDbStack._IEngineState state, BigInteger id, out ThunderDbStack._IEngineState next, out Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events)
-    {
-      next = ThunderDbStack.EngineState.Default();
-      events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Empty;
-      next = ThunderDbStack.EngineState.create((state).dtor_store, (state).dtor_docIds, (state).dtor_treap, ThunderDbStack.__default.RemoveQueryRuntime((state).dtor_queries, id), (state).dtor_nextQueryId);
-      events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements();
-    }
-    public static void ApplyDocChange(ThunderDbStack._IEngineState state, BigInteger id, ThunderDbStack._IMaybeDocState oldState, ThunderDbStack._IMaybeDocState newState, out ThunderDbStack._IEngineState next, out Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events)
-    {
-      next = ThunderDbStack.EngineState.Default();
-      events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Empty;
-      next = state;
-      events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements();
-      Dafny.IMap<BigInteger,BigInteger> _0_store;
-      _0_store = (state).dtor_store;
-      Dafny.ISequence<BigInteger> _1_docIds;
-      _1_docIds = (state).dtor_docIds;
-      DocsIndexTreap._ITreap _2_treap;
-      _2_treap = (state).dtor_treap;
-      if ((oldState).is_HasState) {
-        BigInteger _3_oldDoc;
-        _3_oldDoc = (oldState).dtor_state;
-        if ((newState).is_NoState) {
-          _0_store = ThunderDbStack.__default.RemoveStoredDoc(_0_store, id);
-          _1_docIds = ThunderDbStack.__default.RemoveDocId(_1_docIds, id);
-        }
-        _2_treap = DocsIndexTreap.__default.Remove(_2_treap, ThunderDbStack.__default.GetScore(_3_oldDoc), id);
-      }
-      if ((newState).is_HasState) {
-        BigInteger _4_newDoc;
-        _4_newDoc = (newState).dtor_state;
-        _0_store = ThunderDbStack.__default.PutStoredDoc(_0_store, id, _4_newDoc);
-        _1_docIds = ThunderDbStack.__default.AppendDocIdIfMissing(_1_docIds, id);
-        _2_treap = DocsIndexTreap.__default.Add(_2_treap, ThunderDbStack.__default.GetScore(_4_newDoc), id, ThunderDbStack.__default.PriorityFor(ThunderDbStack.__default.GetScore(_4_newDoc), id));
-      }
-      Dafny.ISequence<ThunderDbStack._IQueryRuntime> _5_newQueries;
-      _5_newQueries = ThunderDbStack.__default.UpdateQueriesForDocChange((state).dtor_queries, _2_treap, _0_store, id, oldState, newState);
-      next = ThunderDbStack.EngineState.create(_0_store, _1_docIds, _2_treap, _5_newQueries, (state).dtor_nextQueryId);
-      ThunderDbStack._IMatchPayload _6_payload;
-      _6_payload = ThunderDbStack.__default.BuildMatchPayload((state).dtor_queries, _5_newQueries, id, oldState, newState);
-      Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _7_retrievals;
-      _7_retrievals = ThunderDbStack.__default.BuildRetrievalsFromQueryDiff((state).dtor_queries, _5_newQueries, _0_store, id);
-      if ((ThunderDbStack.__default.HasAnyMatchChange(_6_payload)) && ((new BigInteger((_7_retrievals).Count)).Sign == 1)) {
-        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_MatchEvent(_6_payload), ThunderDbStack.DownstreamEvent.create_RetrievalEvent(_7_retrievals));
-      } else if (ThunderDbStack.__default.HasAnyMatchChange(_6_payload)) {
-        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_MatchEvent(_6_payload));
-      } else if ((new BigInteger((_7_retrievals).Count)).Sign == 1) {
-        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements(ThunderDbStack.DownstreamEvent.create_RetrievalEvent(_7_retrievals));
-      } else {
-        events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements();
-      }
-    }
-    public static void ProcessItem(ThunderDbStack._IEngineState state, ThunderDbStack._IStreamItem item, out ThunderDbStack._IEngineState next, out Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events, out BigInteger queryId)
-    {
-      next = ThunderDbStack.EngineState.Default();
-      events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.Empty;
-      queryId = BigInteger.Zero;
-      next = state;
-      events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements();
-      queryId = BigInteger.Zero;
-      ThunderDbStack._IStreamItem _source0 = item;
-      {
-        if (_source0.is_SeedDocsItem) {
-          Dafny.ISequence<ThunderDbStack._ISeedDoc> _0_docs = _source0.dtor_docs;
-          {
-            ThunderDbStack._IEngineState _out0;
-            _out0 = ThunderDbStack.__default.SeedDocs(state, _0_docs);
-            next = _out0;
-            events = Dafny.Sequence<ThunderDbStack._IDownstreamEvent>.FromElements();
-          }
-          goto after_match0;
-        }
-      }
-      {
-        if (_source0.is_QueryAddItem) {
-          ThunderDbStack._IQuerySpec _1_spec = _source0.dtor_spec;
-          {
-            ThunderDbStack._IEngineState _out1;
-            Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out2;
-            BigInteger _out3;
-            ThunderDbStack.__default.AddQuery(state, _1_spec, out _out1, out _out2, out _out3);
-            next = _out1;
-            events = _out2;
-            queryId = _out3;
-          }
-          goto after_match0;
-        }
-      }
-      {
-        if (_source0.is_QueryRemoveItem) {
-          BigInteger _2_id = _source0.dtor_id;
-          {
-            ThunderDbStack._IEngineState _out4;
-            Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out5;
-            ThunderDbStack.__default.RemoveQuery(state, _2_id, out _out4, out _out5);
-            next = _out4;
-            events = _out5;
-          }
-          goto after_match0;
-        }
-      }
-      {
-        BigInteger _3_id = _source0.dtor_id;
-        ThunderDbStack._IMaybeDocState _4_oldState = _source0.dtor_oldState;
-        ThunderDbStack._IMaybeDocState _5_newState = _source0.dtor_newState;
-        {
-          ThunderDbStack._IEngineState _out6;
-          Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _out7;
-          ThunderDbStack.__default.ApplyDocChange(state, _3_id, _4_oldState, _5_newState, out _out6, out _out7);
-          next = _out6;
-          events = _out7;
-        }
-      }
-    after_match0: ;
-    }
-    public static ThunderDbStack._IWorkerRunSummary SummaryZero() {
-      return ThunderDbStack.WorkerRunSummary.create(BigInteger.Zero, BigInteger.Zero, BigInteger.Zero, BigInteger.Zero, BigInteger.Zero);
-    }
-    public static BigInteger CountEvictions(Dafny.ISequence<ThunderDbStack._IEviction> evictions) {
-      return new BigInteger((evictions).Count);
-    }
-    public static ThunderDbStack._IWorkerRunSummary UpdateSummary(ThunderDbStack._IWorkerRunSummary summary, Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events)
-    {
-      if ((new BigInteger((events).Count)).Sign == 0) {
-        return ThunderDbStack.WorkerRunSummary.create((summary).dtor_matchEvents, (summary).dtor_evictions, (summary).dtor_retrievalBatches, (summary).dtor_retrievalDocs, ((summary).dtor_eventsProcessed) + (BigInteger.One));
-      } else {
-        return ThunderDbStack.__default.UpdateSummaryOne(ThunderDbStack.WorkerRunSummary.create((summary).dtor_matchEvents, (summary).dtor_evictions, (summary).dtor_retrievalBatches, (summary).dtor_retrievalDocs, ((summary).dtor_eventsProcessed) + (BigInteger.One)), events);
-      }
-    }
-    public static ThunderDbStack._IWorkerRunSummary UpdateSummaryOne(ThunderDbStack._IWorkerRunSummary summary, Dafny.ISequence<ThunderDbStack._IDownstreamEvent> events)
-    {
-    TAIL_CALL_START: ;
-      if ((new BigInteger((events).Count)).Sign == 0) {
-        return summary;
-      } else {
-        ThunderDbStack._IDownstreamEvent _source0 = (events).Select(BigInteger.Zero);
-        {
-          if (_source0.is_MatchEvent) {
-            ThunderDbStack._IMatchPayload _0_payload = _source0.dtor_payload;
-            ThunderDbStack._IWorkerRunSummary _in0 = ThunderDbStack.WorkerRunSummary.create(((summary).dtor_matchEvents) + (BigInteger.One), ((summary).dtor_evictions) + (ThunderDbStack.__default.CountEvictions((_0_payload).dtor_evictions)), (summary).dtor_retrievalBatches, (summary).dtor_retrievalDocs, (summary).dtor_eventsProcessed);
-            Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _in1 = (events).Drop(BigInteger.One);
-            summary = _in0;
-            events = _in1;
-            goto TAIL_CALL_START;
-          }
-        }
-        {
-          Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _1_docs = _source0.dtor_docs;
-          ThunderDbStack._IWorkerRunSummary _in2 = ThunderDbStack.WorkerRunSummary.create((summary).dtor_matchEvents, (summary).dtor_evictions, ((summary).dtor_retrievalBatches) + (BigInteger.One), ((summary).dtor_retrievalDocs) + (new BigInteger((_1_docs).Count)), (summary).dtor_eventsProcessed);
-          Dafny.ISequence<ThunderDbStack._IDownstreamEvent> _in3 = (events).Drop(BigInteger.One);
-          summary = _in2;
-          events = _in3;
-          goto TAIL_CALL_START;
-        }
       }
     }
   }
@@ -10403,70 +7575,6 @@ namespace ThunderDbStack {
       s += Dafny.Helpers.ToString(this._state);
       s += ")";
       return s;
-    }
-  }
-
-  public interface _IStoredDoc {
-    bool is_StoredDoc { get; }
-    BigInteger dtor_id { get; }
-    BigInteger dtor_state { get; }
-    _IStoredDoc DowncastClone();
-  }
-  public class StoredDoc : _IStoredDoc {
-    public readonly BigInteger _id;
-    public readonly BigInteger _state;
-    public StoredDoc(BigInteger id, BigInteger state) {
-      this._id = id;
-      this._state = state;
-    }
-    public _IStoredDoc DowncastClone() {
-      if (this is _IStoredDoc dt) { return dt; }
-      return new StoredDoc(_id, _state);
-    }
-    public override bool Equals(object other) {
-      var oth = other as ThunderDbStack.StoredDoc;
-      return oth != null && this._id == oth._id && this._state == oth._state;
-    }
-    public override int GetHashCode() {
-      ulong hash = 5381;
-      hash = ((hash << 5) + hash) + 0;
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._id));
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._state));
-      return (int) hash;
-    }
-    public override string ToString() {
-      string s = "ThunderDbStack.StoredDoc.StoredDoc";
-      s += "(";
-      s += Dafny.Helpers.ToString(this._id);
-      s += ", ";
-      s += Dafny.Helpers.ToString(this._state);
-      s += ")";
-      return s;
-    }
-    private static readonly ThunderDbStack._IStoredDoc theDefault = create(BigInteger.Zero, BigInteger.Zero);
-    public static ThunderDbStack._IStoredDoc Default() {
-      return theDefault;
-    }
-    private static readonly Dafny.TypeDescriptor<ThunderDbStack._IStoredDoc> _TYPE = new Dafny.TypeDescriptor<ThunderDbStack._IStoredDoc>(ThunderDbStack.StoredDoc.Default());
-    public static Dafny.TypeDescriptor<ThunderDbStack._IStoredDoc> _TypeDescriptor() {
-      return _TYPE;
-    }
-    public static _IStoredDoc create(BigInteger id, BigInteger state) {
-      return new StoredDoc(id, state);
-    }
-    public static _IStoredDoc create_StoredDoc(BigInteger id, BigInteger state) {
-      return create(id, state);
-    }
-    public bool is_StoredDoc { get { return true; } }
-    public BigInteger dtor_id {
-      get {
-        return this._id;
-      }
-    }
-    public BigInteger dtor_state {
-      get {
-        return this._state;
-      }
     }
   }
 
@@ -10605,81 +7713,6 @@ namespace ThunderDbStack {
     public BigInteger dtor_limit {
       get {
         return this._limit;
-      }
-    }
-  }
-
-  public interface _IQueryRuntime {
-    bool is_QueryRuntime { get; }
-    BigInteger dtor_id { get; }
-    ThunderDbStack._IQuerySpec dtor_spec { get; }
-    Dafny.ISequence<BigInteger> dtor_visible { get; }
-    _IQueryRuntime DowncastClone();
-  }
-  public class QueryRuntime : _IQueryRuntime {
-    public readonly BigInteger _id;
-    public readonly ThunderDbStack._IQuerySpec _spec;
-    public readonly Dafny.ISequence<BigInteger> _visible;
-    public QueryRuntime(BigInteger id, ThunderDbStack._IQuerySpec spec, Dafny.ISequence<BigInteger> visible) {
-      this._id = id;
-      this._spec = spec;
-      this._visible = visible;
-    }
-    public _IQueryRuntime DowncastClone() {
-      if (this is _IQueryRuntime dt) { return dt; }
-      return new QueryRuntime(_id, _spec, _visible);
-    }
-    public override bool Equals(object other) {
-      var oth = other as ThunderDbStack.QueryRuntime;
-      return oth != null && this._id == oth._id && object.Equals(this._spec, oth._spec) && object.Equals(this._visible, oth._visible);
-    }
-    public override int GetHashCode() {
-      ulong hash = 5381;
-      hash = ((hash << 5) + hash) + 0;
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._id));
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._spec));
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._visible));
-      return (int) hash;
-    }
-    public override string ToString() {
-      string s = "ThunderDbStack.QueryRuntime.QueryRuntime";
-      s += "(";
-      s += Dafny.Helpers.ToString(this._id);
-      s += ", ";
-      s += Dafny.Helpers.ToString(this._spec);
-      s += ", ";
-      s += Dafny.Helpers.ToString(this._visible);
-      s += ")";
-      return s;
-    }
-    private static readonly ThunderDbStack._IQueryRuntime theDefault = create(BigInteger.Zero, ThunderDbStack.QuerySpec.Default(), Dafny.Sequence<BigInteger>.Empty);
-    public static ThunderDbStack._IQueryRuntime Default() {
-      return theDefault;
-    }
-    private static readonly Dafny.TypeDescriptor<ThunderDbStack._IQueryRuntime> _TYPE = new Dafny.TypeDescriptor<ThunderDbStack._IQueryRuntime>(ThunderDbStack.QueryRuntime.Default());
-    public static Dafny.TypeDescriptor<ThunderDbStack._IQueryRuntime> _TypeDescriptor() {
-      return _TYPE;
-    }
-    public static _IQueryRuntime create(BigInteger id, ThunderDbStack._IQuerySpec spec, Dafny.ISequence<BigInteger> visible) {
-      return new QueryRuntime(id, spec, visible);
-    }
-    public static _IQueryRuntime create_QueryRuntime(BigInteger id, ThunderDbStack._IQuerySpec spec, Dafny.ISequence<BigInteger> visible) {
-      return create(id, spec, visible);
-    }
-    public bool is_QueryRuntime { get { return true; } }
-    public BigInteger dtor_id {
-      get {
-        return this._id;
-      }
-    }
-    public ThunderDbStack._IQuerySpec dtor_spec {
-      get {
-        return this._spec;
-      }
-    }
-    public Dafny.ISequence<BigInteger> dtor_visible {
-      get {
-        return this._visible;
       }
     }
   }
@@ -11216,200 +8249,6 @@ namespace ThunderDbStack {
       return s;
     }
   }
-
-  public interface _IWorkerRunSummary {
-    bool is_WorkerRunSummary { get; }
-    BigInteger dtor_matchEvents { get; }
-    BigInteger dtor_evictions { get; }
-    BigInteger dtor_retrievalBatches { get; }
-    BigInteger dtor_retrievalDocs { get; }
-    BigInteger dtor_eventsProcessed { get; }
-    _IWorkerRunSummary DowncastClone();
-  }
-  public class WorkerRunSummary : _IWorkerRunSummary {
-    public readonly BigInteger _matchEvents;
-    public readonly BigInteger _evictions;
-    public readonly BigInteger _retrievalBatches;
-    public readonly BigInteger _retrievalDocs;
-    public readonly BigInteger _eventsProcessed;
-    public WorkerRunSummary(BigInteger matchEvents, BigInteger evictions, BigInteger retrievalBatches, BigInteger retrievalDocs, BigInteger eventsProcessed) {
-      this._matchEvents = matchEvents;
-      this._evictions = evictions;
-      this._retrievalBatches = retrievalBatches;
-      this._retrievalDocs = retrievalDocs;
-      this._eventsProcessed = eventsProcessed;
-    }
-    public _IWorkerRunSummary DowncastClone() {
-      if (this is _IWorkerRunSummary dt) { return dt; }
-      return new WorkerRunSummary(_matchEvents, _evictions, _retrievalBatches, _retrievalDocs, _eventsProcessed);
-    }
-    public override bool Equals(object other) {
-      var oth = other as ThunderDbStack.WorkerRunSummary;
-      return oth != null && this._matchEvents == oth._matchEvents && this._evictions == oth._evictions && this._retrievalBatches == oth._retrievalBatches && this._retrievalDocs == oth._retrievalDocs && this._eventsProcessed == oth._eventsProcessed;
-    }
-    public override int GetHashCode() {
-      ulong hash = 5381;
-      hash = ((hash << 5) + hash) + 0;
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._matchEvents));
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._evictions));
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._retrievalBatches));
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._retrievalDocs));
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._eventsProcessed));
-      return (int) hash;
-    }
-    public override string ToString() {
-      string s = "ThunderDbStack.WorkerRunSummary.WorkerRunSummary";
-      s += "(";
-      s += Dafny.Helpers.ToString(this._matchEvents);
-      s += ", ";
-      s += Dafny.Helpers.ToString(this._evictions);
-      s += ", ";
-      s += Dafny.Helpers.ToString(this._retrievalBatches);
-      s += ", ";
-      s += Dafny.Helpers.ToString(this._retrievalDocs);
-      s += ", ";
-      s += Dafny.Helpers.ToString(this._eventsProcessed);
-      s += ")";
-      return s;
-    }
-    private static readonly ThunderDbStack._IWorkerRunSummary theDefault = create(BigInteger.Zero, BigInteger.Zero, BigInteger.Zero, BigInteger.Zero, BigInteger.Zero);
-    public static ThunderDbStack._IWorkerRunSummary Default() {
-      return theDefault;
-    }
-    private static readonly Dafny.TypeDescriptor<ThunderDbStack._IWorkerRunSummary> _TYPE = new Dafny.TypeDescriptor<ThunderDbStack._IWorkerRunSummary>(ThunderDbStack.WorkerRunSummary.Default());
-    public static Dafny.TypeDescriptor<ThunderDbStack._IWorkerRunSummary> _TypeDescriptor() {
-      return _TYPE;
-    }
-    public static _IWorkerRunSummary create(BigInteger matchEvents, BigInteger evictions, BigInteger retrievalBatches, BigInteger retrievalDocs, BigInteger eventsProcessed) {
-      return new WorkerRunSummary(matchEvents, evictions, retrievalBatches, retrievalDocs, eventsProcessed);
-    }
-    public static _IWorkerRunSummary create_WorkerRunSummary(BigInteger matchEvents, BigInteger evictions, BigInteger retrievalBatches, BigInteger retrievalDocs, BigInteger eventsProcessed) {
-      return create(matchEvents, evictions, retrievalBatches, retrievalDocs, eventsProcessed);
-    }
-    public bool is_WorkerRunSummary { get { return true; } }
-    public BigInteger dtor_matchEvents {
-      get {
-        return this._matchEvents;
-      }
-    }
-    public BigInteger dtor_evictions {
-      get {
-        return this._evictions;
-      }
-    }
-    public BigInteger dtor_retrievalBatches {
-      get {
-        return this._retrievalBatches;
-      }
-    }
-    public BigInteger dtor_retrievalDocs {
-      get {
-        return this._retrievalDocs;
-      }
-    }
-    public BigInteger dtor_eventsProcessed {
-      get {
-        return this._eventsProcessed;
-      }
-    }
-  }
-
-  public interface _IEngineState {
-    bool is_EngineState { get; }
-    Dafny.IMap<BigInteger,BigInteger> dtor_store { get; }
-    Dafny.ISequence<BigInteger> dtor_docIds { get; }
-    DocsIndexTreap._ITreap dtor_treap { get; }
-    Dafny.ISequence<ThunderDbStack._IQueryRuntime> dtor_queries { get; }
-    BigInteger dtor_nextQueryId { get; }
-    _IEngineState DowncastClone();
-  }
-  public class EngineState : _IEngineState {
-    public readonly Dafny.IMap<BigInteger,BigInteger> _store;
-    public readonly Dafny.ISequence<BigInteger> _docIds;
-    public readonly DocsIndexTreap._ITreap _treap;
-    public readonly Dafny.ISequence<ThunderDbStack._IQueryRuntime> _queries;
-    public readonly BigInteger _nextQueryId;
-    public EngineState(Dafny.IMap<BigInteger,BigInteger> store, Dafny.ISequence<BigInteger> docIds, DocsIndexTreap._ITreap treap, Dafny.ISequence<ThunderDbStack._IQueryRuntime> queries, BigInteger nextQueryId) {
-      this._store = store;
-      this._docIds = docIds;
-      this._treap = treap;
-      this._queries = queries;
-      this._nextQueryId = nextQueryId;
-    }
-    public _IEngineState DowncastClone() {
-      if (this is _IEngineState dt) { return dt; }
-      return new EngineState(_store, _docIds, _treap, _queries, _nextQueryId);
-    }
-    public override bool Equals(object other) {
-      var oth = other as ThunderDbStack.EngineState;
-      return oth != null && object.Equals(this._store, oth._store) && object.Equals(this._docIds, oth._docIds) && object.Equals(this._treap, oth._treap) && object.Equals(this._queries, oth._queries) && this._nextQueryId == oth._nextQueryId;
-    }
-    public override int GetHashCode() {
-      ulong hash = 5381;
-      hash = ((hash << 5) + hash) + 0;
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._store));
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._docIds));
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._treap));
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._queries));
-      hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._nextQueryId));
-      return (int) hash;
-    }
-    public override string ToString() {
-      string s = "ThunderDbStack.EngineState.EngineState";
-      s += "(";
-      s += Dafny.Helpers.ToString(this._store);
-      s += ", ";
-      s += Dafny.Helpers.ToString(this._docIds);
-      s += ", ";
-      s += Dafny.Helpers.ToString(this._treap);
-      s += ", ";
-      s += Dafny.Helpers.ToString(this._queries);
-      s += ", ";
-      s += Dafny.Helpers.ToString(this._nextQueryId);
-      s += ")";
-      return s;
-    }
-    private static readonly ThunderDbStack._IEngineState theDefault = create(Dafny.Map<BigInteger, BigInteger>.Empty, Dafny.Sequence<BigInteger>.Empty, DocsIndexTreap.Treap.Default(), Dafny.Sequence<ThunderDbStack._IQueryRuntime>.Empty, BigInteger.Zero);
-    public static ThunderDbStack._IEngineState Default() {
-      return theDefault;
-    }
-    private static readonly Dafny.TypeDescriptor<ThunderDbStack._IEngineState> _TYPE = new Dafny.TypeDescriptor<ThunderDbStack._IEngineState>(ThunderDbStack.EngineState.Default());
-    public static Dafny.TypeDescriptor<ThunderDbStack._IEngineState> _TypeDescriptor() {
-      return _TYPE;
-    }
-    public static _IEngineState create(Dafny.IMap<BigInteger,BigInteger> store, Dafny.ISequence<BigInteger> docIds, DocsIndexTreap._ITreap treap, Dafny.ISequence<ThunderDbStack._IQueryRuntime> queries, BigInteger nextQueryId) {
-      return new EngineState(store, docIds, treap, queries, nextQueryId);
-    }
-    public static _IEngineState create_EngineState(Dafny.IMap<BigInteger,BigInteger> store, Dafny.ISequence<BigInteger> docIds, DocsIndexTreap._ITreap treap, Dafny.ISequence<ThunderDbStack._IQueryRuntime> queries, BigInteger nextQueryId) {
-      return create(store, docIds, treap, queries, nextQueryId);
-    }
-    public bool is_EngineState { get { return true; } }
-    public Dafny.IMap<BigInteger,BigInteger> dtor_store {
-      get {
-        return this._store;
-      }
-    }
-    public Dafny.ISequence<BigInteger> dtor_docIds {
-      get {
-        return this._docIds;
-      }
-    }
-    public DocsIndexTreap._ITreap dtor_treap {
-      get {
-        return this._treap;
-      }
-    }
-    public Dafny.ISequence<ThunderDbStack._IQueryRuntime> dtor_queries {
-      get {
-        return this._queries;
-      }
-    }
-    public BigInteger dtor_nextQueryId {
-      get {
-        return this._nextQueryId;
-      }
-    }
-  }
 } // end of namespace ThunderDbStack
 namespace TsDocsRuntime {
 
@@ -11510,6 +8349,14 @@ namespace TsQueriesRuntime {
         return (!(TsQueriesRuntime.__default.ContainsQueryEntryId((entries).Drop(BigInteger.One), ((entries).Select(BigInteger.Zero)).dtor_id))) && (TsQueriesRuntime.__default.UniqueQueryEntries((entries).Drop(BigInteger.One)));
       }
     }
+    public static bool EntryIdsBelow(Dafny.ISequence<TsQueriesRuntime._IQueryEntry> entries, BigInteger bound)
+    {
+      if ((new BigInteger((entries).Count)).Sign == 0) {
+        return true;
+      } else {
+        return ((((entries).Select(BigInteger.Zero)).dtor_id) < (bound)) && (TsQueriesRuntime.__default.EntryIdsBelow((entries).Drop(BigInteger.One), bound));
+      }
+    }
     public static bool ContainsQueryEntryId(Dafny.ISequence<TsQueriesRuntime._IQueryEntry> entries, BigInteger id)
     {
       if ((new BigInteger((entries).Count)).Sign == 0) {
@@ -11519,13 +8366,11 @@ namespace TsQueriesRuntime {
       }
     }
     public static bool OrderedEntries(Dafny.ISequence<TsQueriesRuntime._IQueryEntry> entries) {
-      return Dafny.Helpers.Id<Func<Dafny.ISequence<TsQueriesRuntime._IQueryEntry>, bool>>((_0_entries) => Dafny.Helpers.Quantifier<BigInteger>(Dafny.Helpers.IntegerRange(BigInteger.Zero, new BigInteger((_0_entries).Count)), true, (((_forall_var_0) => {
-        BigInteger _1_i = (BigInteger)_forall_var_0;
-        return Dafny.Helpers.Quantifier<BigInteger>(Dafny.Helpers.IntegerRange((_1_i) + (BigInteger.One), new BigInteger((_0_entries).Count)), true, (((_forall_var_1) => {
-          BigInteger _2_j = (BigInteger)_forall_var_1;
-          return !((((_1_i).Sign != -1) && ((_1_i) < (_2_j))) && ((_2_j) < (new BigInteger((_0_entries).Count)))) || (((((_0_entries).Select(_1_i)).dtor_key) < (((_0_entries).Select(_2_j)).dtor_key)) || (((((_0_entries).Select(_1_i)).dtor_key) == (((_0_entries).Select(_2_j)).dtor_key)) && (((((_0_entries).Select(_1_i)).dtor_baseScore) < (((_0_entries).Select(_2_j)).dtor_baseScore)) || (((((_0_entries).Select(_1_i)).dtor_baseScore) == (((_0_entries).Select(_2_j)).dtor_baseScore)) && ((((_0_entries).Select(_1_i)).dtor_id) < (((_0_entries).Select(_2_j)).dtor_id))))));
-        })));
-      }))))(entries);
+      if ((new BigInteger((entries).Count)) < (new BigInteger(2))) {
+        return true;
+      } else {
+        return (TsQueriesRuntime.__default.CompareEntries((entries).Select(BigInteger.Zero), (entries).Select(BigInteger.One))) && (TsQueriesRuntime.__default.OrderedEntries((entries).Drop(BigInteger.One)));
+      }
     }
     public static bool QueriesConsistent(TsQueriesRuntime._IQueriesState state) {
       return (TsQueriesRuntime.__default.UniqueQueryEntries((state).dtor_entries)) && (TsQueriesRuntime.__default.OrderedEntries((state).dtor_entries));
@@ -11866,7 +8711,7 @@ namespace TsLimitQueriesRuntime {
       return TsLimitQueriesRuntime.LimitQueriesState.create(TsDocsRuntime.__default.EmptyDocsState(), TsQueriesRuntime.__default.EmptyQueriesState(), BigInteger.One, Dafny.Map<BigInteger, TsLimitQueriesRuntime._IQueryInfo>.FromElements(), Dafny.Map<BigInteger, BigInteger>.FromElements(), Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements(), Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements());
     }
     public static bool LimitQueriesConsistent(TsLimitQueriesRuntime._ILimitQueriesState state) {
-      return (((TsDocsRuntime.__default.DocsConsistent((state).dtor_docs)) && (TsQueriesRuntime.__default.QueriesConsistent((state).dtor_queries))) && ((BigInteger.One) <= ((state).dtor_nextId))) && (Dafny.Helpers.Id<Func<TsLimitQueriesRuntime._ILimitQueriesState, bool>>((_0_state) => Dafny.Helpers.Quantifier<BigInteger>(((_0_state).dtor_infos).Keys.Elements, true, (((_forall_var_0) => {
+      return ((((TsDocsRuntime.__default.DocsConsistent((state).dtor_docs)) && (TsQueriesRuntime.__default.QueriesConsistent((state).dtor_queries))) && ((BigInteger.One) <= ((state).dtor_nextId))) && (TsQueriesRuntime.__default.EntryIdsBelow(((state).dtor_queries).dtor_entries, (state).dtor_nextId))) && (Dafny.Helpers.Id<Func<TsLimitQueriesRuntime._ILimitQueriesState, bool>>((_0_state) => Dafny.Helpers.Quantifier<BigInteger>(((_0_state).dtor_infos).Keys.Elements, true, (((_forall_var_0) => {
         BigInteger _1_id = (BigInteger)_forall_var_0;
         return !(((_0_state).dtor_infos).Contains(_1_id)) || ((((_0_state).dtor_baseScores).Contains(_1_id)) && (((Dafny.Map<BigInteger, TsLimitQueriesRuntime._IQueryInfo>.Select((_0_state).dtor_infos,_1_id)).dtor_id) == (_1_id)));
       }))))(state));
@@ -11953,7 +8798,7 @@ namespace TsLimitQueriesRuntime {
     {
       BigInteger _0_queryId = (state).dtor_nextId;
       BigInteger _1_effectiveScore = (TsDocsRuntime.__default.RankDoc((state).dtor_docs, a, DocsIndexModel.MaybeDocId.create_NoDoc())) + (k);
-      TsQueriesRuntime._IQueriesState _2_nextQueries = TsQueriesRuntime.__default.Insert((state).dtor_queries, a, _0_queryId, _1_effectiveScore, max);
+      TsQueriesRuntime._IQueriesState _2_nextQueries = TsQueriesRuntime.__default.Insert((state).dtor_queries, a, (state).dtor_nextId, _1_effectiveScore, max);
       BigInteger _3_baseScore = (_1_effectiveScore) - (TsQueriesRuntime.__default.AccumulatedAddAtKey((state).dtor_queries, a));
       BigInteger _4_currentMatches = TsLimitQueriesRuntime.__default.NatMin(TsLimitQueriesRuntime.__default.CountDocsInRange(state, a, max), k);
       return TsLimitQueriesRuntime.QueryAddResult.create(TsLimitQueriesRuntime.LimitQueriesState.create((state).dtor_docs, _2_nextQueries, (_0_queryId) + (BigInteger.One), Dafny.Map<BigInteger, TsLimitQueriesRuntime._IQueryInfo>.Update((state).dtor_infos, _0_queryId, TsLimitQueriesRuntime.QueryInfo.create(_0_queryId, a, k, max, _4_currentMatches)), Dafny.Map<BigInteger, BigInteger>.Update((state).dtor_baseScores, _0_queryId, _3_baseScore), (state).dtor_pendingByQuery, (state).dtor_pendingByDoc), _0_queryId);
@@ -13138,7 +9983,8 @@ namespace TsLimitStreamRuntime {
       if ((new BigInteger((docs).Count)).Sign == 0) {
         return queries;
       } else {
-        TsLimitQueriesRuntime._ILimitQueriesState _in0 = TsLimitQueriesRuntime.LimitQueriesState.create(TsDocsRuntime.__default.AddDoc((queries).dtor_docs, ThunderDbStack.__default.GetScore(((docs).Select(BigInteger.Zero)).dtor_state), ((docs).Select(BigInteger.Zero)).dtor_id), (queries).dtor_queries, (queries).dtor_nextId, (queries).dtor_infos, (queries).dtor_baseScores, (queries).dtor_pendingByQuery, (queries).dtor_pendingByDoc);
+        TsLimitQueriesRuntime._ILimitQueriesState _0_newState = TsLimitQueriesRuntime.LimitQueriesState.create(TsDocsRuntime.__default.AddDoc((queries).dtor_docs, ThunderDbStack.__default.GetScore(((docs).Select(BigInteger.Zero)).dtor_state), ((docs).Select(BigInteger.Zero)).dtor_id), (queries).dtor_queries, (queries).dtor_nextId, (queries).dtor_infos, (queries).dtor_baseScores, (queries).dtor_pendingByQuery, (queries).dtor_pendingByDoc);
+        TsLimitQueriesRuntime._ILimitQueriesState _in0 = _0_newState;
         Dafny.ISequence<ThunderDbStack._ISeedDoc> _in1 = (docs).Drop(BigInteger.One);
         queries = _in0;
         docs = _in1;
