@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TsLimitStreamSmoke")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+82fbc97df9621b3c79df7fd9d72b21d1a1e53edc")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ba42a539d8129a1ef489008269e7dd9ee5327942")]
 [assembly: System.Reflection.AssemblyProductAttribute("TsLimitStreamSmoke")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TsLimitStreamSmoke")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

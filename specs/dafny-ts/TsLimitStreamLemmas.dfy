@@ -55,4 +55,16 @@ module TsLimitStreamLemmas {
     ensures LimitQueriesConsistent(ResolveDeliveredDocs(queries, docs))
   {
   }
+
+  lemma RegisterDocsForQueryPreservesQueries(state: LimitStreamState, docs: seq<DocId>, queryId: QueryId)
+    ensures RegisterDocsForQuery(state, docs, queryId).queries == state.queries
+    decreases |docs|
+  {
+  }
+
+  lemma RegisterDocsForQueryPreservesStore(state: LimitStreamState, docs: seq<DocId>, queryId: QueryId)
+    ensures RegisterDocsForQuery(state, docs, queryId).store == state.store
+    decreases |docs|
+  {
+  }
 }

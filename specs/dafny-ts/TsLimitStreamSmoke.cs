@@ -29,6 +29,7 @@ module TsLimitStreamSmoke {
     expect 1 in state.queries.infos, ""expectation violation"";
     expect state.queries.infos[1].currentMatches == 2, ""expectation violation"";
     expect state.retrieval.pendingOrder == [1, 2], ""expectation violation"";
+    expect LimitStreamConsistent(state), ""expectation violation"";
     var retrieval := DrainRetrievalCycle(state);
     state := retrieval.state;
     expect retrieval.events == [RetrievalEvent([RetrievalDoc(1, DocState(10), [1]), RetrievalDoc(2, DocState(20), [1])])], ""expectation violation"";
@@ -76,9 +77,54 @@ module TsLimitStreamLemmas {
   {
   }
 
+  lemma SetQueriesKeepsStreamConsistency(state: LimitStreamState, queries: LimitQueriesState)
+    requires WorkerConsistent(state.retrieval)
+    requires LimitQueriesConsistent(queries)
+    ensures LimitStreamConsistent(SetQueries(state, queries))
+    decreases state, queries
+  {
+  }
+
+  lemma NotifyRetrievalResolvedKeepsQueryConsistency(state: LimitStreamState, docId: DocId)
+    requires LimitStreamConsistent(state)
+    ensures LimitQueriesConsistent(NotifyRetrievalResolved(state, docId).queries)
+    decreases state, docId
+  {
+  }
+
+  lemma /*{:_inductionTrigger SeedDocsQueries(queries, docs)}*/ /*{:_induction queries, docs}*/ SeedDocsQueriesKeepsConsistency(queries: LimitQueriesState, docs: seq<SeedDoc>)
+    requires LimitQueriesConsistent(queries)
+    ensures LimitQueriesConsistent(SeedDocsQueries(queries, docs))
+    decreases queries, docs
+  {
+  }
+
+  lemma /*{:_inductionTrigger HandleLostQueries(state, queries)}*/ /*{:_induction state, queries}*/ HandleLostQueriesKeepsQueryConsistency(state: LimitStreamState, queries: seq<QueryId>)
+    requires LimitQueriesConsistent(state.queries)
+    ensures LimitQueriesConsistent(HandleLostQueries(state, queries).queries)
+    decreases state, queries
+  {
+  }
+
+  lemma /*{:_inductionTrigger HandleOverflowQueries(state, queries)}*/ /*{:_induction state, queries}*/ HandleOverflowQueriesKeepsQueryConsistency(state: LimitStreamState, queries: seq<QueryId>)
+    requires LimitQueriesConsistent(state.queries)
+    ensures LimitQueriesConsistent(HandleOverflowQueries(state, queries).state.queries)
+    decreases state, queries
+  {
+  }
+
+  lemma /*{:_inductionTrigger ResolveDeliveredDocs(queries, docs)}*/ /*{:_induction queries, docs}*/ ResolveDeliveredDocsKeepsConsistency(queries: LimitQueriesState, docs: seq<RetrievalDoc>)
+    requires LimitQueriesConsistent(queries)
+    ensures LimitQueriesConsistent(ResolveDeliveredDocs(queries, docs))
+    decreases queries, docs
+  {
+  }
+
   import opened DocsIndexModel
 
   import opened ThunderDbStack
+
+  import opened TsLimitQueriesRuntime
 
   import opened TsLimitStreamRuntime
 
@@ -10496,6 +10542,8 @@ namespace TsLimitStreamSmoke {
         throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(22,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
       if (!((((_0_state).dtor_retrieval).dtor_pendingOrder).Equals(Dafny.Sequence<BigInteger>.FromElements(BigInteger.One, new BigInteger(2))))) {
         throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(23,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
+      if (!(TsLimitStreamRuntime.__default.LimitStreamConsistent(_0_state))) {
+        throw new Dafny.HaltException("specs/dafny-ts/TsLimitStreamSmoke.dfy(24,4): " + Dafny.Sequence<Dafny.Rune>.UnicodeFromString("expectation violation").ToVerbatimString(false));}
       TsLimitStreamRuntime._IStreamStep _3_retrieval;
       _3_retrieval = TsLimitStreamRuntime.__default.DrainRetrievalCycle(_0_state);
       _0_state = (_3_retrieval).dtor_state;
