@@ -1,0 +1,6 @@
+{
+    "files.exclude": {
+        "btree-pubsub": true,
+        "specs/dafny": true
+    }
+}

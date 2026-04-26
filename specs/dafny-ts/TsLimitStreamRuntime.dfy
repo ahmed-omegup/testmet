@@ -25,7 +25,9 @@ module TsLimitStreamRuntime {
     WorkerConsistent(state.retrieval)
   }
 
-  function SetQueries(state: LimitStreamState, queries: LimitQueriesState): LimitStreamState {
+  function SetQueries(state: LimitStreamState, queries: LimitQueriesState): LimitStreamState
+    ensures LimitQueriesConsistent(queries) && WorkerConsistent(state.retrieval) ==> LimitStreamConsistent(SetQueries(state, queries))
+  {
     LimitStreamState(state.store, queries, state.retrieval)
   }
 
@@ -43,7 +45,9 @@ module TsLimitStreamRuntime {
     else state
   }
 
-  function NotifyRetrievalResolved(state: LimitStreamState, docId: DocId): LimitStreamState {
+  function NotifyRetrievalResolved(state: LimitStreamState, docId: DocId): LimitStreamState
+    requires LimitQueriesConsistent(state.queries)
+  {
     LimitStreamState(state.store, ResolvePendingForDoc(state.queries, docId), ResolveDoc(state.retrieval, docId).state)
   }
 
@@ -63,6 +67,7 @@ module TsLimitStreamRuntime {
 
   function SeedDocsQueries(queries: LimitQueriesState, docs: seq<SeedDoc>): LimitQueriesState
     requires LimitQueriesConsistent(queries)
+    ensures LimitQueriesConsistent(SeedDocsQueries(queries, docs))
     decreases |docs|
   {
     if |docs| == 0 then queries
@@ -214,6 +219,8 @@ module TsLimitStreamRuntime {
   }
 
   function ResolveDeliveredDocs(queries: LimitQueriesState, docs: seq<RetrievalDoc>): LimitQueriesState
+    requires LimitQueriesConsistent(queries)
+    ensures LimitQueriesConsistent(ResolveDeliveredDocs(queries, docs))
     decreases |docs|
   {
     if |docs| == 0 then queries
