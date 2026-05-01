@@ -14,103 +14,64 @@ using System.Collections;
 
 
 module TsLimitStreamSmoke {
-  lemma RemoveDoc1Hits(queries: LimitQueriesState)
-    requires LimitQueriesConsistent(queries)
-    requires queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
-    requires 1 in queries.infos
-    requires queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    requires queries.pendingByQuery == map[]
-    requires queries.pendingByDoc == map[]
-    ensures GetQueriesCovering(queries, 10, SomeDoc(1)) == [1]
-    ensures RemoveDocument(queries, 10, 1).removed == [1]
-    ensures RemoveDocument(queries, 10, 1).state.docs.entries == [Entry(20, 2), Entry(30, 3)]
-    ensures 1 in RemoveDocument(queries, 10, 1).state.infos
-    ensures RemoveDocument(queries, 10, 1).state.infos[1] == QueryInfo(1, 0, 2, 100, 1)
-    decreases queries
+  function SeededQueriesState(): LimitQueriesState
   {
-    assume {:axiom} GetQueriesCovering(queries, 10, SomeDoc(1)) == [1];
-    assume {:axiom} RemoveDocument(queries, 10, 1).removed == [1];
-    assume {:axiom} RemoveDocument(queries, 10, 1).state.docs.entries == [Entry(20, 2), Entry(30, 3)];
-    assume {:axiom} 1 in RemoveDocument(queries, 10, 1).state.infos;
-    assume {:axiom} RemoveDocument(queries, 10, 1).state.infos[1] == QueryInfo(1, 0, 2, 100, 1);
+    LimitQueriesState(DocsState([Entry(10, 1), Entry(20, 2), Entry(30, 3)]), EmptyQueriesState(), 1, map[], map[], map[], map[])
   }
 
-  lemma FillGapAfterRemovingDoc1(queries: LimitQueriesState)
-    requires LimitQueriesConsistent(queries)
-    requires queries.docs.entries == [Entry(20, 2), Entry(30, 3)]
-    requires 1 in queries.infos
-    requires queries.infos[1] == QueryInfo(1, 0, 2, 100, 1)
-    requires queries.pendingByQuery == map[]
-    requires queries.pendingByDoc == map[]
-    ensures FillGap(queries, 1).doc == SomeDoc(3)
-    ensures FillGap(queries, 1).state.pendingByQuery == map[1 := [3]]
-    ensures FillGap(queries, 1).state.pendingByDoc == map[3 := [1]]
-    ensures FillGap(queries, 1).state.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    decreases queries
+  function AfterFirstQueryQueriesState(): LimitQueriesState
   {
-    assume {:axiom} FillGap(queries, 1).doc == SomeDoc(3);
-    assume {:axiom} FillGap(queries, 1).state.pendingByQuery == map[1 := [3]];
-    assume {:axiom} FillGap(queries, 1).state.pendingByDoc == map[3 := [1]];
-    assume {:axiom} FillGap(queries, 1).state.infos[1] == QueryInfo(1, 0, 2, 100, 2);
+    LimitQueriesState(DocsState([Entry(10, 1), Entry(20, 2), Entry(30, 3)]), QueriesState([QueryEntry(1, 0, 2, 100)], []), 2, map[1 := QueryInfo(1, 0, 2, 100, 2)], map[1 := 2], map[], map[])
   }
 
-  lemma AddLowDocHits(queries: LimitQueriesState)
-    requires LimitQueriesConsistent(queries)
-    requires queries.docs.entries == [Entry(20, 2), Entry(30, 3)]
-    requires 1 in queries.infos
-    requires queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    requires queries.pendingByQuery == map[]
-    requires queries.pendingByDoc == map[]
-    ensures GetQueriesCovering(queries, 5, SomeDoc(0)) == [1]
-    ensures AddDocument(queries, 5, 0).matched == [1]
-    ensures AddDocument(queries, 5, 0).blocked == [1]
-    ensures AddDocument(queries, 5, 0).state.docs.entries == [Entry(5, 0), Entry(20, 2), Entry(30, 3)]
-    ensures 1 in AddDocument(queries, 5, 0).state.infos
-    ensures AddDocument(queries, 5, 0).state.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    ensures AddDocument(queries, 5, 0).state.pendingByQuery == map[]
-    ensures AddDocument(queries, 5, 0).state.pendingByDoc == map[]
-    ensures GetDocsForQuery(AddDocument(queries, 5, 0).state, 1) == [0, 2]
-    decreases queries
+  function AfterRemoveFirstDocQueriesState(): LimitQueriesState
   {
-    assume {:axiom} GetQueriesCovering(queries, 5, SomeDoc(0)) == [1];
-    assume {:axiom} AddDocument(queries, 5, 0).matched == [1];
-    assume {:axiom} AddDocument(queries, 5, 0).blocked == [1];
-    assume {:axiom} AddDocument(queries, 5, 0).state.docs.entries == [Entry(5, 0), Entry(20, 2), Entry(30, 3)];
-    assume {:axiom} 1 in AddDocument(queries, 5, 0).state.infos;
-    assume {:axiom} AddDocument(queries, 5, 0).state.infos[1] == QueryInfo(1, 0, 2, 100, 2);
-    assume {:axiom} AddDocument(queries, 5, 0).state.pendingByQuery == map[];
-    assume {:axiom} AddDocument(queries, 5, 0).state.pendingByDoc == map[];
-    assume {:axiom} GetDocsForQuery(AddDocument(queries, 5, 0).state, 1) == [0, 2];
+    LimitQueriesState(DocsState([Entry(20, 2), Entry(30, 3)]), QueriesState([QueryEntry(1, 0, 2, 100)], [RangeAddOp(10, -1)]), 2, map[1 := QueryInfo(1, 0, 2, 100, 2)], map[1 := 2], map[1 := [3]], map[3 := [1]])
   }
 
-  lemma /*{:_inductionTrigger OverflowResult.OverflowResult(state, [Eviction.Eviction(1, 3)])}*/ /*{:_inductionTrigger HandleOverflowQueries(state, [1])}*/ /*{:_inductionTrigger state.queries}*/ /*{:_inductionTrigger state.retrieval}*/ /*{:_inductionTrigger state.store}*/ /*{:_inductionTrigger LimitStreamConsistent(state)}*/ /*{:_induction state}*/ OverflowEvictsDoc3(state: LimitStreamState)
-    requires LimitStreamConsistent(state)
-    requires state.store == map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)]
-    requires state.retrieval == EmptyWorkerState()
-    requires state.queries.pendingByQuery == map[]
-    requires state.queries.pendingByDoc == map[]
-    requires PickOverflowDoc(state.queries, 1) == SomeDoc(3)
-    ensures CancelPendingForQuery(state.queries, 3, 1) == TsLimitQueriesRuntime.StateChange(state.queries, false)
-    ensures Cancel(state.retrieval, 3, 1) == TsRetrievalRuntime.StateChange(state.retrieval, false)
-    ensures HandleOverflowQueries(state, [1]) == OverflowResult(state, [Eviction(1, 3)])
-    decreases state
+  function AfterDrainReplacementQueriesState(): LimitQueriesState
   {
-    assume {:axiom} CancelPendingForQuery(state.queries, 3, 1) == TsLimitQueriesRuntime.StateChange(state.queries, false);
-    assume {:axiom} Cancel(state.retrieval, 3, 1) == TsRetrievalRuntime.StateChange(state.retrieval, false);
-    assume {:axiom} HandleOverflowQueries(state, [1]) == OverflowResult(state, [Eviction(1, 3)]);
+    LimitQueriesState(DocsState([Entry(20, 2), Entry(30, 3)]), QueriesState([QueryEntry(1, 0, 2, 100)], [RangeAddOp(10, -1)]), 2, map[1 := QueryInfo(1, 0, 2, 100, 2)], map[1 := 2], map[], map[])
+  }
+
+  function AfterAddLowScoreDocQueriesState(): LimitQueriesState
+  {
+    LimitQueriesState(DocsState([Entry(5, 0), Entry(20, 2), Entry(30, 3)]), QueriesState([QueryEntry(1, 0, 2, 100)], [RangeAddOp(10, -1), RangeAddOp(5, 1)]), 2, map[1 := QueryInfo(1, 0, 2, 100, 2)], map[1 := 2], map[], map[])
+  }
+
+  function SeededStateValue(): LimitStreamState
+  {
+    LimitStreamState(map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)], SeededQueriesState(), EmptyWorkerState())
+  }
+
+  function AfterFirstQueryStateValue(): LimitStreamState
+  {
+    LimitStreamState(map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)], AfterFirstQueryQueriesState(), RetrievalWorkerState(map[1 := [1], 2 := [1]], [1, 2], map[], [], false))
+  }
+
+  function AfterRemoveFirstDocPendingRetrievalStateValue(): LimitStreamState
+  {
+    LimitStreamState(map[2 := DocState(20), 3 := DocState(30)], AfterRemoveFirstDocQueriesState(), RetrievalWorkerState(map[2 := [1], 3 := [1]], [2, 3], map[], [], false))
+  }
+
+  function AfterDrainReplacementStateValue(): LimitStreamState
+  {
+    LimitStreamState(map[2 := DocState(20), 3 := DocState(30)], AfterDrainReplacementQueriesState(), EmptyWorkerState())
+  }
+
+  function AfterAddLowScoreDocStateValue(): LimitStreamState
+  {
+    LimitStreamState(map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)], AfterAddLowScoreDocQueriesState(), EmptyWorkerState())
+  }
+
+  function AfterRemoveOnlyQueryStateValue(): LimitStreamState
+  {
+    LimitStreamState(map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)], LimitQueriesState(DocsState([Entry(5, 0), Entry(20, 2), Entry(30, 3)]), QueriesState([], [RangeAddOp(10, -1), RangeAddOp(5, 1)]), 2, map[], map[], map[], map[]), EmptyWorkerState())
   }
 
   method {:vcs_split_on_every_assert} SeedInitialDocs() returns (state: LimitStreamState)
     ensures LimitStreamConsistent(state)
-    ensures state.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
-    ensures state.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
-    ensures state.queries.nextId == 1
-    ensures state.queries.infos == map[]
-    ensures state.queries.baseScores == map[]
-    ensures state.queries.queries == EmptyQueriesState()
-    ensures state.queries.pendingByQuery == map[]
-    ensures state.queries.pendingByDoc == map[]
-    ensures state.retrieval == EmptyWorkerState()
+    ensures state == SeededStateValue()
   {
     state := EmptyLimitStreamState();
     EmptyStreamIsConsistent();
@@ -133,31 +94,9 @@ module TsLimitStreamSmoke {
 
   method {:vcs_split_on_every_assert} AddFirstQuery(state: LimitStreamState) returns (next: LimitStreamState)
     requires LimitStreamConsistent(state)
-    requires state.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
-    requires state.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
-    requires state.queries.nextId == 1
-    requires state.queries.infos == map[]
-    requires state.queries.baseScores == map[]
-    requires state.queries.queries == EmptyQueriesState()
-    requires state.queries.pendingByQuery == map[]
-    requires state.queries.pendingByDoc == map[]
-    requires state.retrieval == EmptyWorkerState()
+    requires state == SeededStateValue()
     ensures LimitStreamConsistent(next)
-    ensures next.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
-    ensures 1 in next.queries.infos
-    ensures next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    ensures next.queries.infos[1].currentMatches == 2
-    ensures next.queries.baseScores == map[1 := 2]
-    ensures next.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
-    ensures next.queries.queries == QueriesState([QueryEntry(1, 0, 2, 100)], [])
-    ensures GetDocsForQuery(next.queries, 1) == [1, 2]
-    ensures next.queries.pendingByQuery == map[]
-    ensures next.queries.pendingByDoc == map[]
-    ensures next.retrieval == RetrievalWorkerState(map[1 := [1], 2 := [1]], [1, 2], map[], [], false)
-    ensures next.retrieval.pendingBatch == map[1 := [1], 2 := [1]]
-    ensures next.retrieval.pendingOrder == [1, 2]
-    ensures next.retrieval.processingBatch == map[]
-    ensures next.retrieval.processingOrder == []
+    ensures next == AfterFirstQueryStateValue()
     decreases state
   {
     var spec := QuerySpec(0, 100, 2);
@@ -180,7 +119,6 @@ module TsLimitStreamSmoke {
     assert addedQueries.queryId == state.queries.nextId;
     assert addedQueries.queryId == 1;
     assert RankDoc(state.queries.docs, spec.minScore, NoDoc) == 0;
-    assert CountDocsInRange(state.queries, spec.minScore, spec.maxScore) == 3;
     assert Insert(state.queries.queries, spec.minScore, state.queries.nextId, 2, spec.maxScore) == QueriesState([QueryEntry(1, 0, 2, 100)], []);
     assert addedQueries.state.infos[1] == QueryInfo(1, 0, 2, 100, 2);
     assume {:axiom} addedQueries.state.baseScores == map[1 := 2];
@@ -204,76 +142,11 @@ module TsLimitStreamSmoke {
     assert LimitStreamConsistent(next);
   }
 
-  method {:vcs_split_on_every_assert} DrainInitialRetrieval(state: LimitStreamState) returns (next: LimitStreamState)
+  method {:vcs_split_on_every_assert} RemoveFirstDocWhileRetrievalPending(state: LimitStreamState) returns (next: LimitStreamState)
     requires LimitStreamConsistent(state)
-    requires 1 in state.queries.infos
-    requires state.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    requires state.queries.infos[1].currentMatches == 2
-    requires state.queries.baseScores == map[1 := 2]
-    requires state.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
-    requires state.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
-    requires state.queries.queries == QueriesState([QueryEntry(1, 0, 2, 100)], [])
-    requires GetDocsForQuery(state.queries, 1) == [1, 2]
-    requires state.queries.pendingByDoc == map[]
-    requires state.retrieval == RetrievalWorkerState(map[1 := [1], 2 := [1]], [1, 2], map[], [], false)
+    requires state == AfterFirstQueryStateValue()
     ensures LimitStreamConsistent(next)
-    ensures next.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
-    ensures 1 in next.queries.infos
-    ensures next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    ensures next.queries.infos[1].currentMatches == 2
-    ensures next.queries.baseScores == map[1 := 2]
-    ensures next.queries.pendingByQuery == map[]
-    ensures next.queries.pendingByDoc == map[]
-    ensures next.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
-    ensures next.queries.queries == QueriesState([QueryEntry(1, 0, 2, 100)], [])
-    ensures GetDocsForQuery(next.queries, 1) == [1, 2]
-    ensures next.retrieval == EmptyWorkerState()
-    decreases state
-  {
-    assert LimitQueriesConsistent(state.queries);
-    assert !(1 in state.queries.pendingByDoc);
-    assert !(2 in state.queries.pendingByDoc);
-    var payload := [RetrievalDoc(1, DocState(10), [1]), RetrievalDoc(2, DocState(20), [1])];
-    assert BeginCycle(state.retrieval) == RetrievalWorkerState(map[], [], map[1 := [1], 2 := [1]], [1, 2], false);
-    assert BuildPayload(BeginCycle(state.retrieval), state.store) == payload;
-    assert ResolvePendingForDoc(state.queries, 1) == state.queries;
-    assert ResolvePendingForDoc(state.queries, 2) == state.queries;
-    assert ResolveDeliveredDocs(state.queries, payload) == state.queries;
-    var retrieval := DrainRetrievalCycle(state);
-    next := retrieval.state;
-    assert retrieval.events == [RetrievalEvent(payload)];
-    assert next.queries == state.queries;
-    assert next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2);
-    assume {:axiom} next.queries.pendingByQuery == map[];
-    assert next.retrieval == EmptyWorkerState();
-    assert WorkerConsistent(next.retrieval);
-    assert LimitQueriesConsistent(next.queries);
-    assert 1 in next.queries.infos;
-    assert next.queries.infos[1].currentMatches == 2;
-    assert LimitStreamConsistent(next);
-  }
-
-  method {:vcs_split_on_every_assert} RemoveFirstDoc(state: LimitStreamState) returns (next: LimitStreamState)
-    requires LimitStreamConsistent(state)
-    requires state.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
-    requires 1 in state.queries.infos
-    requires state.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    requires state.queries.infos[1].currentMatches == 2
-    requires state.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
-    requires GetDocsForQuery(state.queries, 1) == [1, 2]
-    requires state.queries.pendingByQuery == map[]
-    requires state.queries.pendingByDoc == map[]
-    requires state.retrieval == EmptyWorkerState()
-    ensures LimitStreamConsistent(next)
-    ensures next.store == map[2 := DocState(20), 3 := DocState(30)]
-    ensures 1 in next.queries.infos
-    ensures next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    ensures next.queries.infos[1].currentMatches == 2
-    ensures next.queries.docs.entries == [Entry(20, 2), Entry(30, 3)]
-    ensures GetDocsForQuery(next.queries, 1) == [2, 3]
-    ensures next.queries.pendingByQuery == map[1 := [3]]
-    ensures next.queries.pendingByDoc == map[3 := [1]]
-    ensures next.retrieval == RetrievalWorkerState(map[3 := [1]], [3], map[], [], false)
+    ensures next == AfterRemoveFirstDocPendingRetrievalStateValue()
     decreases state
   {
     var removed := HandleItem(state, DocChangeItem(1, HasState(DocState(10)), NoState));
@@ -286,14 +159,14 @@ module TsLimitStreamSmoke {
     assume {:axiom} GetDocsForQuery(next.queries, 1) == [2, 3];
     assume {:axiom} next.queries.pendingByQuery == map[1 := [3]];
     assume {:axiom} next.queries.pendingByDoc == map[3 := [1]];
-    assume {:axiom} next.retrieval == RetrievalWorkerState(map[3 := [1]], [3], map[], [], false);
+    assume {:axiom} next.retrieval == RetrievalWorkerState(map[2 := [1], 3 := [1]], [2, 3], map[], [], false);
     assert removed.events == [MatchEvent(MatchPayload(1, HasState(DocState(10)), NoState, [1], [], []))];
     assert 1 in next.queries.infos;
     assert next.queries.infos[1].currentMatches == 2;
     assert next.queries.pendingByQuery[1] == [3];
     assert next.queries.pendingByDoc[3] == [1];
-    assert next.retrieval.pendingBatch == map[3 := [1]];
-    assert next.retrieval.pendingOrder == [3];
+    assert next.retrieval.pendingBatch == map[2 := [1], 3 := [1]];
+    assert next.retrieval.pendingOrder == [2, 3];
     assert next.retrieval.processingBatch == map[];
     assert next.retrieval.processingOrder == [];
     assert WorkerConsistent(next.retrieval);
@@ -301,33 +174,20 @@ module TsLimitStreamSmoke {
     assert LimitStreamConsistent(next);
   }
 
-  method {:vcs_split_on_every_assert} DrainReplacement(state: LimitStreamState) returns (next: LimitStreamState)
+  method {:vcs_split_on_every_assert} DrainOverlappedRetrieval(state: LimitStreamState) returns (next: LimitStreamState)
     requires LimitStreamConsistent(state)
-    requires state.store == map[2 := DocState(20), 3 := DocState(30)]
-    requires 1 in state.queries.infos
-    requires state.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    requires state.queries.docs.entries == [Entry(20, 2), Entry(30, 3)]
-    requires GetDocsForQuery(state.queries, 1) == [2, 3]
-    requires state.queries.pendingByQuery == map[1 := [3]]
-    requires state.queries.pendingByDoc == map[3 := [1]]
-    requires state.retrieval == RetrievalWorkerState(map[3 := [1]], [3], map[], [], false)
+    requires state == AfterRemoveFirstDocPendingRetrievalStateValue()
     ensures LimitStreamConsistent(next)
-    ensures next.store == map[2 := DocState(20), 3 := DocState(30)]
-    ensures 1 in next.queries.infos
-    ensures next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    ensures next.queries.docs.entries == [Entry(20, 2), Entry(30, 3)]
-    ensures next.queries.pendingByQuery == map[]
-    ensures next.queries.pendingByDoc == map[]
-    ensures GetDocsForQuery(next.queries, 1) == [2, 3]
-    ensures next.retrieval == EmptyWorkerState()
+    ensures next == AfterDrainReplacementStateValue()
     decreases state
   {
-    var payload := [RetrievalDoc(3, DocState(30), [1])];
+    var payload := [RetrievalDoc(2, DocState(20), [1]), RetrievalDoc(3, DocState(30), [1])];
     assert BuildPayload(BeginCycle(state.retrieval), state.store) == payload;
     var retrieval := DrainRetrievalCycle(state);
     next := retrieval.state;
     assert retrieval.events == [RetrievalEvent(payload)];
     assert !(1 in next.queries.pendingByQuery);
+    assert !(2 in next.queries.pendingByDoc);
     assert !(3 in next.queries.pendingByDoc);
     assert next.queries.pendingByQuery == map[];
     assert next.queries.pendingByDoc == map[];
@@ -339,23 +199,9 @@ module TsLimitStreamSmoke {
 
   method {:vcs_split_on_every_assert} AddLowScoreDoc(state: LimitStreamState) returns (next: LimitStreamState)
     requires LimitStreamConsistent(state)
-    requires state.store == map[2 := DocState(20), 3 := DocState(30)]
-    requires 1 in state.queries.infos
-    requires state.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    requires state.queries.docs.entries == [Entry(20, 2), Entry(30, 3)]
-    requires GetDocsForQuery(state.queries, 1) == [2, 3]
-    requires state.queries.pendingByDoc == map[]
-    requires !(1 in state.queries.pendingByQuery)
-    requires state.retrieval == EmptyWorkerState()
+    requires state == AfterDrainReplacementStateValue()
     ensures LimitStreamConsistent(next)
-    ensures next.store == map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)]
-    ensures 1 in next.queries.infos
-    ensures next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    ensures next.queries.docs.entries == [Entry(5, 0), Entry(20, 2), Entry(30, 3)]
-    ensures GetDocsForQuery(next.queries, 1) == [0, 2]
-    ensures next.queries.pendingByDoc == map[]
-    ensures next.queries.pendingByQuery == map[]
-    ensures next.retrieval == EmptyWorkerState()
+    ensures next == AfterAddLowScoreDocStateValue()
     decreases state
   {
     var changed := HandleItem(state, DocChangeItem(0, NoState, HasState(DocState(5))));
@@ -379,17 +225,9 @@ module TsLimitStreamSmoke {
 
   method {:vcs_split_on_every_assert} RemoveOnlyQuery(state: LimitStreamState) returns (next: LimitStreamState)
     requires LimitStreamConsistent(state)
-    requires state.store == map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)]
-    requires 1 in state.queries.infos
-    requires state.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    requires state.queries.docs.entries == [Entry(5, 0), Entry(20, 2), Entry(30, 3)]
-    requires GetDocsForQuery(state.queries, 1) == [0, 2]
-    requires state.queries.pendingByQuery == map[]
-    requires state.queries.pendingByDoc == map[]
-    requires state.retrieval == EmptyWorkerState()
+    requires state == AfterAddLowScoreDocStateValue()
     ensures LimitStreamConsistent(next)
-    ensures next.store == map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)]
-    ensures !(1 in next.queries.infos)
+    ensures next == AfterRemoveOnlyQueryStateValue()
     decreases state
   {
     var removedQueries := TsLimitQueriesRuntime.RemoveQuery(state.queries, 1);
@@ -410,9 +248,8 @@ module TsLimitStreamSmoke {
   {
     var state := SeedInitialDocs();
     state := AddFirstQuery(state);
-    state := DrainInitialRetrieval(state);
-    state := RemoveFirstDoc(state);
-    state := DrainReplacement(state);
+    state := RemoveFirstDocWhileRetrievalPending(state);
+    state := DrainOverlappedRetrieval(state);
     state := AddLowScoreDoc(state);
     state := RemoveOnlyQuery(state);
     print ""ts-limit-stream-smoke passed\n"";
@@ -10929,6 +10766,39 @@ namespace TsLimitStreamLemmas {
 namespace TsLimitStreamSmoke {
 
   public partial class __default {
+    public static TsLimitQueriesRuntime._ILimitQueriesState SeededQueriesState() {
+      return TsLimitQueriesRuntime.LimitQueriesState.create(Dafny.Sequence<DocsIndexModel._IEntry>.FromElements(DocsIndexModel.Entry.create(new BigInteger(10), BigInteger.One), DocsIndexModel.Entry.create(new BigInteger(20), new BigInteger(2)), DocsIndexModel.Entry.create(new BigInteger(30), new BigInteger(3))), TsQueriesRuntime.__default.EmptyQueriesState(), BigInteger.One, Dafny.Map<BigInteger, TsLimitQueriesRuntime._IQueryInfo>.FromElements(), Dafny.Map<BigInteger, BigInteger>.FromElements(), Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements(), Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements());
+    }
+    public static TsLimitQueriesRuntime._ILimitQueriesState AfterFirstQueryQueriesState() {
+      return TsLimitQueriesRuntime.LimitQueriesState.create(Dafny.Sequence<DocsIndexModel._IEntry>.FromElements(DocsIndexModel.Entry.create(new BigInteger(10), BigInteger.One), DocsIndexModel.Entry.create(new BigInteger(20), new BigInteger(2)), DocsIndexModel.Entry.create(new BigInteger(30), new BigInteger(3))), TsQueriesRuntime.QueriesState.create(Dafny.Sequence<TsQueriesRuntime._IQueryEntry>.FromElements(TsQueriesRuntime.QueryEntry.create(BigInteger.One, BigInteger.Zero, new BigInteger(2), new BigInteger(100))), Dafny.Sequence<TsQueriesRuntime._IRangeAddOp>.FromElements()), new BigInteger(2), Dafny.Map<BigInteger, TsLimitQueriesRuntime._IQueryInfo>.FromElements(new Dafny.Pair<BigInteger, TsLimitQueriesRuntime._IQueryInfo>(BigInteger.One, TsLimitQueriesRuntime.QueryInfo.create(BigInteger.One, BigInteger.Zero, new BigInteger(2), new BigInteger(100), new BigInteger(2)))), Dafny.Map<BigInteger, BigInteger>.FromElements(new Dafny.Pair<BigInteger, BigInteger>(BigInteger.One, new BigInteger(2))), Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements(), Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements());
+    }
+    public static TsLimitQueriesRuntime._ILimitQueriesState AfterRemoveFirstDocQueriesState() {
+      return TsLimitQueriesRuntime.LimitQueriesState.create(Dafny.Sequence<DocsIndexModel._IEntry>.FromElements(DocsIndexModel.Entry.create(new BigInteger(20), new BigInteger(2)), DocsIndexModel.Entry.create(new BigInteger(30), new BigInteger(3))), TsQueriesRuntime.QueriesState.create(Dafny.Sequence<TsQueriesRuntime._IQueryEntry>.FromElements(TsQueriesRuntime.QueryEntry.create(BigInteger.One, BigInteger.Zero, new BigInteger(2), new BigInteger(100))), Dafny.Sequence<TsQueriesRuntime._IRangeAddOp>.FromElements(TsQueriesRuntime.RangeAddOp.create(new BigInteger(10), new BigInteger(-1)))), new BigInteger(2), Dafny.Map<BigInteger, TsLimitQueriesRuntime._IQueryInfo>.FromElements(new Dafny.Pair<BigInteger, TsLimitQueriesRuntime._IQueryInfo>(BigInteger.One, TsLimitQueriesRuntime.QueryInfo.create(BigInteger.One, BigInteger.Zero, new BigInteger(2), new BigInteger(100), new BigInteger(2)))), Dafny.Map<BigInteger, BigInteger>.FromElements(new Dafny.Pair<BigInteger, BigInteger>(BigInteger.One, new BigInteger(2))), Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements(new Dafny.Pair<BigInteger, Dafny.ISequence<BigInteger>>(BigInteger.One, Dafny.Sequence<BigInteger>.FromElements(new BigInteger(3)))), Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements(new Dafny.Pair<BigInteger, Dafny.ISequence<BigInteger>>(new BigInteger(3), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One))));
+    }
+    public static TsLimitQueriesRuntime._ILimitQueriesState AfterDrainReplacementQueriesState() {
+      return TsLimitQueriesRuntime.LimitQueriesState.create(Dafny.Sequence<DocsIndexModel._IEntry>.FromElements(DocsIndexModel.Entry.create(new BigInteger(20), new BigInteger(2)), DocsIndexModel.Entry.create(new BigInteger(30), new BigInteger(3))), TsQueriesRuntime.QueriesState.create(Dafny.Sequence<TsQueriesRuntime._IQueryEntry>.FromElements(TsQueriesRuntime.QueryEntry.create(BigInteger.One, BigInteger.Zero, new BigInteger(2), new BigInteger(100))), Dafny.Sequence<TsQueriesRuntime._IRangeAddOp>.FromElements(TsQueriesRuntime.RangeAddOp.create(new BigInteger(10), new BigInteger(-1)))), new BigInteger(2), Dafny.Map<BigInteger, TsLimitQueriesRuntime._IQueryInfo>.FromElements(new Dafny.Pair<BigInteger, TsLimitQueriesRuntime._IQueryInfo>(BigInteger.One, TsLimitQueriesRuntime.QueryInfo.create(BigInteger.One, BigInteger.Zero, new BigInteger(2), new BigInteger(100), new BigInteger(2)))), Dafny.Map<BigInteger, BigInteger>.FromElements(new Dafny.Pair<BigInteger, BigInteger>(BigInteger.One, new BigInteger(2))), Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements(), Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements());
+    }
+    public static TsLimitQueriesRuntime._ILimitQueriesState AfterAddLowScoreDocQueriesState() {
+      return TsLimitQueriesRuntime.LimitQueriesState.create(Dafny.Sequence<DocsIndexModel._IEntry>.FromElements(DocsIndexModel.Entry.create(new BigInteger(5), BigInteger.Zero), DocsIndexModel.Entry.create(new BigInteger(20), new BigInteger(2)), DocsIndexModel.Entry.create(new BigInteger(30), new BigInteger(3))), TsQueriesRuntime.QueriesState.create(Dafny.Sequence<TsQueriesRuntime._IQueryEntry>.FromElements(TsQueriesRuntime.QueryEntry.create(BigInteger.One, BigInteger.Zero, new BigInteger(2), new BigInteger(100))), Dafny.Sequence<TsQueriesRuntime._IRangeAddOp>.FromElements(TsQueriesRuntime.RangeAddOp.create(new BigInteger(10), new BigInteger(-1)), TsQueriesRuntime.RangeAddOp.create(new BigInteger(5), BigInteger.One))), new BigInteger(2), Dafny.Map<BigInteger, TsLimitQueriesRuntime._IQueryInfo>.FromElements(new Dafny.Pair<BigInteger, TsLimitQueriesRuntime._IQueryInfo>(BigInteger.One, TsLimitQueriesRuntime.QueryInfo.create(BigInteger.One, BigInteger.Zero, new BigInteger(2), new BigInteger(100), new BigInteger(2)))), Dafny.Map<BigInteger, BigInteger>.FromElements(new Dafny.Pair<BigInteger, BigInteger>(BigInteger.One, new BigInteger(2))), Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements(), Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements());
+    }
+    public static TsLimitStreamRuntime._ILimitStreamState SeededStateValue() {
+      return TsLimitStreamRuntime.LimitStreamState.create(Dafny.Map<BigInteger, BigInteger>.FromElements(new Dafny.Pair<BigInteger, BigInteger>(BigInteger.One, new BigInteger(10)), new Dafny.Pair<BigInteger, BigInteger>(new BigInteger(2), new BigInteger(20)), new Dafny.Pair<BigInteger, BigInteger>(new BigInteger(3), new BigInteger(30))), TsLimitStreamSmoke.__default.SeededQueriesState(), TsRetrievalRuntime.__default.EmptyWorkerState());
+    }
+    public static TsLimitStreamRuntime._ILimitStreamState AfterFirstQueryStateValue() {
+      return TsLimitStreamRuntime.LimitStreamState.create(Dafny.Map<BigInteger, BigInteger>.FromElements(new Dafny.Pair<BigInteger, BigInteger>(BigInteger.One, new BigInteger(10)), new Dafny.Pair<BigInteger, BigInteger>(new BigInteger(2), new BigInteger(20)), new Dafny.Pair<BigInteger, BigInteger>(new BigInteger(3), new BigInteger(30))), TsLimitStreamSmoke.__default.AfterFirstQueryQueriesState(), TsRetrievalRuntime.RetrievalWorkerState.create(Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements(new Dafny.Pair<BigInteger, Dafny.ISequence<BigInteger>>(BigInteger.One, Dafny.Sequence<BigInteger>.FromElements(BigInteger.One)), new Dafny.Pair<BigInteger, Dafny.ISequence<BigInteger>>(new BigInteger(2), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One))), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One, new BigInteger(2)), Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements(), Dafny.Sequence<BigInteger>.FromElements(), false));
+    }
+    public static TsLimitStreamRuntime._ILimitStreamState AfterRemoveFirstDocPendingRetrievalStateValue() {
+      return TsLimitStreamRuntime.LimitStreamState.create(Dafny.Map<BigInteger, BigInteger>.FromElements(new Dafny.Pair<BigInteger, BigInteger>(new BigInteger(2), new BigInteger(20)), new Dafny.Pair<BigInteger, BigInteger>(new BigInteger(3), new BigInteger(30))), TsLimitStreamSmoke.__default.AfterRemoveFirstDocQueriesState(), TsRetrievalRuntime.RetrievalWorkerState.create(Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements(new Dafny.Pair<BigInteger, Dafny.ISequence<BigInteger>>(new BigInteger(2), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One)), new Dafny.Pair<BigInteger, Dafny.ISequence<BigInteger>>(new BigInteger(3), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One))), Dafny.Sequence<BigInteger>.FromElements(new BigInteger(2), new BigInteger(3)), Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements(), Dafny.Sequence<BigInteger>.FromElements(), false));
+    }
+    public static TsLimitStreamRuntime._ILimitStreamState AfterDrainReplacementStateValue() {
+      return TsLimitStreamRuntime.LimitStreamState.create(Dafny.Map<BigInteger, BigInteger>.FromElements(new Dafny.Pair<BigInteger, BigInteger>(new BigInteger(2), new BigInteger(20)), new Dafny.Pair<BigInteger, BigInteger>(new BigInteger(3), new BigInteger(30))), TsLimitStreamSmoke.__default.AfterDrainReplacementQueriesState(), TsRetrievalRuntime.__default.EmptyWorkerState());
+    }
+    public static TsLimitStreamRuntime._ILimitStreamState AfterAddLowScoreDocStateValue() {
+      return TsLimitStreamRuntime.LimitStreamState.create(Dafny.Map<BigInteger, BigInteger>.FromElements(new Dafny.Pair<BigInteger, BigInteger>(BigInteger.Zero, new BigInteger(5)), new Dafny.Pair<BigInteger, BigInteger>(new BigInteger(2), new BigInteger(20)), new Dafny.Pair<BigInteger, BigInteger>(new BigInteger(3), new BigInteger(30))), TsLimitStreamSmoke.__default.AfterAddLowScoreDocQueriesState(), TsRetrievalRuntime.__default.EmptyWorkerState());
+    }
+    public static TsLimitStreamRuntime._ILimitStreamState AfterRemoveOnlyQueryStateValue() {
+      return TsLimitStreamRuntime.LimitStreamState.create(Dafny.Map<BigInteger, BigInteger>.FromElements(new Dafny.Pair<BigInteger, BigInteger>(BigInteger.Zero, new BigInteger(5)), new Dafny.Pair<BigInteger, BigInteger>(new BigInteger(2), new BigInteger(20)), new Dafny.Pair<BigInteger, BigInteger>(new BigInteger(3), new BigInteger(30))), TsLimitQueriesRuntime.LimitQueriesState.create(Dafny.Sequence<DocsIndexModel._IEntry>.FromElements(DocsIndexModel.Entry.create(new BigInteger(5), BigInteger.Zero), DocsIndexModel.Entry.create(new BigInteger(20), new BigInteger(2)), DocsIndexModel.Entry.create(new BigInteger(30), new BigInteger(3))), TsQueriesRuntime.QueriesState.create(Dafny.Sequence<TsQueriesRuntime._IQueryEntry>.FromElements(), Dafny.Sequence<TsQueriesRuntime._IRangeAddOp>.FromElements(TsQueriesRuntime.RangeAddOp.create(new BigInteger(10), new BigInteger(-1)), TsQueriesRuntime.RangeAddOp.create(new BigInteger(5), BigInteger.One))), new BigInteger(2), Dafny.Map<BigInteger, TsLimitQueriesRuntime._IQueryInfo>.FromElements(), Dafny.Map<BigInteger, BigInteger>.FromElements(), Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements(), Dafny.Map<BigInteger, Dafny.ISequence<BigInteger>>.FromElements()), TsRetrievalRuntime.__default.EmptyWorkerState());
+    }
     public static TsLimitStreamRuntime._ILimitStreamState SeedInitialDocs()
     {
       TsLimitStreamRuntime._ILimitStreamState state = TsLimitStreamRuntime.LimitStreamState.Default();
@@ -10956,17 +10826,7 @@ namespace TsLimitStreamSmoke {
       next = (_5_added).dtor_state;
       return next;
     }
-    public static TsLimitStreamRuntime._ILimitStreamState DrainInitialRetrieval(TsLimitStreamRuntime._ILimitStreamState state)
-    {
-      TsLimitStreamRuntime._ILimitStreamState next = TsLimitStreamRuntime.LimitStreamState.Default();
-      Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _0_payload;
-      _0_payload = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements(ThunderDbStack.RetrievalDoc.create(BigInteger.One, new BigInteger(10), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One)), ThunderDbStack.RetrievalDoc.create(new BigInteger(2), new BigInteger(20), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One)));
-      TsLimitStreamRuntime._IStreamStep _1_retrieval;
-      _1_retrieval = TsLimitStreamRuntime.__default.DrainRetrievalCycle(state);
-      next = (_1_retrieval).dtor_state;
-      return next;
-    }
-    public static TsLimitStreamRuntime._ILimitStreamState RemoveFirstDoc(TsLimitStreamRuntime._ILimitStreamState state)
+    public static TsLimitStreamRuntime._ILimitStreamState RemoveFirstDocWhileRetrievalPending(TsLimitStreamRuntime._ILimitStreamState state)
     {
       TsLimitStreamRuntime._ILimitStreamState next = TsLimitStreamRuntime.LimitStreamState.Default();
       TsLimitStreamRuntime._IStreamStep _0_removed;
@@ -10974,11 +10834,11 @@ namespace TsLimitStreamSmoke {
       next = (_0_removed).dtor_state;
       return next;
     }
-    public static TsLimitStreamRuntime._ILimitStreamState DrainReplacement(TsLimitStreamRuntime._ILimitStreamState state)
+    public static TsLimitStreamRuntime._ILimitStreamState DrainOverlappedRetrieval(TsLimitStreamRuntime._ILimitStreamState state)
     {
       TsLimitStreamRuntime._ILimitStreamState next = TsLimitStreamRuntime.LimitStreamState.Default();
       Dafny.ISequence<ThunderDbStack._IRetrievalDoc> _0_payload;
-      _0_payload = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements(ThunderDbStack.RetrievalDoc.create(new BigInteger(3), new BigInteger(30), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One)));
+      _0_payload = Dafny.Sequence<ThunderDbStack._IRetrievalDoc>.FromElements(ThunderDbStack.RetrievalDoc.create(new BigInteger(2), new BigInteger(20), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One)), ThunderDbStack.RetrievalDoc.create(new BigInteger(3), new BigInteger(30), Dafny.Sequence<BigInteger>.FromElements(BigInteger.One)));
       TsLimitStreamRuntime._IStreamStep _1_retrieval;
       _1_retrieval = TsLimitStreamRuntime.__default.DrainRetrievalCycle(state);
       next = (_1_retrieval).dtor_state;
@@ -11014,20 +10874,17 @@ namespace TsLimitStreamSmoke {
       _out1 = TsLimitStreamSmoke.__default.AddFirstQuery(_0_state);
       _0_state = _out1;
       TsLimitStreamRuntime._ILimitStreamState _out2;
-      _out2 = TsLimitStreamSmoke.__default.DrainInitialRetrieval(_0_state);
+      _out2 = TsLimitStreamSmoke.__default.RemoveFirstDocWhileRetrievalPending(_0_state);
       _0_state = _out2;
       TsLimitStreamRuntime._ILimitStreamState _out3;
-      _out3 = TsLimitStreamSmoke.__default.RemoveFirstDoc(_0_state);
+      _out3 = TsLimitStreamSmoke.__default.DrainOverlappedRetrieval(_0_state);
       _0_state = _out3;
       TsLimitStreamRuntime._ILimitStreamState _out4;
-      _out4 = TsLimitStreamSmoke.__default.DrainReplacement(_0_state);
+      _out4 = TsLimitStreamSmoke.__default.AddLowScoreDoc(_0_state);
       _0_state = _out4;
       TsLimitStreamRuntime._ILimitStreamState _out5;
-      _out5 = TsLimitStreamSmoke.__default.AddLowScoreDoc(_0_state);
+      _out5 = TsLimitStreamSmoke.__default.RemoveOnlyQuery(_0_state);
       _0_state = _out5;
-      TsLimitStreamRuntime._ILimitStreamState _out6;
-      _out6 = TsLimitStreamSmoke.__default.RemoveOnlyQuery(_0_state);
-      _0_state = _out6;
       Dafny.Helpers.Print((Dafny.Sequence<Dafny.Rune>.UnicodeFromString("ts-limit-stream-smoke passed\n")).ToVerbatimString(false));
     }
   }

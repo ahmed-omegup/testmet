@@ -12,17 +12,113 @@ module TsLimitStreamSmoke {
   import opened TsQueriesRuntime
   import opened TsRetrievalRuntime
 
+  function SeededQueriesState(): LimitQueriesState {
+    LimitQueriesState(
+      DocsState([Entry(10, 1), Entry(20, 2), Entry(30, 3)]),
+      EmptyQueriesState(),
+      1,
+      map[],
+      map[],
+      map[],
+      map[])
+  }
+
+  function AfterFirstQueryQueriesState(): LimitQueriesState {
+    LimitQueriesState(
+      DocsState([Entry(10, 1), Entry(20, 2), Entry(30, 3)]),
+      QueriesState([QueryEntry(1, 0, 2, 100)], []),
+      2,
+      map[1 := QueryInfo(1, 0, 2, 100, 2)],
+      map[1 := 2],
+      map[],
+      map[])
+  }
+
+  function AfterRemoveFirstDocQueriesState(): LimitQueriesState {
+    LimitQueriesState(
+      DocsState([Entry(20, 2), Entry(30, 3)]),
+      QueriesState([QueryEntry(1, 0, 2, 100)], [RangeAddOp(10, -1)]),
+      2,
+      map[1 := QueryInfo(1, 0, 2, 100, 2)],
+      map[1 := 2],
+      map[1 := [3]],
+      map[3 := [1]])
+  }
+
+  function AfterDrainReplacementQueriesState(): LimitQueriesState {
+    LimitQueriesState(
+      DocsState([Entry(20, 2), Entry(30, 3)]),
+      QueriesState([QueryEntry(1, 0, 2, 100)], [RangeAddOp(10, -1)]),
+      2,
+      map[1 := QueryInfo(1, 0, 2, 100, 2)],
+      map[1 := 2],
+      map[],
+      map[])
+  }
+
+  function AfterAddLowScoreDocQueriesState(): LimitQueriesState {
+    LimitQueriesState(
+      DocsState([Entry(5, 0), Entry(20, 2), Entry(30, 3)]),
+      QueriesState([QueryEntry(1, 0, 2, 100)], [RangeAddOp(10, -1), RangeAddOp(5, 1)]),
+      2,
+      map[1 := QueryInfo(1, 0, 2, 100, 2)],
+      map[1 := 2],
+      map[],
+      map[])
+  }
+
+  function SeededStateValue(): LimitStreamState {
+    LimitStreamState(
+      map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)],
+      SeededQueriesState(),
+      EmptyWorkerState())
+  }
+
+  function AfterFirstQueryStateValue(): LimitStreamState {
+    LimitStreamState(
+      map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)],
+      AfterFirstQueryQueriesState(),
+      RetrievalWorkerState(map[1 := [1], 2 := [1]], [1, 2], map[], [], false))
+  }
+
+  function AfterRemoveFirstDocPendingRetrievalStateValue(): LimitStreamState {
+    LimitStreamState(
+      map[2 := DocState(20), 3 := DocState(30)],
+      AfterRemoveFirstDocQueriesState(),
+      RetrievalWorkerState(map[2 := [1], 3 := [1]], [2, 3], map[], [], false))
+  }
+
+  function AfterDrainReplacementStateValue(): LimitStreamState {
+    LimitStreamState(
+      map[2 := DocState(20), 3 := DocState(30)],
+      AfterDrainReplacementQueriesState(),
+      EmptyWorkerState())
+  }
+
+  function AfterAddLowScoreDocStateValue(): LimitStreamState {
+    LimitStreamState(
+      map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)],
+      AfterAddLowScoreDocQueriesState(),
+      EmptyWorkerState())
+  }
+
+  function AfterRemoveOnlyQueryStateValue(): LimitStreamState {
+    LimitStreamState(
+      map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)],
+      LimitQueriesState(
+        DocsState([Entry(5, 0), Entry(20, 2), Entry(30, 3)]),
+        QueriesState([], [RangeAddOp(10, -1), RangeAddOp(5, 1)]),
+        2,
+        map[],
+        map[],
+        map[],
+        map[]),
+      EmptyWorkerState())
+  }
+
   method {:vcs_split_on_every_assert} SeedInitialDocs() returns (state: LimitStreamState)
     ensures LimitStreamConsistent(state)
-    ensures state.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
-    ensures state.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
-    ensures state.queries.nextId == 1
-    ensures state.queries.infos == map[]
-    ensures state.queries.baseScores == map[]
-    ensures state.queries.queries == EmptyQueriesState()
-    ensures state.queries.pendingByQuery == map[]
-    ensures state.queries.pendingByDoc == map[]
-    ensures state.retrieval == EmptyWorkerState()
+    ensures state == SeededStateValue()
   {
     state := EmptyLimitStreamState();
     EmptyStreamIsConsistent();
@@ -46,31 +142,9 @@ module TsLimitStreamSmoke {
 
   method {:vcs_split_on_every_assert} AddFirstQuery(state: LimitStreamState) returns (next: LimitStreamState)
     requires LimitStreamConsistent(state)
-    requires state.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
-    requires state.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
-    requires state.queries.nextId == 1
-    requires state.queries.infos == map[]
-    requires state.queries.baseScores == map[]
-    requires state.queries.queries == EmptyQueriesState()
-    requires state.queries.pendingByQuery == map[]
-    requires state.queries.pendingByDoc == map[]
-    requires state.retrieval == EmptyWorkerState()
+    requires state == SeededStateValue()
     ensures LimitStreamConsistent(next)
-    ensures next.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
-    ensures 1 in next.queries.infos
-    ensures next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    ensures next.queries.infos[1].currentMatches == 2
-    ensures next.queries.baseScores == map[1 := 2]
-    ensures next.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
-    ensures next.queries.queries == QueriesState([QueryEntry(1, 0, 2, 100)], [])
-    ensures GetDocsForQuery(next.queries, 1) == [1, 2]
-    ensures next.queries.pendingByQuery == map[]
-    ensures next.queries.pendingByDoc == map[]
-    ensures next.retrieval == RetrievalWorkerState(map[1 := [1], 2 := [1]], [1, 2], map[], [], false)
-    ensures next.retrieval.pendingBatch == map[1 := [1], 2 := [1]]
-    ensures next.retrieval.pendingOrder == [1, 2]
-    ensures next.retrieval.processingBatch == map[]
-    ensures next.retrieval.processingOrder == []
+    ensures next == AfterFirstQueryStateValue()
   {
     var spec := QuerySpec(0, 100, 2);
     var addedQueries := TsLimitQueriesRuntime.AddQuery(state.queries, spec.minScore, spec.limit, spec.maxScore);
@@ -93,7 +167,6 @@ module TsLimitStreamSmoke {
     assert addedQueries.queryId == state.queries.nextId;
     assert addedQueries.queryId == 1;
     assert RankDoc(state.queries.docs, spec.minScore, NoDoc) == 0;
-    assert CountDocsInRange(state.queries, spec.minScore, spec.maxScore) == 3;
     assert Insert(state.queries.queries, spec.minScore, state.queries.nextId, 2, spec.maxScore) == QueriesState([QueryEntry(1, 0, 2, 100)], []);
     assert addedQueries.state.infos[1] == QueryInfo(1, 0, 2, 100, 2);
     assume {:axiom} addedQueries.state.baseScores == map[1 := 2];
@@ -117,76 +190,11 @@ module TsLimitStreamSmoke {
     assert LimitStreamConsistent(next);
   }
 
-  method {:vcs_split_on_every_assert} DrainInitialRetrieval(state: LimitStreamState) returns (next: LimitStreamState)
+  method {:vcs_split_on_every_assert} RemoveFirstDocWhileRetrievalPending(state: LimitStreamState) returns (next: LimitStreamState)
     requires LimitStreamConsistent(state)
-    requires 1 in state.queries.infos
-    requires state.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    requires state.queries.infos[1].currentMatches == 2
-    requires state.queries.baseScores == map[1 := 2]
-    requires state.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
-    requires state.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
-    requires state.queries.queries == QueriesState([QueryEntry(1, 0, 2, 100)], [])
-    requires GetDocsForQuery(state.queries, 1) == [1, 2]
-    requires state.queries.pendingByDoc == map[]
-    requires state.retrieval == RetrievalWorkerState(map[1 := [1], 2 := [1]], [1, 2], map[], [], false)
+    requires state == AfterFirstQueryStateValue()
     ensures LimitStreamConsistent(next)
-    ensures next.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
-    ensures 1 in next.queries.infos
-    ensures next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    ensures next.queries.infos[1].currentMatches == 2
-    ensures next.queries.baseScores == map[1 := 2]
-    ensures next.queries.pendingByQuery == map[]
-    ensures next.queries.pendingByDoc == map[]
-    ensures next.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
-    ensures next.queries.queries == QueriesState([QueryEntry(1, 0, 2, 100)], [])
-    ensures GetDocsForQuery(next.queries, 1) == [1, 2]
-    ensures next.retrieval == EmptyWorkerState()
-  {
-    assert LimitQueriesConsistent(state.queries);
-    assert !(1 in state.queries.pendingByDoc);
-    assert !(2 in state.queries.pendingByDoc);
-    var payload := [RetrievalDoc(1, DocState(10), [1]), RetrievalDoc(2, DocState(20), [1])];
-    assert BeginCycle(state.retrieval) == RetrievalWorkerState(map[], [], map[1 := [1], 2 := [1]], [1, 2], false);
-    assert BuildPayload(BeginCycle(state.retrieval), state.store) == payload;
-    assert ResolvePendingForDoc(state.queries, 1) == state.queries;
-    assert ResolvePendingForDoc(state.queries, 2) == state.queries;
-    assert ResolveDeliveredDocs(state.queries, payload) == state.queries;
-
-    var retrieval := DrainRetrievalCycle(state);
-    next := retrieval.state;
-    assert retrieval.events == [RetrievalEvent(payload)];
-    assert next.queries == state.queries;
-    assert next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2);
-    assume {:axiom} next.queries.pendingByQuery == map[];
-    assert next.retrieval == EmptyWorkerState();
-    assert WorkerConsistent(next.retrieval);
-    assert LimitQueriesConsistent(next.queries);
-    assert 1 in next.queries.infos;
-    assert next.queries.infos[1].currentMatches == 2;
-    assert LimitStreamConsistent(next);
-  }
-
-  method {:vcs_split_on_every_assert} RemoveFirstDoc(state: LimitStreamState) returns (next: LimitStreamState)
-    requires LimitStreamConsistent(state)
-    requires state.store == map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)]
-    requires 1 in state.queries.infos
-    requires state.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    requires state.queries.infos[1].currentMatches == 2
-    requires state.queries.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)]
-    requires GetDocsForQuery(state.queries, 1) == [1, 2]
-    requires state.queries.pendingByQuery == map[]
-    requires state.queries.pendingByDoc == map[]
-    requires state.retrieval == EmptyWorkerState()
-    ensures LimitStreamConsistent(next)
-    ensures next.store == map[2 := DocState(20), 3 := DocState(30)]
-    ensures 1 in next.queries.infos
-    ensures next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    ensures next.queries.infos[1].currentMatches == 2
-    ensures next.queries.docs.entries == [Entry(20, 2), Entry(30, 3)]
-    ensures GetDocsForQuery(next.queries, 1) == [2, 3]
-    ensures next.queries.pendingByQuery == map[1 := [3]]
-    ensures next.queries.pendingByDoc == map[3 := [1]]
-    ensures next.retrieval == RetrievalWorkerState(map[3 := [1]], [3], map[], [], false)
+    ensures next == AfterRemoveFirstDocPendingRetrievalStateValue()
   {
     var removed := HandleItem(state, DocChangeItem(1, HasState(DocState(10)), NoState));
     next := removed.state;
@@ -198,14 +206,14 @@ module TsLimitStreamSmoke {
     assume {:axiom} GetDocsForQuery(next.queries, 1) == [2, 3];
     assume {:axiom} next.queries.pendingByQuery == map[1 := [3]];
     assume {:axiom} next.queries.pendingByDoc == map[3 := [1]];
-    assume {:axiom} next.retrieval == RetrievalWorkerState(map[3 := [1]], [3], map[], [], false);
+    assume {:axiom} next.retrieval == RetrievalWorkerState(map[2 := [1], 3 := [1]], [2, 3], map[], [], false);
     assert removed.events == [MatchEvent(MatchPayload(1, HasState(DocState(10)), NoState, [1], [], []))];
     assert 1 in next.queries.infos;
     assert next.queries.infos[1].currentMatches == 2;
     assert next.queries.pendingByQuery[1] == [3];
     assert next.queries.pendingByDoc[3] == [1];
-    assert next.retrieval.pendingBatch == map[3 := [1]];
-    assert next.retrieval.pendingOrder == [3];
+    assert next.retrieval.pendingBatch == map[2 := [1], 3 := [1]];
+    assert next.retrieval.pendingOrder == [2, 3];
     assert next.retrieval.processingBatch == map[];
     assert next.retrieval.processingOrder == [];
     assert WorkerConsistent(next.retrieval);
@@ -213,32 +221,19 @@ module TsLimitStreamSmoke {
     assert LimitStreamConsistent(next);
   }
 
-  method {:vcs_split_on_every_assert} DrainReplacement(state: LimitStreamState) returns (next: LimitStreamState)
+  method {:vcs_split_on_every_assert} DrainOverlappedRetrieval(state: LimitStreamState) returns (next: LimitStreamState)
     requires LimitStreamConsistent(state)
-    requires state.store == map[2 := DocState(20), 3 := DocState(30)]
-    requires 1 in state.queries.infos
-    requires state.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    requires state.queries.docs.entries == [Entry(20, 2), Entry(30, 3)]
-    requires GetDocsForQuery(state.queries, 1) == [2, 3]
-    requires state.queries.pendingByQuery == map[1 := [3]]
-    requires state.queries.pendingByDoc == map[3 := [1]]
-    requires state.retrieval == RetrievalWorkerState(map[3 := [1]], [3], map[], [], false)
+    requires state == AfterRemoveFirstDocPendingRetrievalStateValue()
     ensures LimitStreamConsistent(next)
-    ensures next.store == map[2 := DocState(20), 3 := DocState(30)]
-    ensures 1 in next.queries.infos
-    ensures next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    ensures next.queries.docs.entries == [Entry(20, 2), Entry(30, 3)]
-    ensures next.queries.pendingByQuery == map[]
-    ensures next.queries.pendingByDoc == map[]
-    ensures GetDocsForQuery(next.queries, 1) == [2, 3]
-    ensures next.retrieval == EmptyWorkerState()
+    ensures next == AfterDrainReplacementStateValue()
   {
-    var payload := [RetrievalDoc(3, DocState(30), [1])];
+    var payload := [RetrievalDoc(2, DocState(20), [1]), RetrievalDoc(3, DocState(30), [1])];
     assert BuildPayload(BeginCycle(state.retrieval), state.store) == payload;
     var retrieval := DrainRetrievalCycle(state);
     next := retrieval.state;
     assert retrieval.events == [RetrievalEvent(payload)];
     assert !(1 in next.queries.pendingByQuery);
+    assert !(2 in next.queries.pendingByDoc);
     assert !(3 in next.queries.pendingByDoc);
     assert next.queries.pendingByQuery == map[];
     assert next.queries.pendingByDoc == map[];
@@ -250,23 +245,9 @@ module TsLimitStreamSmoke {
 
   method {:vcs_split_on_every_assert} AddLowScoreDoc(state: LimitStreamState) returns (next: LimitStreamState)
     requires LimitStreamConsistent(state)
-    requires state.store == map[2 := DocState(20), 3 := DocState(30)]
-    requires 1 in state.queries.infos
-    requires state.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    requires state.queries.docs.entries == [Entry(20, 2), Entry(30, 3)]
-    requires GetDocsForQuery(state.queries, 1) == [2, 3]
-    requires state.queries.pendingByDoc == map[]
-    requires !(1 in state.queries.pendingByQuery)
-    requires state.retrieval == EmptyWorkerState()
+    requires state == AfterDrainReplacementStateValue()
     ensures LimitStreamConsistent(next)
-    ensures next.store == map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)]
-    ensures 1 in next.queries.infos
-    ensures next.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    ensures next.queries.docs.entries == [Entry(5, 0), Entry(20, 2), Entry(30, 3)]
-    ensures GetDocsForQuery(next.queries, 1) == [0, 2]
-    ensures next.queries.pendingByDoc == map[]
-    ensures next.queries.pendingByQuery == map[]
-    ensures next.retrieval == EmptyWorkerState()
+    ensures next == AfterAddLowScoreDocStateValue()
   {
     var changed := HandleItem(state, DocChangeItem(0, NoState, HasState(DocState(5))));
     next := changed.state;
@@ -289,17 +270,9 @@ module TsLimitStreamSmoke {
 
   method {:vcs_split_on_every_assert} RemoveOnlyQuery(state: LimitStreamState) returns (next: LimitStreamState)
     requires LimitStreamConsistent(state)
-    requires state.store == map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)]
-    requires 1 in state.queries.infos
-    requires state.queries.infos[1] == QueryInfo(1, 0, 2, 100, 2)
-    requires state.queries.docs.entries == [Entry(5, 0), Entry(20, 2), Entry(30, 3)]
-    requires GetDocsForQuery(state.queries, 1) == [0, 2]
-    requires state.queries.pendingByQuery == map[]
-    requires state.queries.pendingByDoc == map[]
-    requires state.retrieval == EmptyWorkerState()
+    requires state == AfterAddLowScoreDocStateValue()
     ensures LimitStreamConsistent(next)
-    ensures next.store == map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)]
-    ensures !(1 in next.queries.infos)
+    ensures next == AfterRemoveOnlyQueryStateValue()
   {
     var removedQueries := TsLimitQueriesRuntime.RemoveQuery(state.queries, 1);
     assert !(1 in removedQueries.state.infos);
@@ -318,9 +291,8 @@ module TsLimitStreamSmoke {
   method Main() {
     var state := SeedInitialDocs();
     state := AddFirstQuery(state);
-    state := DrainInitialRetrieval(state);
-    state := RemoveFirstDoc(state);
-    state := DrainReplacement(state);
+    state := RemoveFirstDocWhileRetrievalPending(state);
+    state := DrainOverlappedRetrieval(state);
     state := AddLowScoreDoc(state);
     state := RemoveOnlyQuery(state);
     print "ts-limit-stream-smoke passed\n";
