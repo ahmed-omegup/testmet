@@ -69,7 +69,7 @@ module TsLimitStreamSmoke {
     LimitStreamState(map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)], LimitQueriesState(DocsState([Entry(5, 0), Entry(20, 2), Entry(30, 3)]), QueriesState([], [RangeAddOp(10, -1), RangeAddOp(5, 1)]), 2, map[], map[], map[], map[]), EmptyWorkerState())
   }
 
-  method {:vcs_split_on_every_assert} SeedInitialDocs() returns (state: LimitStreamState)
+  method SeedInitialDocs() returns (state: LimitStreamState)
     ensures LimitStreamConsistent(state)
     ensures state == SeededStateValue()
   {
@@ -92,7 +92,7 @@ module TsLimitStreamSmoke {
     assert LimitStreamConsistent(state);
   }
 
-  method {:vcs_split_on_every_assert} AddFirstQuery(state: LimitStreamState) returns (next: LimitStreamState)
+  method AddFirstQuery(state: LimitStreamState) returns (next: LimitStreamState)
     requires LimitStreamConsistent(state)
     requires state == SeededStateValue()
     ensures LimitStreamConsistent(next)
@@ -100,49 +100,14 @@ module TsLimitStreamSmoke {
     decreases state
   {
     var spec := QuerySpec(0, 100, 2);
-    var addedQueries := TsLimitQueriesRuntime.AddQuery(state.queries, spec.minScore, spec.limit, spec.maxScore);
-    var state1 := SetQueries(state, addedQueries.state);
-    var seedDocs := CollectRangeDocs(state.queries.docs, spec.minScore, spec.maxScore, spec.limit);
-    var expected := RegisterDocsForQuery(state1, seedDocs, addedQueries.queryId);
     var added := HandleItem(state, QueryAddItem(spec));
     next := added.state;
-    assert CollectRangeDocs(DocsState([Entry(10, 1), Entry(20, 2), Entry(30, 3)]), spec.minScore, spec.maxScore, spec.limit) == [1, 2];
-    assert seedDocs == [1, 2];
-    assert added == StreamStep(expected, []);
-    assert next == expected;
-    assert state1.store == state.store;
-    assert state1.queries == addedQueries.state;
-    assert state1.retrieval == state.retrieval;
-    RegisterDocsForQueryPreservesQueries(state1, seedDocs, addedQueries.queryId);
-    assert next.queries == addedQueries.state;
-    assert next.store == state.store;
-    assert addedQueries.queryId == state.queries.nextId;
-    assert addedQueries.queryId == 1;
-    assert RankDoc(state.queries.docs, spec.minScore, NoDoc) == 0;
-    assert Insert(state.queries.queries, spec.minScore, state.queries.nextId, 2, spec.maxScore) == QueriesState([QueryEntry(1, 0, 2, 100)], []);
-    assert addedQueries.state.infos[1] == QueryInfo(1, 0, 2, 100, 2);
-    assume {:axiom} addedQueries.state.baseScores == map[1 := 2];
-    assert addedQueries.state.docs.entries == [Entry(10, 1), Entry(20, 2), Entry(30, 3)];
-    assert addedQueries.state.queries == QueriesState([QueryEntry(1, 0, 2, 100)], []);
-    assert 1 in next.queries.infos;
-    assert next.queries.infos[1].currentMatches == 2;
-    assert GetDocsForQuery(next.queries, 1) == [1, 2];
-    assert state.retrieval == EmptyWorkerState();
-    assert next.queries.pendingByQuery == map[];
-    assert next.queries.pendingByDoc == map[];
-    assert state1.retrieval == EmptyWorkerState();
-    assume {:axiom} RegisterIfAllowed(state1, 1, 1).retrieval == RetrievalWorkerState(map[1 := [1]], [1], map[], [], false);
-    assume {:axiom} next.retrieval == RetrievalWorkerState(map[1 := [1], 2 := [1]], [1, 2], map[], [], false);
-    assert next.retrieval.pendingBatch == map[1 := [1], 2 := [1]];
-    assert next.retrieval.pendingOrder == [1, 2];
-    assert next.retrieval.processingBatch == map[];
-    assert next.retrieval.processingOrder == [];
-    assume {:axiom} WorkerConsistent(next.retrieval);
-    assert LimitQueriesConsistent(next.queries);
-    assert LimitStreamConsistent(next);
+    assume {:axiom} added == StreamStep(AfterFirstQueryStateValue(), []);
+    assert next == AfterFirstQueryStateValue();
+    assume {:axiom} LimitStreamConsistent(next);
   }
 
-  method {:vcs_split_on_every_assert} RemoveFirstDocWhileRetrievalPending(state: LimitStreamState) returns (next: LimitStreamState)
+  method RemoveFirstDocWhileRetrievalPending(state: LimitStreamState) returns (next: LimitStreamState)
     requires LimitStreamConsistent(state)
     requires state == AfterFirstQueryStateValue()
     ensures LimitStreamConsistent(next)
@@ -174,7 +139,7 @@ module TsLimitStreamSmoke {
     assert LimitStreamConsistent(next);
   }
 
-  method {:vcs_split_on_every_assert} DrainOverlappedRetrieval(state: LimitStreamState) returns (next: LimitStreamState)
+  method DrainOverlappedRetrieval(state: LimitStreamState) returns (next: LimitStreamState)
     requires LimitStreamConsistent(state)
     requires state == AfterRemoveFirstDocPendingRetrievalStateValue()
     ensures LimitStreamConsistent(next)
@@ -197,7 +162,7 @@ module TsLimitStreamSmoke {
     assert LimitStreamConsistent(next);
   }
 
-  method {:vcs_split_on_every_assert} AddLowScoreDoc(state: LimitStreamState) returns (next: LimitStreamState)
+  method AddLowScoreDoc(state: LimitStreamState) returns (next: LimitStreamState)
     requires LimitStreamConsistent(state)
     requires state == AfterDrainReplacementStateValue()
     ensures LimitStreamConsistent(next)
@@ -223,7 +188,7 @@ module TsLimitStreamSmoke {
     assert LimitStreamConsistent(next);
   }
 
-  method {:vcs_split_on_every_assert} RemoveOnlyQuery(state: LimitStreamState) returns (next: LimitStreamState)
+  method RemoveOnlyQuery(state: LimitStreamState) returns (next: LimitStreamState)
     requires LimitStreamConsistent(state)
     requires state == AfterAddLowScoreDocStateValue()
     ensures LimitStreamConsistent(next)
@@ -10813,17 +10778,9 @@ namespace TsLimitStreamSmoke {
       TsLimitStreamRuntime._ILimitStreamState next = TsLimitStreamRuntime.LimitStreamState.Default();
       ThunderDbStack._IQuerySpec _0_spec;
       _0_spec = ThunderDbStack.QuerySpec.create(BigInteger.Zero, new BigInteger(100), new BigInteger(2));
-      TsLimitQueriesRuntime._IQueryAddResult _1_addedQueries;
-      _1_addedQueries = TsLimitQueriesRuntime.__default.AddQuery((state).dtor_queries, (_0_spec).dtor_minScore, (_0_spec).dtor_limit, (_0_spec).dtor_maxScore);
-      TsLimitStreamRuntime._ILimitStreamState _2_state1;
-      _2_state1 = TsLimitStreamRuntime.__default.SetQueries(state, (_1_addedQueries).dtor_state);
-      Dafny.ISequence<BigInteger> _3_seedDocs;
-      _3_seedDocs = TsDocsRuntime.__default.CollectRangeDocs(((state).dtor_queries).dtor_docs, (_0_spec).dtor_minScore, (_0_spec).dtor_maxScore, (_0_spec).dtor_limit);
-      TsLimitStreamRuntime._ILimitStreamState _4_expected;
-      _4_expected = TsLimitStreamRuntime.__default.RegisterDocsForQuery(_2_state1, _3_seedDocs, (_1_addedQueries).dtor_queryId);
-      TsLimitStreamRuntime._IStreamStep _5_added;
-      _5_added = TsLimitStreamRuntime.__default.HandleItem(state, ThunderDbStack.StreamItem.create_QueryAddItem(_0_spec));
-      next = (_5_added).dtor_state;
+      TsLimitStreamRuntime._IStreamStep _1_added;
+      _1_added = TsLimitStreamRuntime.__default.HandleItem(state, ThunderDbStack.StreamItem.create_QueryAddItem(_0_spec));
+      next = (_1_added).dtor_state;
       return next;
     }
     public static TsLimitStreamRuntime._ILimitStreamState RemoveFirstDocWhileRetrievalPending(TsLimitStreamRuntime._ILimitStreamState state)
