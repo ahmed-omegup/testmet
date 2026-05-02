@@ -27,5 +27,9 @@ The intent is to grow this folder in layers:
 Run the smoke harness with:
 
 ```bash
-/usr/bin/dotnet /home/asus/.vscode-server/extensions/dafny-lang.ide-vscode-3.5.2/out/resources/4.11.0/github/dafny/Dafny.dll run specs/clean-dafny/CleanPendingSmoke.dfy --no-verify
+DAFNY_DLL=/home/asus/.vscode-server/extensions/dafny-lang.ide-vscode-3.5.4/out/resources/4.11.0/github/dafny/Dafny.dll
+
+/bin/mkdir -p specs/clean-dafny/dist
+/usr/bin/dotnet "$DAFNY_DLL" build specs/clean-dafny/CleanPendingSmoke.dfy --no-verify --allow-warnings -o specs/clean-dafny/dist/CleanPendingSmoke
+./specs/clean-dafny/dist/CleanPendingSmoke
 ```

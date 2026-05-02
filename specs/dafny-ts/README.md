@@ -34,3 +34,13 @@ Current component:
 - `TsLimitStreamRuntime.dfy`: composed bottom-up port of `limitStream.ts`
 - `TsLimitStreamLemmas.dfy`: local facts for the stream orchestration state transitions
 - `TsLimitStreamSmoke.dfy`: isolated smoke test for the migrated `limitStream` component
+
+Build smoke harnesses into `specs/dafny-ts/dist/` so generated outputs stay out of the source tree:
+
+```bash
+DAFNY_DLL=/home/asus/.vscode-server/extensions/dafny-lang.ide-vscode-3.5.4/out/resources/4.11.0/github/dafny/Dafny.dll
+
+/bin/mkdir -p specs/dafny-ts/dist
+/usr/bin/dotnet "$DAFNY_DLL" build specs/dafny-ts/TsLimitStreamSmoke.dfy --no-verify --allow-warnings -o specs/dafny-ts/dist/TsLimitStreamSmoke
+./specs/dafny-ts/dist/TsLimitStreamSmoke
+```

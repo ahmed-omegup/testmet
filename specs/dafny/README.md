@@ -41,19 +41,22 @@ This is an executable/spec reference model and proof scaffold. It is intentional
 Using the VS Code extension-bundled Dafny runtime:
 
 ```bash
-/usr/bin/dotnet /home/asus/.vscode-server/extensions/dafny-lang.ide-vscode-3.5.2/out/resources/4.11.0/github/dafny/Dafny.dll verify specs/dafny/DocsIndexModel.dfy
-/usr/bin/dotnet /home/asus/.vscode-server/extensions/dafny-lang.ide-vscode-3.5.2/out/resources/4.11.0/github/dafny/Dafny.dll verify specs/dafny/DocsIndexTreap.dfy
-/usr/bin/dotnet /home/asus/.vscode-server/extensions/dafny-lang.ide-vscode-3.5.2/out/resources/4.11.0/github/dafny/Dafny.dll verify specs/dafny/DocsIndexBench.dfy --verify-included-files
-/usr/bin/dotnet /home/asus/.vscode-server/extensions/dafny-lang.ide-vscode-3.5.2/out/resources/4.11.0/github/dafny/Dafny.dll verify specs/dafny/ThunderDbStack.dfy
-/usr/bin/dotnet /home/asus/.vscode-server/extensions/dafny-lang.ide-vscode-3.5.2/out/resources/4.11.0/github/dafny/Dafny.dll verify specs/dafny/ThunderDbStackBench.dfy
+DAFNY_DLL=/home/asus/.vscode-server/extensions/dafny-lang.ide-vscode-3.5.4/out/resources/4.11.0/github/dafny/Dafny.dll
+
+/usr/bin/dotnet "$DAFNY_DLL" verify specs/dafny/DocsIndexModel.dfy
+/usr/bin/dotnet "$DAFNY_DLL" verify specs/dafny/DocsIndexTreap.dfy
+/usr/bin/dotnet "$DAFNY_DLL" verify specs/dafny/DocsIndexBench.dfy --verify-included-files
+/usr/bin/dotnet "$DAFNY_DLL" verify specs/dafny/ThunderDbStack.dfy
+/usr/bin/dotnet "$DAFNY_DLL" verify specs/dafny/ThunderDbStackBench.dfy
 ```
 
-Run the whole-stack harness directly through Dafny:
+Build the whole-stack harness into `specs/dafny/dist/` and run it from there so generated files stay out of the source tree:
 
 ```bash
+/bin/mkdir -p specs/dafny/dist
+/usr/bin/dotnet "$DAFNY_DLL" build specs/dafny/ThunderDbStackBench.dfy --no-verify -o specs/dafny/dist/ThunderDbStackBench
 /usr/bin/time -f 'elapsed=%E user=%U sys=%S maxrss_kb=%M' \
-  /usr/bin/dotnet /home/asus/.vscode-server/extensions/dafny-lang.ide-vscode-3.5.2/out/resources/4.11.0/github/dafny/Dafny.dll \
-  run specs/dafny/ThunderDbStackBench.dfy --no-verify
+  ./specs/dafny/dist/ThunderDbStackBench
 ```
 
 Recorded result on this workspace:
@@ -66,4 +69,4 @@ user 60.33
 sys 1.54
 ```
 
-If you prefer your local archive install, replace the `Dafny.dll` path accordingly.
+If you prefer your local archive install, replace the `DAFNY_DLL` path accordingly.
