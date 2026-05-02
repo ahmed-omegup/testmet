@@ -2,6 +2,7 @@ export type DocStateDom = { readonly __brand?: "DocState" };
 export type DocId = { readonly __brand?: "DocId" } & bigint;
 export type QueryId = { readonly __brand?: "QueryId" } & bigint;
 export type Score = { readonly __brand?: "Score" } & number;
+export type BatchNumber = bigint;
 
 export type DocChange<DocState extends DocStateDom> = {
   id: DocId;
@@ -13,7 +14,6 @@ export interface QuerySpec {
   minScore: Score;
   maxScore: Score;
   limit: bigint;
-  id?: number
 }
 
 export interface LimitMatchEvent<DocState extends DocStateDom> {
@@ -34,6 +34,7 @@ export interface RetrievalBatchDoc<DocState extends DocStateDom> {
 
 export interface RetrievalEvent<DocState extends DocStateDom> {
   kind: 'retrieval';
+  batchNumber: BatchNumber;
   docs: RetrievalBatchDoc<DocState>[];
 }
 

@@ -1,18 +1,24 @@
-import { DocId, QueryId, DocStateDom, RetrievalEvent, RetrievalBatchDoc } from './limit-index/types';
+import { DocId, QueryId, DocStateDom, BatchNumber, RetrievalEvent, RetrievalBatchDoc } from './limit-index/types';
 
 interface BatchEntry {
   queries: Set<QueryId>;
 }
-const debugEvictions = process.env.PERF_DEBUG_EVICS === '1';
+
+interface SourceLookup<DocState extends DocStateDom> {
+  map: Map<DocId, BatchEntry>;
+  entry: BatchEntry;
+  batchNumber: BatchNumber;
+}
 
 export class RetrievalJobWorker<DocState extends DocStateDom> {
   private pendingBatch = new Map<DocId, BatchEntry>();
   private processingBatch = new Map<DocId, BatchEntry>();
+  private pendingBatchNumber: BatchNumber = 1n;
+  private processingBatchNumber: BatchNumber | null = null;
   private pendingWaiter: Promise<void> | null = null;
   private resolvePending: (() => void) | null = null;
   private loop: Promise<void>;
   private stopped = false;
-  private docDeliveredListener: ((docId: DocId) => void) | null = null;
 
   constructor(
     private readonly loadDocs: (docIds: DocId[]) => Promise<Map<DocId, DocState>>,
@@ -34,37 +40,31 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
     await this.loop;
   }
 
-  register(docId: DocId, queryId: QueryId) {
-    if (debugEvictions) console.log('RetrievalJobWorker: register', { docId, queryId });
-    if (this.processingBatch.get(docId)?.queries.has(queryId)) {
-      console.log(JSON.stringify(Object.fromEntries([...(global as any)['docs'].queries.get(queryId)[1]]), undefined, 2));
-      throw new Error('Cannot register a doc that is currently being processed');
-    }
+  register(docId: DocId, queryId: QueryId): BatchNumber {
     const entry = this.pendingBatch.get(docId) ?? { queries: new Set<QueryId>() };
     entry.queries.add(queryId);
     this.pendingBatch.set(docId, entry);
     this.signalPending();
+    return this.pendingBatchNumber;
   }
 
-  cancel(docId: DocId, queryId: QueryId): boolean {
-    const reg = this.pendingBatch.get(docId) ? this.pendingBatch : this.processingBatch;
-    const entry = reg.get(docId);
+  cancel(docId: DocId, queryId: QueryId, batchNumber: BatchNumber): boolean {
+    if (batchNumber !== this.pendingBatchNumber) return false;
+    const entry = this.pendingBatch.get(docId);
     if (!entry) return false;
     const removed = entry.queries.delete(queryId);
     if (entry.queries.size === 0) {
-      reg.delete(docId);
+      this.pendingBatch.delete(docId);
     }
     return removed;
   }
 
-  resolveDoc(docId: DocId): boolean {
-    const removedFromPending = this.pendingBatch.delete(docId);
-    const removedFromProcessing = this.processingBatch.delete(docId);
-    return removedFromProcessing || removedFromPending;
-  }
-
-  setDocDeliveredListener(listener: (docId: DocId) => void): void {
-    this.docDeliveredListener = listener;
+  resolveDoc(docId: DocId, batchHint?: BatchNumber): boolean {
+    const source = this.pickSource(docId, batchHint);
+    if (!source) return false;
+    source.map.delete(docId);
+    this.cleanupProcessingIfEmpty();
+    return true;
   }
 
   private async runLoop(): Promise<void> {
@@ -78,8 +78,11 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
         continue;
       }
       const nextProcessing = this.pendingBatch;
+      const currentBatchNumber = this.pendingBatchNumber;
       this.processingBatch = nextProcessing;
+      this.processingBatchNumber = currentBatchNumber;
       this.pendingBatch = new Map();
+      this.pendingBatchNumber = currentBatchNumber + 1n;
       const docIds = Array.from(this.processingBatch.keys());
       try {
         const docs = await this.loadDocs(docIds);
@@ -92,22 +95,43 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
           payload.push({ docId, state, queries: Array.from(entry.queries) });
         }
         if (payload.length) {
-          this.emit({ kind: 'retrieval', docs: payload });
-          if (this.docDeliveredListener) {
-            for (const { docId } of payload) {
-              this.docDeliveredListener(docId);
-            }
-          }
+          this.emit({ kind: 'retrieval', batchNumber: currentBatchNumber, docs: payload });
         }
       } catch (err) {
         console.error('retrieval-job: failed to load docs', err);
       }
       this.processingBatch.clear();
+      this.processingBatchNumber = null;
       const delayMs = this.options.batchIntervalMs ?? 0;
       if (delayMs > 0) await this.delay(delayMs);
     }
   }
 
+  private pickSource(docId: DocId, batchHint?: BatchNumber): SourceLookup<DocState> | null {
+    if (batchHint && batchHint === this.processingBatchNumber && this.processingBatchNumber !== null) {
+      const entry = this.processingBatch.get(docId);
+      if (entry) return { map: this.processingBatch, entry, batchNumber: this.processingBatchNumber };
+    }
+    if (batchHint && batchHint === this.pendingBatchNumber) {
+      const entry = this.pendingBatch.get(docId);
+      if (entry) return { map: this.pendingBatch, entry, batchNumber: this.pendingBatchNumber };
+    }
+    if (this.processingBatchNumber !== null) {
+      const entry = this.processingBatch.get(docId);
+      if (entry) return { map: this.processingBatch, entry, batchNumber: this.processingBatchNumber };
+    }
+    const entry = this.pendingBatch.get(docId);
+    if (entry) {
+      return { map: this.pendingBatch, entry, batchNumber: this.pendingBatchNumber };
+    }
+    return null;
+  }
+
+  private cleanupProcessingIfEmpty(): void {
+    if (this.processingBatchNumber !== null && this.processingBatch.size === 0) {
+      this.processingBatchNumber = null;
+    }
+  }
 
   private signalPending(): void {
     if (this.resolvePending) {

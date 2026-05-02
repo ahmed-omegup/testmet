@@ -20,7 +20,6 @@ import {
   WorkerRunSummary,
 } from './socketProtocol';
 import { createInProcessWorkerClient } from './transport';
-import { isReadable } from 'node:stream';
 
 dotenv.config({ path: process.env.PERF_ENV || '.env' });
 
@@ -38,16 +37,11 @@ type PerfConfig = {
   rangeMin: number;
   rangeMax: number;
   density: number;
+  enableRetrieval: boolean;
   remoteWorkerEmbedded: boolean;
 };
 
 const checkQuery = process.env.CHECK_QUERY === '1';
-const traceDocId = process.env.PERF_TRACE_DOC ? (BigInt(process.env.PERF_TRACE_DOC) as DocId) : null;
-const traceJsonReplacer = (_: string, value: unknown) => typeof value === 'bigint' ? value.toString() : value;
-const traceDocEvent = (phase: string, payload: Record<string, unknown>) => {
-  if (traceDocId === null) return;
-  console.log(`[perf-trace doc=${traceDocId.toString()}] ${phase} ${JSON.stringify(payload, traceJsonReplacer)}`);
-};
 const debugEvictions = process.env.PERF_DEBUG_EVICS === '1';
 const remoteWorkerHostEnv = process.env.PERF_WORKER_HOST;
 const remoteWorkerToggle = process.env.PERF_REMOTE_WORKER;
@@ -64,16 +58,17 @@ const config: PerfConfig & {
   deletesPerTick: number;
 } = {
   seed: Number(process.env.PERF_SEED ?? 42),
-  documents: Number(process.env.PERF_DOCUMENTS ?? 10000),
-  customers: Number(process.env.PERF_CUSTOMERS ?? 1000),
+  documents: Number(process.env.PERF_DOCUMENTS ?? 100000),
+  customers: Number(process.env.PERF_CUSTOMERS ?? 5000),
   duration: Number(process.env.PERF_DURATION ?? 5),
-  updateRate: Number(process.env.PERF_UPDATE_RATE ?? 0.05),
-  insertRate: Number(process.env.PERF_INSERT_RATE ?? 0.01),
-  deleteRate: Number(process.env.PERF_DELETE_RATE ?? 0.01),
-  queryLimit: Number(process.env.PERF_QUERY_LIMIT ?? 200),
+  updateRate: Number(process.env.PERF_UPDATE_RATE ?? 0.02),
+  insertRate: Number(process.env.PERF_INSERT_RATE ?? 0.005),
+  deleteRate: Number(process.env.PERF_DELETE_RATE ?? 0.005),
+  queryLimit: Number(process.env.PERF_QUERY_LIMIT ?? 50),
   rangeMin: Number(process.env.PERF_RANGE_MIN ?? 100),
   rangeMax: Number(process.env.PERF_RANGE_MAX ?? 600),
   density: Number(process.env.PERF_DENSITY ?? 10),
+  enableRetrieval: process.env.PERF_ENABLE_RETRIEVAL !== 'false',
   range: 0,
   updatesPerTick: 0,
   insertsPerTick: 0,
@@ -113,9 +108,7 @@ const trackDoc = (id: DocId, state: PerfDocState) => {
 };
 
 const updateDoc = (id: DocId, state: PerfDocState) => {
-  // Keep the authoritative state identical to the events we emit so future
-  // changes use the correct "old" snapshot.
-  docStates.set(id, {scoreValue: docStates.get(id)!.scoreValue + 1 });
+  docStates.set(id, state);
 };
 
 const removeDoc = (id: DocId) => {
@@ -192,14 +185,10 @@ const buildEvents = function* (): Generator<WireStreamItem> {
   yield* adds.flush()
 
   const upStart = performance.now();
-  if (!debugEvictions) console.log(`[perf] seeding queries took ${(upStart - queryStart).toFixed(2)} ms`);
+  if (!debugEvictions) if (!debugEvictions) console.log(`[perf] seeding queries took ${(upStart - queryStart).toFixed(2)} ms`);
 
-    const updates = createBuffer<WireDocChange, WireStreamItem>(SEED_BATCH_SIZE, batch => ({
-    kind: 'doc-changes',
-    // IMPORTANT: preserve generation order. Sorting by score can reorder multiple
-    // updates for the same doc within a batch, making the embedded old/new
-    // snapshots inconsistent when applied sequentially.
-    changes: batch
+  const updates = createBuffer<WireDocChange, WireStreamItem>(SEED_BATCH_SIZE, batch => ({
+    kind: 'doc-changes', changes: batch
   }))
   // Periodic updates
   for (let tick = 0; tick < config.duration; tick++) {
@@ -234,7 +223,7 @@ const buildEvents = function* (): Generator<WireStreamItem> {
   yield* updates.flush()
   const end = performance.now();
   const nbEvents = config.duration * (config.updatesPerTick + config.insertsPerTick + config.deletesPerTick)
-  if (!debugEvictions) console.log(`[perf] ${nbEvents} events processing took ${(end - upStart).toFixed(2)} ms`);
+  if (!debugEvictions) if (!debugEvictions) console.log(`[perf] ${nbEvents} events processing took ${(end - upStart).toFixed(2)} ms`);
 };
 
 const formatNumber = (value: number) => value.toLocaleString('en-US');
@@ -308,86 +297,56 @@ function* runEmbed(
 
 
   const docs = checkQuery ? {
-    db: new Map<DocId, PerfDocState>(), queries: new Map<QueryId, [QuerySpec, Map<DocId, PerfDocState>]>()
+    db: new Map<DocId, PerfDocState>(), queries: new Map<QueryId, [QuerySpec, Map<DocId, PerfDocState | null>]>()
   } : undefined;
 
-  (global as any)['docs'] = docs
-
-  const docStore = new LmdbDocStore<PerfDocState>({ durability: 'relaxed' });
-  const retrievalJob = new RetrievalJobWorker<PerfDocState>(
-    ids => docStore.getMany(ids),
-    event => {
-      if (debugEvictions) {
-        console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
-      }
-      if (traceDocId !== null) {
-        const tracedDoc = event.docs.find(doc => doc.docId === traceDocId);
-        if (tracedDoc) {
-          traceDocEvent('retrieval', {
-            batchDocs: event.docs.length,
-            queries: tracedDoc.queries.map(q => q.toString()),
-            score: Number(getScore(tracedDoc.state)),
-          });
+  const docStore = config.enableRetrieval
+    ? new LmdbDocStore<PerfDocState>({ durability: 'relaxed' })
+    : undefined;
+  const retrievalJob = config.enableRetrieval && docStore
+    ? new RetrievalJobWorker<PerfDocState>(
+      ids => docStore.getMany(ids),
+      event => {
+        if (debugEvictions) {
+          console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
         }
-      }
-      if (docs) {
-        for (const { docId, queries, state } of event.docs) {
-          for (const qId of queries) {
-            if (ignore(qId)) continue;
-            const [_, q] = docs.queries.get(qId)!;
-            if (!q.has(docId)) q.set(docId, { ...state, ret: 1 } as any);
+        if (docs) {
+          for (const { docId, queries, state } of event.docs) {
+            for (const qId of queries) {
+              const [_, q] = docs.queries.get(qId)!;
+              if (!q.has(docId)) q.set(docId, state);
+            }
           }
         }
-      }
-      retrievalBatches += 1;
-      retrievalDocs += event.docs.length;
-    },
-  );
+        retrievalBatches += 1;
+        retrievalDocs += event.docs.length;
+      },
+    )
+    : undefined;
 
   const start = performance.now();
   let streamedEvents = 0;
   const ignore = (qId: QueryId) => {
-    return false
+    return qId !== 497n
   }
   const gen = runLimitStream(
     getScore,
     (event: LimitMatchEvent<PerfDocState>) => {
       if (debugEvictions) {
-        // event.matchesNew.sort();
-        // event.evictions.sort();
-        // event.matchesOld.sort();
+        event.matchesNew.sort();
+        event.evictions.sort();
+        event.matchesOld.sort();
         console.log('>>', JSON.stringify(event, (k, v) => typeof v === 'bigint' ? String(v) : v));
-      }
-      if (traceDocId !== null) {
-        if (event.docId === traceDocId) {
-          traceDocEvent('match-event', {
-            matchesNew: event.matchesNew.map(q => q.toString()),
-            matchesOld: event.matchesOld.map(q => q.toString()),
-            evictions: event.evictions.map(([q, doc]) => ({ queryId: q.toString(), docId: doc.toString() })),
-            newScore: event.new ? Number(getScore(event.new)) : null,
-            oldScore: event.old ? Number(getScore(event.old)) : null,
-          });
-        }
-        const evictionHits = event.evictions.filter(([, evictedDoc]) => evictedDoc === traceDocId);
-        if (evictionHits.length) {
-          traceDocEvent('evicted', {
-            byDoc: event.docId.toString(),
-            queries: evictionHits.map(([q]) => q.toString()),
-          });
-        }
       }
       if (docs) {
         for (const qId of event.matchesOld) {
-          if (!ignore(qId)) docs.queries.get(qId)![1].delete(event.docId);
+          if(!ignore(qId)) docs.queries.get(qId)![1].set(event.docId, null);
         }
         for (const qId of event.matchesNew) {
-          if (!ignore(qId)) {
-            if (event.new) docs.queries.get(qId)![1].set(event.docId, event.new);
-            else docs.queries.get(qId)![1].delete(event.docId);
-          }
+          if(!ignore(qId)) docs.queries.get(qId)![1].set(event.docId, event.new);
         }
         for (const [qId, evicted] of event.evictions) {
-          if (!ignore(qId)) docs.queries.get(qId)![1].delete(evicted);
+          if(!ignore(qId)) docs.queries.get(qId)![1].delete(evicted);
         }
       }
       if (event.kind === 'match') {
@@ -396,7 +355,7 @@ function* runEmbed(
       }
     },
     {
-      retrievalJob: retrievalJob,
+      retrievalJob: retrievalJob ?? undefined,
       docStore,
     }
   );
@@ -415,23 +374,6 @@ function* runEmbed(
     }
     if (debugEvictions) {
       console.log('<<', JSON.stringify(e, (k, v) => typeof v === 'bigint' ? String(v) : v));
-    }
-    if (traceDocId !== null) {
-      if (e.kind === 'doc-change' && e.change.id === traceDocId) {
-        const { old, new: next } = e.change;
-        traceDocEvent('doc-change', {
-          changeType: next && old ? 'update' : next ? 'insert' : 'delete',
-          newScore: next ? Number(getScore(next)) : null,
-          oldScore: old ? Number(getScore(old)) : null,
-        });
-      } else if (e.kind === 'seed-docs') {
-        const seeded = e.docs.find(doc => doc.id === traceDocId);
-        if (seeded) {
-          traceDocEvent('seed-doc', {
-            score: Number(getScore(seeded.state)),
-          });
-        }
-      }
     }
     if (docs) {
       if (e.kind === 'doc-change') {
@@ -461,7 +403,6 @@ function* runEmbed(
   }
 
   if (docs) for (const [qId, [querySpec, query]] of docs.queries) {
-    if (ignore(qId)) continue;
     if (!querySpec) throw new Error('missing query spec');
     const expectedMatches: Map<DocId, PerfDocState> = new Map();
     for (const [docId, state] of docs.db) {
@@ -474,27 +415,12 @@ function* runEmbed(
       if (q === null) query.delete(k);
     }
     const sortedMatches = Array.from(expectedMatches.entries()).sort((a, b) => {
-      const scoreDiff = getScore(a[1]) - getScore(b[1]);
-      if (scoreDiff !== 0) return scoreDiff;
-      if (a[0] === b[0]) return 0;
-      return a[0] < b[0] ? -1 : 1;
+      return getScore(a[1]) - getScore(b[1]);
     }).slice(0, Number(querySpec.limit));
     if (sortedMatches.length !== query.size) {
-      const expectedEntries = sortedMatches;
-      const actualEntries = Array.from(query.entries());
-      const expectedIds = new Set(expectedEntries.map(([docId]) => docId.toString()));
-      const actualIds = new Set(actualEntries.map(([docId]) => docId.toString()));
-      const missing = expectedEntries
-        .filter(([docId]) => !actualIds.has(docId.toString()))
-        .map(([docId, state]) => ({ docId, state }));
-      const extra = actualEntries
-        .filter(([docId]) => !expectedIds.has(docId.toString()))
-        .map(([docId, state]) => ({ docId, state }));
       console.log('query spec:', qId, querySpec);
-      console.log('expected matches:', expectedEntries);
-      console.log('actual matches:', actualEntries);
-      console.log('missing docs (expected but absent):', missing.slice(0, 20));
-      console.log('extra docs (present but unexpected):', extra.slice(0, 20));
+      console.log('expected matches:', sortedMatches);
+      console.log('actual matches:', Array.from(query.entries()));
       throw new Error(`mismatched number of query matches: expected ${sortedMatches.length}, got ${query.size}`);
     }
     for (const [docId, state] of sortedMatches) {
@@ -585,7 +511,11 @@ function logSummary(summary: WorkerRunSummary, start: number): void {
   console.log('\n[perf] summary');
   console.log(`  duration: ${durationMs.toFixed(2)} ms (~${eventsPerSec} events/s)`);
   console.log(`  match events: ${formatNumber(summary.matchEvents)} (evictions: ${formatNumber(summary.evictions)})`);
-  console.log(`  retrieval batches: ${formatNumber(summary.retrievalBatches)} (docs: ${formatNumber(summary.retrievalDocs)})`);
+  if (config.enableRetrieval) {
+    console.log(`  retrieval batches: ${formatNumber(summary.retrievalBatches)} (docs: ${formatNumber(summary.retrievalDocs)})`);
+  } else {
+    console.log('  retrieval batches: disabled');
+  }
 }
 
 async function* readServerMessages(rl: readline.Interface): AsyncGenerator<ServerMessage> {

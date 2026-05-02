@@ -8,8 +8,8 @@ import { SocketDocState, WorkerRunSummary } from './socketProtocol';
 const debugEvictions = process.env.PERF_DEBUG_EVICS === '1';
 
 interface RunState {
-  docStore: LmdbDocStore<SocketDocState>;
-  retrievalJob: RetrievalJobWorker<SocketDocState>;
+  docStore?: LmdbDocStore<SocketDocState>;
+  retrievalJob?: RetrievalJobWorker<SocketDocState>;
   matchEvents: number;
   evictions: number;
   retrievalBatches: number;
@@ -48,6 +48,7 @@ const buildSummary = (state: RunState, endTs: number): WorkerRunSummary => ({
 });
 
 export interface WorkerRuntimeOptions {
+  enableRetrieval?: boolean;
   docStoreDurability?: LmdbDurability;
   progressStep?: number;
   log?: (message: string) => void;
@@ -72,15 +73,17 @@ export class WorkerRuntime {
       retrievalBatches: 0,
       retrievalDocs: 0,
       eventsProcessed: 0,
-      docStore: new LmdbDocStore<SocketDocState>({ durability: this.docStoreDurability }),
-      retrievalJob: new RetrievalJobWorker<SocketDocState>(
+    };
+    if (options.enableRetrieval) {
+      runState.docStore = new LmdbDocStore<SocketDocState>({ durability: this.docStoreDurability });
+      runState.retrievalJob = new RetrievalJobWorker<SocketDocState>(
         ids => runState.docStore!.getMany(ids),
         event => {
           runState.retrievalBatches += 1;
           runState.retrievalDocs += event.docs.length;
         },
-      )
-    };
+      );
+    }
     this.runState = runState;
     const that = this;
     this.runGenerator = (function* () {

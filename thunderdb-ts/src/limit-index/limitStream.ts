@@ -11,7 +11,7 @@ export type StreamItem<DocState extends DocStateDom> =
   | { kind: 'seed-docs'; docs: Array<{ id: DocId; state: DocState }> };
 
 export interface LimitStreamOptions<DocState extends DocStateDom> {
-  retrievalJob: RetrievalJobWorker<DocState>;
+  retrievalJob?: RetrievalJobWorker<DocState>;
   docStore?: LmdbDocStore<DocState>;
 }
 
@@ -23,17 +23,16 @@ const handleChange = <DocState extends DocStateDom>(
   queries: DynamicRangeQueries,
   getScore: (state: DocState) => Score,
   emit: (e: LimitMatchEvent<DocState>) => void,
-  options: LimitStreamOptions<DocState>
+  options: LimitStreamOptions<DocState> = {}
 ) => {
   const { id, old, new: next } = item;
   const oldScore = old ? getScore(old) : null;
   const retrievalJob = options.retrievalJob;
 
   const notifyRetrieval = () => {
-    // Retrieval for this doc has completed; clear any in-flight gap-fill
-    // bookkeeping before telling the retrieval job to drop its tracking.
-    queries.resolvePendingForDoc(id);
-    retrievalJob.resolveDoc(id);
+    if (retrievalJob) {
+      retrievalJob.resolveDoc(id);
+    }
   };
 
   const matchesOld: QueryId[] = [];
@@ -104,14 +103,6 @@ const handleChange = <DocState extends DocStateDom>(
     const evictedDoc = queries.pickOverflowDoc(q);
     if (evictedDoc) {
       evictions.push([q, evictedDoc]);
-      const cancelledPending = queries.cancelPendingForQuery(evictedDoc, q);
-      retrievalJob.cancel(evictedDoc, q);
-      if (cancelledPending) {
-        const replacement = queries.fillGap(q);
-        if (replacement && retrievalJob) {
-          retrievalJob.register(replacement, q);
-        }
-      }
     }
   }
 
@@ -135,17 +126,19 @@ const handleItem = <DocState extends DocStateDom>(
   queries: DynamicRangeQueries,
   getScore: (state: DocState) => Score,
   emit: (e: LimitMatchEvent<DocState>) => void,
-  options: LimitStreamOptions<DocState>
+  options: LimitStreamOptions<DocState> = {}
 ) => {
   const retrievalJob = options.retrievalJob;
   const docStore = options.docStore;
   switch (item.kind) {
     case 'query-add': {
       const id = queries.addQuery(item.spec.minScore, item.spec.limit, item.spec.maxScore);
-      const seedDocs = queries.getDocsForQuery(id);
-      if (BigInt(seedDocs.length) !== queries.getQueryInfo(id)?.currentMatches) throw new Error('Inconsistent query state detected when adding query');
-      for (const docId of seedDocs) {
-        retrievalJob.register(docId, id);
+      if (retrievalJob) {
+        const seedDocs = queries.getDocsForQuery(id);
+        if (BigInt(seedDocs.length) !== queries.getQueryInfo(id)?.currentMatches) throw new Error('Inconsistent query state detected when adding query');
+        for (const docId of seedDocs) {
+          retrievalJob.register(docId, id);
+        }
       }
       break;
     }
@@ -175,20 +168,15 @@ const handleItem = <DocState extends DocStateDom>(
 
 
 // Stateless limit stream operator (stores only per-query counts already tracked in DynamicRangeQueries)
-export function* runLimitStream<DocState extends DocStateDom>(
+export function *runLimitStream<DocState extends DocStateDom>(
   getScore: (state: DocState) => Score,
   emit: (e: LimitMatchEvent<DocState>) => void,
-  options: LimitStreamOptions<DocState>
+  options: LimitStreamOptions<DocState> = {}
 ): Generator<void, void, StreamItem<DocState> | void> {
   const queries = new DynamicRangeQueries();
-  if (options.retrievalJob?.setDocDeliveredListener) {
-    options.retrievalJob.setDocDeliveredListener(docId => {
-      queries.resolvePendingForDoc(docId);
-    });
-  }
   while (true) {
     const item = yield;
-    if (!item) break;
+    if(!item) break;
     handleItem(item, queries, getScore, emit, options);
   }
 }
