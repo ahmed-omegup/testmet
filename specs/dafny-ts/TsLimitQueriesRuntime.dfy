@@ -13,9 +13,7 @@ module TsLimitQueriesRuntime {
     queries: QueriesState,
     nextId: QueryId,
     infos: map<QueryId, QueryInfo>,
-    baseScores: map<QueryId, int>,
-    pendingByQuery: map<QueryId, seq<DocId>>,
-    pendingByDoc: map<DocId, seq<QueryId>>)
+    baseScores: map<QueryId, int>)
 
   datatype StateChange = StateChange(state: LimitQueriesState, changed: bool)
   datatype QueryAddResult = QueryAddResult(state: LimitQueriesState, queryId: QueryId)
@@ -24,7 +22,7 @@ module TsLimitQueriesRuntime {
   datatype GapFillResult = GapFillResult(state: LimitQueriesState, doc: MaybeDocId)
 
   function EmptyLimitQueriesState(): LimitQueriesState {
-    LimitQueriesState(EmptyDocsState(), EmptyQueriesState(), 1, map[], map[], map[], map[])
+    LimitQueriesState(EmptyDocsState(), EmptyQueriesState(), 1, map[], map[])
   }
 
   predicate LimitQueriesConsistent(state: LimitQueriesState) {
@@ -50,33 +48,7 @@ module TsLimitQueriesRuntime {
     ensures LimitQueriesConsistent(state) ==> LimitQueriesConsistent(SetCurrentMatches(state, queryId, currentMatches))
   {
     var info := state.infos[queryId];
-    LimitQueriesState(state.docs, state.queries, state.nextId, state.infos[queryId := QueryInfo(info.id, info.a, info.k, info.max, currentMatches)], state.baseScores, state.pendingByQuery, state.pendingByDoc)
-  }
-
-  function AddPendingPair(state: LimitQueriesState, queryId: QueryId, docId: DocId): LimitQueriesState
-    ensures LimitQueriesConsistent(state) ==> LimitQueriesConsistent(AddPendingPair(state, queryId, docId))
-  {
-    var docsForQuery := if queryId in state.pendingByQuery then AppendDocIdIfMissing(state.pendingByQuery[queryId], docId) else [docId];
-    var queriesForDoc := if docId in state.pendingByDoc then AppendQueryIdUnique(state.pendingByDoc[docId], queryId) else [queryId];
-    LimitQueriesState(state.docs, state.queries, state.nextId, state.infos, state.baseScores, state.pendingByQuery[queryId := docsForQuery], state.pendingByDoc[docId := queriesForDoc])
-  }
-
-  function RemovePendingPair(state: LimitQueriesState, queryId: QueryId, docId: DocId): LimitQueriesState
-    ensures LimitQueriesConsistent(state) ==> LimitQueriesConsistent(RemovePendingPair(state, queryId, docId))
-  {
-    var nextPendingByQuery :=
-      if queryId in state.pendingByQuery && ContainsId(state.pendingByQuery[queryId], docId) then
-        var nextDocs := RemoveDocId(state.pendingByQuery[queryId], docId);
-        if |nextDocs| == 0 then map key | key in state.pendingByQuery && key != queryId :: state.pendingByQuery[key]
-        else state.pendingByQuery[queryId := nextDocs]
-      else state.pendingByQuery;
-    var nextPendingByDoc :=
-      if docId in state.pendingByDoc && ContainsQueryId(state.pendingByDoc[docId], queryId) then
-        var nextQueries := RemoveQueryId(state.pendingByDoc[docId], queryId);
-        if |nextQueries| == 0 then map key | key in state.pendingByDoc && key != docId :: state.pendingByDoc[key]
-        else state.pendingByDoc[docId := nextQueries]
-      else state.pendingByDoc;
-    LimitQueriesState(state.docs, state.queries, state.nextId, state.infos, state.baseScores, nextPendingByQuery, nextPendingByDoc)
+    LimitQueriesState(state.docs, state.queries, state.nextId, state.infos[queryId := QueryInfo(info.id, info.a, info.k, info.max, currentMatches)], state.baseScores)
   }
 
   function CountDocsInRange(state: LimitQueriesState, minScore: Score, maxScore: Score): nat
@@ -97,17 +69,8 @@ module TsLimitQueriesRuntime {
     var baseScore := effectiveScore - AccumulatedAddAtKey(state.queries, a);
     var currentMatches := NatMin(CountDocsInRange(state, a, max), k);
     QueryAddResult(
-      LimitQueriesState(state.docs, nextQueries, queryId + 1, state.infos[queryId := QueryInfo(queryId, a, k, max, currentMatches)], state.baseScores[queryId := baseScore], state.pendingByQuery, state.pendingByDoc),
+      LimitQueriesState(state.docs, nextQueries, queryId + 1, state.infos[queryId := QueryInfo(queryId, a, k, max, currentMatches)], state.baseScores[queryId := baseScore]),
       queryId)
-  }
-
-  function RemovePendingDocsForQuery(state: LimitQueriesState, docs: seq<DocId>, queryId: QueryId): LimitQueriesState
-    requires LimitQueriesConsistent(state)
-    ensures LimitQueriesConsistent(RemovePendingDocsForQuery(state, docs, queryId))
-    decreases |docs|
-  {
-    if |docs| == 0 then state
-    else RemovePendingDocsForQuery(RemovePendingPair(state, queryId, docs[0]), docs[1..], queryId)
   }
 
   function RemoveQuery(state: LimitQueriesState, queryId: QueryId): StateChange
@@ -120,11 +83,8 @@ module TsLimitQueriesRuntime {
       var baseScore := state.baseScores[queryId];
       var state1 := LimitQueriesState(state.docs, Remove(state.queries, info.a, queryId, baseScore, info.max), state.nextId,
         map key | key in state.infos && key != queryId :: state.infos[key],
-        map key | key in state.baseScores && key != queryId :: state.baseScores[key],
-        state.pendingByQuery, state.pendingByDoc);
-      var state2 := if queryId in state1.pendingByQuery then RemovePendingDocsForQuery(state1, state1.pendingByQuery[queryId], queryId) else state1;
-      StateChange(LimitQueriesState(state2.docs, state2.queries, state2.nextId, state2.infos, state2.baseScores,
-        map key | key in state2.pendingByQuery && key != queryId :: state2.pendingByQuery[key], state2.pendingByDoc), true)
+        map key | key in state.baseScores && key != queryId :: state.baseScores[key]);
+      StateChange(state1, true)
   }
 
   function GetQueriesCovering(state: LimitQueriesState, value: Score, docId: MaybeDocId): seq<QueryId>
@@ -162,7 +122,7 @@ module TsLimitQueriesRuntime {
     var affected := GetQueriesCovering(state, score, SomeDoc(docId));
     var nextDocs := RemoveDoc(state.docs, score, docId);
     var nextQueries := RangeAddKeysGreaterThan(state.queries, score, -1);
-    var nextState := LimitQueriesState(nextDocs, nextQueries, state.nextId, state.infos, state.baseScores, state.pendingByQuery, state.pendingByDoc);
+    var nextState := LimitQueriesState(nextDocs, nextQueries, state.nextId, state.infos, state.baseScores);
     RemoveDocumentResult(DecrementCurrentMatchesFor(nextState, affected), affected)
   }
 
@@ -177,9 +137,6 @@ module TsLimitQueriesRuntime {
       var rest := affected[1..];
       if !(queryId in state.infos) then
         var next := ProcessAddedQueries(state, rest, docId);
-        AddDocumentResult(next.state, [queryId] + next.matched, next.blocked)
-      else if docId in state.pendingByDoc && ContainsQueryId(state.pendingByDoc[docId], queryId) then
-        var next := ProcessAddedQueries(RemovePendingPair(state, queryId, docId), rest, docId);
         AddDocumentResult(next.state, [queryId] + next.matched, next.blocked)
       else
         var info := state.infos[queryId];
@@ -198,7 +155,7 @@ module TsLimitQueriesRuntime {
     var affected := GetQueriesCovering(state, score, SomeDoc(docId));
     var nextDocs := AddDoc(state.docs, score, docId);
     var nextQueries := RangeAddKeysGreaterThan(state.queries, score, 1);
-    ProcessAddedQueries(LimitQueriesState(nextDocs, nextQueries, state.nextId, state.infos, state.baseScores, state.pendingByQuery, state.pendingByDoc), affected, docId)
+    ProcessAddedQueries(LimitQueriesState(nextDocs, nextQueries, state.nextId, state.infos, state.baseScores), affected, docId)
   }
 
   function DocForQueryAt(state: LimitQueriesState, info: QueryInfo, offset: nat): MaybeDocId
@@ -229,11 +186,9 @@ module TsLimitQueriesRuntime {
     match candidate
     case NoDoc => GapFillResult(state, NoDoc)
     case SomeDoc(docId) =>
-      if queryId in state.pendingByQuery && ContainsId(state.pendingByQuery[queryId], docId) then FillGapFrom(state, queryId, offset + 1)
-      else
-        var info := state.infos[queryId];
-        var state1 := SetCurrentMatches(state, queryId, info.currentMatches + 1);
-        GapFillResult(AddPendingPair(state1, queryId, docId), SomeDoc(docId))
+      var info := state.infos[queryId];
+      var state1 := SetCurrentMatches(state, queryId, info.currentMatches + 1);
+      GapFillResult(state1, SomeDoc(docId))
   }
 
   function FillGap(state: LimitQueriesState, queryId: QueryId): GapFillResult
@@ -251,27 +206,13 @@ module TsLimitQueriesRuntime {
     requires LimitQueriesConsistent(state)
     ensures LimitQueriesConsistent(CancelPendingForQuery(state, docId, queryId).state)
   {
-    if !(queryId in state.pendingByQuery) || !ContainsId(state.pendingByQuery[queryId], docId) then StateChange(state, false)
-    else
-      var state1 := RemovePendingPair(state, queryId, docId);
-      var state2 := if queryId in state1.infos && state1.infos[queryId].currentMatches > 0 then SetCurrentMatches(state1, queryId, state1.infos[queryId].currentMatches - 1) else state1;
-      StateChange(state2, true)
-  }
-
-  function ResolvePendingDocQueries(state: LimitQueriesState, queryIds: seq<QueryId>, docId: DocId): LimitQueriesState
-    requires LimitQueriesConsistent(state)
-    ensures LimitQueriesConsistent(ResolvePendingDocQueries(state, queryIds, docId))
-    decreases |queryIds|
-  {
-    if |queryIds| == 0 then state
-    else ResolvePendingDocQueries(RemovePendingPair(state, queryIds[0], docId), queryIds[1..], docId)
+    StateChange(state, false)
   }
 
   function ResolvePendingForDoc(state: LimitQueriesState, docId: DocId): LimitQueriesState
     requires LimitQueriesConsistent(state)
     ensures LimitQueriesConsistent(ResolvePendingForDoc(state, docId))
   {
-    if !(docId in state.pendingByDoc) then state
-    else ResolvePendingDocQueries(state, state.pendingByDoc[docId], docId)
+    state
   }
 }

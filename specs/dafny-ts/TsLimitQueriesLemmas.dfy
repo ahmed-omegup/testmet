@@ -12,7 +12,6 @@ module TsLimitQueriesLemmas {
 
   lemma ResolvePendingWithoutDocIsStable(state: LimitQueriesState, docId: DocId)
     requires LimitQueriesConsistent(state)
-    requires !(docId in state.pendingByDoc)
     ensures ResolvePendingForDoc(state, docId) == state
   {
   }

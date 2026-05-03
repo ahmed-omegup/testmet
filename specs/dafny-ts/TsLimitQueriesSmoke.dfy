@@ -28,22 +28,17 @@ module TsLimitQueriesSmoke {
     state := gap.state;
     expect gap.doc == SomeDoc(3);
     expect state.infos[1].currentMatches == 2;
-    expect state.pendingByQuery[1] == [3];
-    expect state.pendingByDoc[3] == [1];
 
     var cancelled := CancelPendingForQuery(state, 3, 1);
     state := cancelled.state;
-    expect cancelled.changed;
-    expect state.infos[1].currentMatches == 1;
-    expect !(1 in state.pendingByQuery);
-    expect !(3 in state.pendingByDoc);
+    expect !cancelled.changed;
+    expect state.infos[1].currentMatches == 2;
 
     gap := FillGap(state, 1);
     state := gap.state;
-    expect gap.doc == SomeDoc(3);
+    expect gap.doc == NoDoc;
     state := ResolvePendingForDoc(state, 3);
-    expect !(1 in state.pendingByQuery);
-    expect !(3 in state.pendingByDoc);
+    expect state.infos[1].currentMatches == 2;
 
     var addedDoc := AddDocument(state, 5, 0);
     state := addedDoc.state;

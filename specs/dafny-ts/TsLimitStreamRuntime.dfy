@@ -48,7 +48,7 @@ module TsLimitStreamRuntime {
   function NotifyRetrievalResolved(state: LimitStreamState, docId: DocId): LimitStreamState
     requires LimitQueriesConsistent(state.queries)
   {
-    LimitStreamState(state.store, ResolvePendingForDoc(state.queries, docId), ResolveDoc(state.retrieval, docId, 0).state)
+    LimitStreamState(state.store, state.queries, ResolveDoc(state.retrieval, docId, 0).state)
   }
 
   function RegisterDocsForQuery(state: LimitStreamState, docs: seq<DocId>, queryId: QueryId): LimitStreamState
@@ -72,7 +72,7 @@ module TsLimitStreamRuntime {
   {
     if |docs| == 0 then queries
     else 
-    var newState := LimitQueriesState(AddDoc(queries.docs, GetScore(docs[0].state), docs[0].id), queries.queries, queries.nextId, queries.infos, queries.baseScores, queries.pendingByQuery, queries.pendingByDoc);
+    var newState := LimitQueriesState(AddDoc(queries.docs, GetScore(docs[0].state), docs[0].id), queries.queries, queries.nextId, queries.infos, queries.baseScores);
     SeedDocsQueries(newState, docs[1..])
   }
 
@@ -112,18 +112,7 @@ module TsLimitStreamRuntime {
       match overflowDoc
       case NoDoc => HandleOverflowQueries(state, queries[1..])
       case SomeDoc(docId) =>
-        var cancelledPending := CancelPendingForQuery(state.queries, docId, queryId);
-        var retrievalCancelled := Cancel(state.retrieval, docId, queryId, state.retrieval.pendingBatchNumber);
-        var state1 := LimitStreamState(state.store, cancelledPending.state, retrievalCancelled.state);
-        var state2 :=
-          if cancelledPending.changed then
-            var gap := FillGap(state1.queries, queryId);
-            var gapState := SetQueries(state1, gap.state);
-            match gap.doc
-            case NoDoc => gapState
-            case SomeDoc(replacement) => RegisterIfAllowed(gapState, replacement, queryId)
-          else state1;
-        var rest := HandleOverflowQueries(state2, queries[1..]);
+        var rest := HandleOverflowQueries(state, queries[1..]);
         OverflowResult(rest.state, [Eviction(queryId, docId)] + rest.evictions)
   }
 
@@ -223,8 +212,7 @@ module TsLimitStreamRuntime {
     ensures LimitQueriesConsistent(ResolveDeliveredDocs(queries, docs))
     decreases |docs|
   {
-    if |docs| == 0 then queries
-    else ResolveDeliveredDocs(ResolvePendingForDoc(queries, docs[0].docId), docs[1..])
+    queries
   }
 
   function DrainRetrievalCycle(state: LimitStreamState): StreamStep
