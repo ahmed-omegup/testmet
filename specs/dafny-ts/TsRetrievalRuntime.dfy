@@ -7,14 +7,16 @@ module TsRetrievalRuntime {
   datatype RetrievalWorkerState = RetrievalWorkerState(
     pendingBatch: map<DocId, seq<QueryId>>,
     pendingOrder: seq<DocId>,
+    pendingBatchNumber: BatchNumber,
     processingBatch: map<DocId, seq<QueryId>>,
     processingOrder: seq<DocId>,
+    processingBatchNumber: BatchNumber,
     stopped: bool)
 
   datatype StateChange = StateChange(state: RetrievalWorkerState, changed: bool)
 
   function EmptyWorkerState(): RetrievalWorkerState {
-    RetrievalWorkerState(map[], [], map[], [], false)
+    RetrievalWorkerState(map[], [], 1, map[], [], 0, false)
   }
 
   function RemoveQueryId(ids: seq<QueryId>, id: QueryId): seq<QueryId> {
@@ -35,6 +37,7 @@ module TsRetrievalRuntime {
   }
 
   predicate WorkerConsistent(state: RetrievalWorkerState) {
+    1 <= state.pendingBatchNumber &&
     RegistryConsistent(state.pendingBatch, state.pendingOrder) &&
     RegistryConsistent(state.processingBatch, state.processingOrder)
   }
@@ -48,50 +51,57 @@ module TsRetrievalRuntime {
   {
     var nextQueries := if docId in state.pendingBatch then AppendQueryIdUnique(state.pendingBatch[docId], queryId) else [queryId];
     var nextOrder := if docId in state.pendingBatch then state.pendingOrder else AppendDocIdIfMissing(state.pendingOrder, docId);
-    RetrievalWorkerState(state.pendingBatch[docId := nextQueries], nextOrder, state.processingBatch, state.processingOrder, state.stopped)
+    RetrievalWorkerState(state.pendingBatch[docId := nextQueries], nextOrder, state.pendingBatchNumber, state.processingBatch, state.processingOrder, state.processingBatchNumber, state.stopped)
   }
 
-  function Cancel(state: RetrievalWorkerState, docId: DocId, queryId: QueryId): StateChange {
-    if docId in state.pendingBatch then
+  function Cancel(state: RetrievalWorkerState, docId: DocId, queryId: QueryId, batchNumber: BatchNumber): StateChange {
+    if batchNumber != state.pendingBatchNumber then StateChange(state, false)
+    else if docId in state.pendingBatch then
       var removed := ContainsQueryId(state.pendingBatch[docId], queryId);
       var nextQueries := RemoveQueryId(state.pendingBatch[docId], queryId);
       var nextBatch := if removed && |nextQueries| == 0 then map key | key in state.pendingBatch && key != docId :: state.pendingBatch[key]
                        else if removed then state.pendingBatch[docId := nextQueries]
                        else state.pendingBatch;
       var nextOrder := if removed && !(docId in nextBatch) then RemoveDocId(state.pendingOrder, docId) else state.pendingOrder;
-      StateChange(RetrievalWorkerState(nextBatch, nextOrder, state.processingBatch, state.processingOrder, state.stopped), removed)
-    else if docId in state.processingBatch then
-      var removed := ContainsQueryId(state.processingBatch[docId], queryId);
-      var nextQueries := RemoveQueryId(state.processingBatch[docId], queryId);
-      var nextBatch := if removed && |nextQueries| == 0 then map key | key in state.processingBatch && key != docId :: state.processingBatch[key]
-                       else if removed then state.processingBatch[docId := nextQueries]
-                       else state.processingBatch;
-      var nextOrder := if removed && !(docId in nextBatch) then RemoveDocId(state.processingOrder, docId) else state.processingOrder;
-      StateChange(RetrievalWorkerState(state.pendingBatch, state.pendingOrder, nextBatch, nextOrder, state.stopped), removed)
+      StateChange(RetrievalWorkerState(nextBatch, nextOrder, state.pendingBatchNumber, state.processingBatch, state.processingOrder, state.processingBatchNumber, state.stopped), removed)
     else
       StateChange(state, false)
   }
 
-  function ResolveDoc(state: RetrievalWorkerState, docId: DocId): StateChange {
-    var removedPending := docId in state.pendingBatch;
-    var removedProcessing := docId in state.processingBatch;
+  function ResolvePendingDoc(state: RetrievalWorkerState, docId: DocId): RetrievalWorkerState {
     var nextPending := map key | key in state.pendingBatch && key != docId :: state.pendingBatch[key];
+    RetrievalWorkerState(nextPending, RemoveDocId(state.pendingOrder, docId), state.pendingBatchNumber, state.processingBatch, state.processingOrder, state.processingBatchNumber, state.stopped)
+  }
+
+  function ResolveProcessingDoc(state: RetrievalWorkerState, docId: DocId): RetrievalWorkerState {
     var nextProcessing := map key | key in state.processingBatch && key != docId :: state.processingBatch[key];
-    StateChange(
-      RetrievalWorkerState(nextPending, RemoveDocId(state.pendingOrder, docId), nextProcessing, RemoveDocId(state.processingOrder, docId), state.stopped),
-      removedPending || removedProcessing)
+    var nextProcessingBatchNumber := if |nextProcessing| == 0 then 0 else state.processingBatchNumber;
+    RetrievalWorkerState(state.pendingBatch, state.pendingOrder, state.pendingBatchNumber, nextProcessing, RemoveDocId(state.processingOrder, docId), nextProcessingBatchNumber, state.stopped)
+  }
+
+  function ResolveDoc(state: RetrievalWorkerState, docId: DocId, batchHint: BatchNumber): StateChange {
+    if batchHint != 0 && batchHint == state.processingBatchNumber && docId in state.processingBatch then
+      StateChange(ResolveProcessingDoc(state, docId), true)
+    else if batchHint != 0 && batchHint == state.pendingBatchNumber && docId in state.pendingBatch then
+      StateChange(ResolvePendingDoc(state, docId), true)
+    else if state.processingBatchNumber != 0 && docId in state.processingBatch then
+      StateChange(ResolveProcessingDoc(state, docId), true)
+    else if docId in state.pendingBatch then
+      StateChange(ResolvePendingDoc(state, docId), true)
+    else
+      StateChange(state, false)
   }
 
   function BeginCycle(state: RetrievalWorkerState): RetrievalWorkerState {
-    RetrievalWorkerState(map[], [], state.pendingBatch, state.pendingOrder, state.stopped)
+    RetrievalWorkerState(map[], [], state.pendingBatchNumber + 1, state.pendingBatch, state.pendingOrder, state.pendingBatchNumber, state.stopped)
   }
 
   function FinishCycle(state: RetrievalWorkerState): RetrievalWorkerState {
-    RetrievalWorkerState(state.pendingBatch, state.pendingOrder, map[], [], state.stopped)
+    RetrievalWorkerState(state.pendingBatch, state.pendingOrder, state.pendingBatchNumber, map[], [], 0, state.stopped)
   }
 
   function Stop(state: RetrievalWorkerState): RetrievalWorkerState {
-    RetrievalWorkerState(state.pendingBatch, state.pendingOrder, state.processingBatch, state.processingOrder, true)
+    RetrievalWorkerState(state.pendingBatch, state.pendingOrder, state.pendingBatchNumber, state.processingBatch, state.processingOrder, state.processingBatchNumber, true)
   }
 
   function HasPendingWork(state: RetrievalWorkerState): bool {

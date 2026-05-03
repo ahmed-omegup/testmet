@@ -4,6 +4,7 @@ module ThunderDbStack {
   import opened DocsIndexModel
 
   type QueryId = int
+  type BatchNumber = nat
 
   datatype DocState = DocState(scoreValue: Score)
   datatype MaybeDocState = NoState | HasState(state: DocState)
@@ -12,7 +13,7 @@ module ThunderDbStack {
   datatype Eviction = Eviction(queryId: QueryId, docId: DocId)
   datatype MatchPayload = MatchPayload(docId: DocId, oldState: MaybeDocState, newState: MaybeDocState, matchesOld: seq<QueryId>, matchesNew: seq<QueryId>, evictions: seq<Eviction>)
   datatype RetrievalDoc = RetrievalDoc(docId: DocId, state: DocState, queries: seq<QueryId>)
-  datatype DownstreamEvent = MatchEvent(payload: MatchPayload) | RetrievalEvent(docs: seq<RetrievalDoc>)
+  datatype DownstreamEvent = MatchEvent(payload: MatchPayload) | RetrievalEvent(batchNumber: BatchNumber, docs: seq<RetrievalDoc>)
   datatype StreamItem =
     | DocChangeItem(id: DocId, oldState: MaybeDocState, newState: MaybeDocState)
     | QueryAddItem(spec: QuerySpec)

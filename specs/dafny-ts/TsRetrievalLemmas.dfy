@@ -16,12 +16,14 @@ module TsRetrievalLemmas {
     ensures BeginCycle(state).processingOrder == state.pendingOrder
     ensures BeginCycle(state).pendingBatch == map[]
     ensures BeginCycle(state).pendingOrder == []
+    ensures BeginCycle(state).processingBatchNumber == state.pendingBatchNumber
+    ensures BeginCycle(state).pendingBatchNumber == state.pendingBatchNumber + 1
   {
   }
 
-  lemma ResolveDocDropsDoc(state: RetrievalWorkerState, docId: DocId)
-    ensures !(docId in ResolveDoc(state, docId).state.pendingBatch)
-    ensures !(docId in ResolveDoc(state, docId).state.processingBatch)
+  lemma ResolveDocDropsDoc(state: RetrievalWorkerState, docId: DocId, batchHint: BatchNumber)
+    ensures !(docId in ResolveDoc(state, docId, batchHint).state.pendingBatch)
+    ensures !(docId in ResolveDoc(state, docId, batchHint).state.processingBatch)
   {
   }
 }

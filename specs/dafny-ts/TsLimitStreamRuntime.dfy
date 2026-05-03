@@ -48,7 +48,7 @@ module TsLimitStreamRuntime {
   function NotifyRetrievalResolved(state: LimitStreamState, docId: DocId): LimitStreamState
     requires LimitQueriesConsistent(state.queries)
   {
-    LimitStreamState(state.store, ResolvePendingForDoc(state.queries, docId), ResolveDoc(state.retrieval, docId).state)
+    LimitStreamState(state.store, ResolvePendingForDoc(state.queries, docId), ResolveDoc(state.retrieval, docId, 0).state)
   }
 
   function RegisterDocsForQuery(state: LimitStreamState, docs: seq<DocId>, queryId: QueryId): LimitStreamState
@@ -113,7 +113,7 @@ module TsLimitStreamRuntime {
       case NoDoc => HandleOverflowQueries(state, queries[1..])
       case SomeDoc(docId) =>
         var cancelledPending := CancelPendingForQuery(state.queries, docId, queryId);
-        var retrievalCancelled := Cancel(state.retrieval, docId, queryId);
+        var retrievalCancelled := Cancel(state.retrieval, docId, queryId, state.retrieval.pendingBatchNumber);
         var state1 := LimitStreamState(state.store, cancelledPending.state, retrievalCancelled.state);
         var state2 :=
           if cancelledPending.changed then
@@ -237,8 +237,8 @@ module TsLimitStreamRuntime {
       var finished := FinishCycle(processing);
       var nextQueries := ResolveDeliveredDocs(state.queries, payload);
       var nextState := LimitStreamState(state.store, nextQueries, finished);
-      if |payload| == 0 then StreamStep(nextState, [])
-      else StreamStep(nextState, [RetrievalEvent(payload)])
+        if |payload| == 0 then StreamStep(nextState, [])
+        else StreamStep(nextState, [RetrievalEvent(processing.processingBatchNumber, payload)])
   }
 
   function Stop(state: LimitStreamState): LimitStreamState {

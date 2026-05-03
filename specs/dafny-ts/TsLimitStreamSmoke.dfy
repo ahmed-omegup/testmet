@@ -78,28 +78,28 @@ module TsLimitStreamSmoke {
     LimitStreamState(
       map[1 := DocState(10), 2 := DocState(20), 3 := DocState(30)],
       AfterFirstQueryQueriesState(),
-      RetrievalWorkerState(map[1 := [1], 2 := [1]], [1, 2], map[], [], false))
+      RetrievalWorkerState(map[1 := [1], 2 := [1]], [1, 2], 1, map[], [], 0, false))
   }
 
   function AfterRemoveFirstDocPendingRetrievalStateValue(): LimitStreamState {
     LimitStreamState(
       map[2 := DocState(20), 3 := DocState(30)],
       AfterRemoveFirstDocQueriesState(),
-      RetrievalWorkerState(map[2 := [1], 3 := [1]], [2, 3], map[], [], false))
+      RetrievalWorkerState(map[2 := [1], 3 := [1]], [2, 3], 1, map[], [], 0, false))
   }
 
   function AfterDrainReplacementStateValue(): LimitStreamState {
     LimitStreamState(
       map[2 := DocState(20), 3 := DocState(30)],
       AfterDrainReplacementQueriesState(),
-      EmptyWorkerState())
+      RetrievalWorkerState(map[], [], 2, map[], [], 0, false))
   }
 
   function AfterAddLowScoreDocStateValue(): LimitStreamState {
     LimitStreamState(
       map[0 := DocState(5), 2 := DocState(20), 3 := DocState(30)],
       AfterAddLowScoreDocQueriesState(),
-      EmptyWorkerState())
+      RetrievalWorkerState(map[], [], 2, map[], [], 0, false))
   }
 
   function AfterRemoveOnlyQueryStateValue(): LimitStreamState {
@@ -113,7 +113,7 @@ module TsLimitStreamSmoke {
         map[],
         map[],
         map[]),
-      EmptyWorkerState())
+      RetrievalWorkerState(map[], [], 2, map[], [], 0, false))
   }
 
   method SeedInitialDocs() returns (state: LimitStreamState)
@@ -170,7 +170,7 @@ module TsLimitStreamSmoke {
     assume {:axiom} GetDocsForQuery(next.queries, 1) == [2, 3];
     assume {:axiom} next.queries.pendingByQuery == map[1 := [3]];
     assume {:axiom} next.queries.pendingByDoc == map[3 := [1]];
-    assume {:axiom} next.retrieval == RetrievalWorkerState(map[2 := [1], 3 := [1]], [2, 3], map[], [], false);
+    assume {:axiom} next.retrieval == RetrievalWorkerState(map[2 := [1], 3 := [1]], [2, 3], 1, map[], [], 0, false);
     assert removed.events == [MatchEvent(MatchPayload(1, HasState(DocState(10)), NoState, [1], [], []))];
     assert 1 in next.queries.infos;
     assert next.queries.infos[1].currentMatches == 2;
@@ -195,13 +195,13 @@ module TsLimitStreamSmoke {
     assert BuildPayload(BeginCycle(state.retrieval), state.store) == payload;
     var retrieval := DrainRetrievalCycle(state);
     next := retrieval.state;
-    assert retrieval.events == [RetrievalEvent(payload)];
+    assert retrieval.events == [RetrievalEvent(1, payload)];
     assert !(1 in next.queries.pendingByQuery);
     assert !(2 in next.queries.pendingByDoc);
     assert !(3 in next.queries.pendingByDoc);
     assert next.queries.pendingByQuery == map[];
     assert next.queries.pendingByDoc == map[];
-    assert next.retrieval == EmptyWorkerState();
+    assert next.retrieval == RetrievalWorkerState(map[], [], 2, map[], [], 0, false);
     assert WorkerConsistent(next.retrieval);
     assert LimitQueriesConsistent(next.queries);
     assert LimitStreamConsistent(next);
@@ -223,10 +223,10 @@ module TsLimitStreamSmoke {
     assume {:axiom} GetDocsForQuery(next.queries, 1) == [0, 2];
     assume {:axiom} next.queries.pendingByDoc == map[];
     assume {:axiom} next.queries.pendingByQuery == map[];
-    assume {:axiom} next.retrieval == EmptyWorkerState();
+    assume {:axiom} next.retrieval == RetrievalWorkerState(map[], [], 2, map[], [], 0, false);
     assert changed.events == [MatchEvent(MatchPayload(0, NoState, HasState(DocState(5)), [], [1], [Eviction(1, 3)]))];
     assert next.queries.pendingByQuery == map[];
-    assert next.retrieval == EmptyWorkerState();
+    assert next.retrieval == RetrievalWorkerState(map[], [], 2, map[], [], 0, false);
     assert WorkerConsistent(next.retrieval);
     assert LimitQueriesConsistent(next.queries);
     assert LimitStreamConsistent(next);
@@ -246,7 +246,7 @@ module TsLimitStreamSmoke {
     assert removedQuery == StreamStep(expected, []);
     assert removedQuery.events == [];
     assert !(1 in next.queries.infos);
-    assert next.retrieval == EmptyWorkerState();
+    assert next.retrieval == RetrievalWorkerState(map[], [], 2, map[], [], 0, false);
     assert WorkerConsistent(next.retrieval);
     assert LimitQueriesConsistent(next.queries);
     assert LimitStreamConsistent(next);
