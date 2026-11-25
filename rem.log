@@ -1,0 +1,62 @@
+Got it. I’ll align with your 16-byte layout and answer each point, then suggest a concrete path forward with minimal ambiguity.
+
+16-byte key
+
+Layout: 8 bytes pointer, 4 bytes index key, 4 bytes id. We’ll use this consistently in the index’s doc-key map and for any composite lookups. Big-endian for ordered scans.
+LSN/sequence
+
+If you guarantee a single, strictly ordered change stream and “change beats retrieval” always, we don’t need WAL LSN in the event for arbitration. Keeping a local monotonic seq can still help for:
+Idempotency across restarts/replays.
+Debug/tracing (what happened first).
+Optional: we can omit it now; add later if we introduce recovery/replay.
+Evictions
+
+Treat evictions as normal removedFrom entries (compact). No separate event; index operator will include qid-doc pairs in removedFrom when evicting due to cap.
+Filter layer + LMDB
+
+LMDB stores only:
+docId-queryId-connectionId membership (0/1, with transient -1 in memory only).
+docId-connectionId aggregate count for 0↔>0 edges.
+The filter layer receives index matches and, for each filter child of the relevant index query, evaluates:
+For addedTo: test new against predicate → add or skip.
+For removedFrom: test old against predicate → remove or skip.
+Notifications: derived from per-(doc,conn) counts.
+Coalescing/buffer
+
+We’ll add a bounded coalescing buffer with immediate flush on threshold. Within a tick we dedup per (conn,doc), prioritizing the latest change over retrieval.
+Retrieval events
+
+Retrieval is first-class and visible to the filter layer, lower priority than change. If a later change supersedes a retrieval in the buffer, we keep only the change.
+“Eviction” definition
+
+Yes: “leaving the limit range” per shared index query due to strict cap. The index operator emits that as removedFrom for the evicted doc.
+When index matches both old and new
+
+The filter layer must still evaluate its children because filter predicates may flip while the index membership remains. To avoid checking every child:
+Maintain a predicate index per index query (e.g., interval trees or per-field range maps) to quickly identify only those child predicates whose decision could change given the old→new delta (boundary crossing).
+This keeps LMDB (for correctness and dedup) and avoids exhaustive checks.
+On removing LMDB in favor of pure match events
+
+Strongly advise keeping LMDB. You’d lose:
+Per-(doc,conn) durable counts needed for overlapping filters.
+Idempotency and race resolution under concurrent events.
+Clean unsubscribe/cleanup semantics.
+We can reduce compute with the predicate index rather than dropping LMDB.
+RJ and seeding
+
+Agreed: index operator enqueues retrievals for initial seeding and hole-fill; retrieval is a declared event type and lower priority than change. Filter layer sees the type and applies the same store logic; retrievals are deduped if a change arrives.
+Limit tracking
+
+We’ll keep an in-memory pre-filter count per shared index query (updated on index membership changes). It’s just a number; used to enforce strict cap and compute deficit.
+Proposed event schema (index operator → filter operator)
+
+{ id, old, new, type: "change" | "retrieval", addedToIdx: QueryId[], removedFromIdx: QueryId[] }
+Evictions are just entries in removedFromIdx.
+Optional: seq for debugging (can skip now).
+The filter layer maps index queries to their filter children and computes child-level add/remove by evaluating predicates against old/new respectively.
+Questions to confirm
+
+Predicate index: OK to add per index query so we only visit potentially affected filter children when old→new changes?
+Buffer policy: Dedup per (conn,doc) within a bounded buffer; flush immediately on threshold; retrieval lower priority than change — OK?
+Omit LSN/seq for now, but keep the schema open to add later — OK?
+If you approve these, I’ll draft the module boundaries and event types exactly as above and move to implement the predicate-index-assisted filter evaluation, keeping LMDB for relationships and counts.
