@@ -2,6 +2,7 @@ include "CleanLimitEngine.dfy"
 
 module CleanLimitSmoke {
   import opened DocsIndexModel
+  import opened DocsIndexTreap
   import opened ThunderDbStack
   import opened CleanLimitEngine
   import opened CleanPendingRuntime
@@ -9,6 +10,12 @@ module CleanLimitSmoke {
   method Main()
     decreases *
   {
+    var largeIds := seq(100000, (index: nat) => index as int);
+    expect InsertionIndex(largeIds, 100000) == 100000;
+    expect RemoveDocId(largeIds, 99999) == largeIds[..99999];
+    expect RemoveDocId(largeIds, 100000) == largeIds;
+    expect RemoveDocId([1, 2, 1], 1) == [2, 1];
+
     var engine := new CleanEngine();
 
     var ignoredEvents, ignoredQueryId := engine.ProcessItemDeferred(SeedDocsItem([

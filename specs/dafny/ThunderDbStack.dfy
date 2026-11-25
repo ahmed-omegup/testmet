@@ -62,18 +62,38 @@ module ThunderDbStack {
     store[id := state]
   }
 
-  function RemoveStoredDoc(store: map<DocId, DocState>, id: DocId): map<DocId, DocState> {
-    map key | key in store && key != id :: store[key]
+  function RemoveStoredDoc(store: map<DocId, DocState>, id: DocId): map<DocId, DocState>
+    ensures RemoveStoredDoc(store, id) == (map key | key in store && key != id :: store[key])
+  {
+    store - {id}
+  }
+
+  lemma MapRemovalMatchesComprehension<Key, Value>(source: map<Key, Value>, removed: Key)
+    ensures source - {removed} == (map key | key in source && key != removed :: source[key])
+  {
   }
 
   function ContainsId(ids: seq<DocId>, id: DocId): bool {
-    if |ids| == 0 then false
-    else ids[0] == id || ContainsId(ids[1..], id)
+    id in ids
   }
 
   function ContainsQueryId(ids: seq<QueryId>, id: QueryId): bool {
-    if |ids| == 0 then false
-    else ids[0] == id || ContainsQueryId(ids[1..], id)
+    id in ids
+  }
+
+  ghost function RecursiveContains<T>(values: seq<T>, value: T): bool {
+    if |values| == 0 then false
+    else values[0] == value || RecursiveContains(values[1..], value)
+  }
+
+  lemma MembershipMatchesRecursive<T>(values: seq<T>, value: T)
+    ensures (value in values) == RecursiveContains(values, value)
+    decreases |values|
+  {
+    if |values| > 0 {
+      MembershipMatchesRecursive(values[1..], value);
+      assert values == [values[0]] + values[1..];
+    }
   }
 
   function AppendQueryIdUnique(ids: seq<QueryId>, id: QueryId): seq<QueryId> {
@@ -183,10 +203,36 @@ module ThunderDbStack {
     if ContainsId(ids, id) then ids else ids + [id]
   }
 
-  function RemoveDocId(ids: seq<DocId>, id: DocId): seq<DocId> {
+  function RemoveDocId(ids: seq<DocId>, id: DocId): seq<DocId>
+    ensures RemoveDocId(ids, id) == RemoveDocIdReference(ids, id)
+  {
+    RemoveDocIdFrom(ids, id, 0)
+  }
+
+  ghost function RemoveDocIdReference(ids: seq<DocId>, id: DocId): seq<DocId> {
     if |ids| == 0 then []
     else if ids[0] == id then ids[1..]
-    else [ids[0]] + RemoveDocId(ids[1..], id)
+    else [ids[0]] + RemoveDocIdReference(ids[1..], id)
+  }
+
+  function RemoveDocIdFrom(ids: seq<DocId>, id: DocId, index: nat): (result: seq<DocId>)
+    requires index <= |ids|
+    ensures RemoveDocIdFrom(ids, id, index) == ids[..index] + RemoveDocIdReference(ids[index..], id)
+    decreases |ids| - index
+  {
+    if index == |ids| then ids
+    else if ids[index] == id then ids[..index] + ids[index + 1..]
+    else RemoveDocIdFrom(ids, id, index + 1)
+  } by method {
+    var cursor := index;
+    while cursor < |ids| && ids[cursor] != id
+      invariant index <= cursor <= |ids|
+      invariant RemoveDocIdFrom(ids, id, index) == RemoveDocIdFrom(ids, id, cursor)
+      decreases |ids| - cursor
+    {
+      cursor := cursor + 1;
+    }
+    result := if cursor == |ids| then ids else ids[..cursor] + ids[cursor + 1..];
   }
 
   predicate QuerysConsistent(queries: seq<QueryRuntime>, entries: seq<Entry>) {

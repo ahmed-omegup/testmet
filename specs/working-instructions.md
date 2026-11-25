@@ -56,3 +56,4 @@ This document persists user instructions and our operating agreements. It is aut
 - Inspect all branches and consolidate the latest useful work, resolving competing implementations with the eventual goal of implementing the intended whole system in Dafny.
 - The `dafny-integration` branch combines `main3` with the source from `origin/binclean`. See the roadmap for the remaining branch differences, validation limits, and deferred work.
 - Continue substantial work toward a high-performance Dafny implementation whose intended behavior is fully proved. Distinguish checked contracts, executable tests, assumptions, and unproved behavior; do not trade correctness for speed.
+- Resolve the performance gap and keep progressing toward the full verified-system goal; use equivalent workloads and report remaining limitations explicitly.

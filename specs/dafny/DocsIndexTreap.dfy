@@ -114,9 +114,48 @@ module DocsIndexTreap {
   }
 
   function InsertionIndex(ids: seq<DocId>, id: DocId): nat {
+    InsertionIndexFrom(ids, id, 0)
+  }
+
+  function InsertionIndexFrom(ids: seq<DocId>, id: DocId, index: nat): (result: nat)
+    requires index <= |ids|
+    decreases |ids| - index
+  {
+    if index == |ids| || ids[index] >= id then index
+    else InsertionIndexFrom(ids, id, index + 1)
+  } by method {
+    var cursor := index;
+    while cursor < |ids| && ids[cursor] < id
+      invariant index <= cursor <= |ids|
+      invariant InsertionIndexFrom(ids, id, index) == InsertionIndexFrom(ids, id, cursor)
+      decreases |ids| - cursor
+    {
+      cursor := cursor + 1;
+    }
+    result := cursor;
+  }
+
+  ghost function InsertionIndexReference(ids: seq<DocId>, id: DocId): nat {
     if |ids| == 0 then 0
-    else if ids[0] < id then 1 + InsertionIndex(ids[1..], id)
+    else if ids[0] < id then 1 + InsertionIndexReference(ids[1..], id)
     else 0
+  }
+
+  lemma InsertionIndexFromMatchesReference(ids: seq<DocId>, id: DocId, index: nat)
+    requires index <= |ids|
+    ensures InsertionIndexFrom(ids, id, index) == index + InsertionIndexReference(ids[index..], id)
+    decreases |ids| - index
+  {
+    if index < |ids| && ids[index] < id {
+      InsertionIndexFromMatchesReference(ids, id, index + 1);
+      assert ids[index..][1..] == ids[index + 1..];
+    }
+  }
+
+  lemma InsertionIndexMatchesReference(ids: seq<DocId>, id: DocId)
+    ensures InsertionIndex(ids, id) == InsertionIndexReference(ids, id)
+  {
+    InsertionIndexFromMatchesReference(ids, id, 0);
   }
 
   function Pull(t: Treap): Treap
@@ -618,9 +657,14 @@ module DocsIndexTreap {
     ensures RankWithId(EntriesFromIds(score, ids), score, doc) == InsertionIndex(ids, doc)
     decreases |ids|
   {
+    InsertionIndexFromMatchesReference(ids, doc, 0);
+    assert InsertionIndex(ids, doc) == InsertionIndexReference(ids, doc);
     if |ids| == 0 {
     } else if ids[0] < doc {
       RankWithIdEntriesFromIds(score, ids[1..], doc);
+      InsertionIndexFromMatchesReference(ids[1..], doc, 0);
+      assert InsertionIndex(ids[1..], doc) == InsertionIndexReference(ids[1..], doc);
+      assert InsertionIndex(ids, doc) == 1 + InsertionIndex(ids[1..], doc);
     }
   }
 

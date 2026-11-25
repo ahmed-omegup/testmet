@@ -19,6 +19,28 @@ module CleanLimitEngine {
       docRank < upper && startRank <= docRank && docRank - startRank < spec.limit
   }
 
+  ghost function VisibleQueryIds(t: Treap, ids: seq<QueryId>, queries: map<QueryId, CleanQueryState>, score: Score, id: DocId): seq<QueryId>
+    requires SumConsistent(t)
+    decreases |ids|
+  {
+    if |ids| == 0 then []
+    else ((if ids[0] in queries && DocVisibleInTreap(t, queries[ids[0]].spec, score, id) then [ids[0]] else []) +
+      VisibleQueryIds(t, ids[1..], queries, score, id))
+  }
+
+  lemma VisibleQueryIdsAppend(t: Treap, ids: seq<QueryId>, queries: map<QueryId, CleanQueryState>, score: Score, id: DocId, queryId: QueryId)
+    requires SumConsistent(t)
+    ensures VisibleQueryIds(t, ids + [queryId], queries, score, id) ==
+      VisibleQueryIds(t, ids, queries, score, id) +
+      (if queryId in queries && DocVisibleInTreap(t, queries[queryId].spec, score, id) then [queryId] else [])
+    decreases |ids|
+  {
+    if |ids| > 0 {
+      assert (ids + [queryId])[1..] == ids[1..] + [queryId];
+      VisibleQueryIdsAppend(t, ids[1..], queries, score, id, queryId);
+    }
+  }
+
   class CleanEngine {
     var docs: Treap
     var store: map<DocId, DocState>
@@ -83,8 +105,11 @@ module CleanLimitEngine {
 
     method QueryDocAtOffset(spec: QuerySpec, offset: nat) returns (doc: MaybeDocId)
       requires this.Ready()
+      ensures offset >= Sum(this.docs) ==> doc.NoDoc?
     {
       var startRank := TreapRank(this.docs, spec.minScore, NoDoc);
+      TreapGetAtRankReturnsEntry(this.docs, startRank + offset);
+      SumEqualsEntriesLength(this.docs);
       match TreapGetAtRank(this.docs, startRank + offset)
       case Missing => {
         doc := NoDoc;
@@ -100,40 +125,47 @@ module CleanLimitEngine {
 
     method CollectVisibleQueriesInTreap(t: Treap, id: DocId, state: DocState) returns (matches: seq<QueryId>)
       requires SumConsistent(t)
-      decreases *
+      ensures matches == VisibleQueryIds(t, this.queryIds, this.queries, GetScore(state), id)
     {
       matches := [];
       var i := 0;
       while i < |this.queryIds|
         invariant 0 <= i <= |this.queryIds|
+        invariant matches == VisibleQueryIds(t, this.queryIds[..i], this.queries, GetScore(state), id)
         invariant SumConsistent(t)
       {
         var queryId := this.queryIds[i];
+        VisibleQueryIdsAppend(t, this.queryIds[..i], this.queries, GetScore(state), id, queryId);
         if queryId in this.queries {
           var spec := this.queries[queryId].spec;
           if DocVisibleInTreap(t, spec, GetScore(state), id) {
             matches := matches + [queryId];
           }
         }
+        assert this.queryIds[..i] + [queryId] == this.queryIds[..i + 1];
         i := i + 1;
       }
+      assert i == |this.queryIds|;
+      assert this.queryIds[..i] == this.queryIds;
+      assert matches == VisibleQueryIds(t, this.queryIds, this.queries, GetScore(state), id);
     }
 
     method FillGap(queryId: QueryId) returns (registered: bool)
       requires this.Ready()
       ensures this.Ready()
       modifies this
-      decreases *
     {
       registered := false;
       if queryId in this.queries {
         var query := this.queries[queryId];
         if query.currentMatches < query.spec.limit {
           var offset := query.currentMatches;
+          var initialDocs := this.docs;
           while !registered
             modifies this
-            decreases *
             invariant SumConsistent(this.docs)
+            invariant this.docs == initialDocs
+            decreases if registered then 0 else if offset < Sum(initialDocs) then Sum(initialDocs) - offset + 1 else 1
           {
             var candidate := this.QueryDocAtOffset(query.spec, offset);
             match candidate
@@ -237,7 +269,6 @@ module CleanLimitEngine {
       requires this.Ready()
       ensures this.Ready()
       modifies this
-      decreases *
     {
       events := [];
       if oldState.HasState? && newState.HasState? && GetScore(oldState.state) == GetScore(newState.state) {
@@ -364,7 +395,6 @@ module CleanLimitEngine {
       requires this.Ready()
       ensures this.Ready()
       modifies this
-      decreases *
     {
       events := [];
       queryId := 0;
@@ -387,7 +417,6 @@ module CleanLimitEngine {
       requires this.Ready()
       ensures this.Ready()
       modifies this
-      decreases *
     {
       events, queryId := this.ProcessItemDeferred(item);
       var retrievalEvents := this.DrainPendingRetrievalsGrouped();
@@ -397,7 +426,6 @@ module CleanLimitEngine {
     method ProcessItemWhenReady(item: StreamItem) returns (events: seq<DownstreamEvent>, queryId: QueryId)
       ensures old(this.Ready()) ==> this.Ready()
       modifies this
-      decreases *
     {
       if this.Ready() {
         events, queryId := this.ProcessItem(item);

@@ -20,7 +20,7 @@ module CleanPendingRuntime {
   }
 
   function RemovePendingDoc(state: PendingState, docId: DocId): PendingState {
-    PendingState(state.byQuery, map key | key in state.byDoc && key != docId :: state.byDoc[key], RemoveDocId(state.docOrder, docId))
+    PendingState(state.byQuery, state.byDoc - {docId}, RemoveDocId(state.docOrder, docId))
   }
 
   function RegisterPending(state: PendingState, docId: DocId, queryId: QueryId): PendingState {
@@ -36,14 +36,14 @@ module CleanPendingRuntime {
     var byQuery2 :=
       if queryId in state.byQuery && ContainsId(state.byQuery[queryId], docId) then
         var nextDocs := RemoveDocId(state.byQuery[queryId], docId);
-        if |nextDocs| == 0 then map key | key in state.byQuery && key != queryId :: state.byQuery[key]
+        if |nextDocs| == 0 then state.byQuery - {queryId}
         else state.byQuery[queryId := nextDocs]
       else
         state.byQuery;
     var byDoc2 :=
       if docId in state.byDoc && ContainsQueryId(state.byDoc[docId], queryId) then
         var nextQueries := RemoveQueryId(state.byDoc[docId], queryId);
-        if |nextQueries| == 0 then map key | key in state.byDoc && key != docId :: state.byDoc[key]
+        if |nextQueries| == 0 then state.byDoc - {docId}
         else state.byDoc[docId := nextQueries]
       else
         state.byDoc;
@@ -56,7 +56,7 @@ module CleanPendingRuntime {
     else
       var queriesForDoc := state.byDoc[docId];
       var byQuery2 := RemoveDocFromQueries(state.byQuery, queriesForDoc, docId);
-      PendingState(byQuery2, map key | key in state.byDoc && key != docId :: state.byDoc[key], RemoveDocId(state.docOrder, docId))
+      PendingState(byQuery2, state.byDoc - {docId}, RemoveDocId(state.docOrder, docId))
   }
 
   function RemoveDocFromQueries(byQuery: map<QueryId, seq<DocId>>, queries: seq<QueryId>, docId: DocId): map<QueryId, seq<DocId>>
@@ -67,7 +67,7 @@ module CleanPendingRuntime {
       var nextByQuery :=
         if queries[0] in byQuery then
           var nextDocs := RemoveDocId(byQuery[queries[0]], docId);
-          if |nextDocs| == 0 then map key | key in byQuery && key != queries[0] :: byQuery[key]
+          if |nextDocs| == 0 then byQuery - {queries[0]}
           else byQuery[queries[0] := nextDocs]
         else
           byQuery;

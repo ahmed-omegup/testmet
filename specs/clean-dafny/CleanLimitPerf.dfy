@@ -36,6 +36,7 @@ module CleanLimitPerf {
     while i < documents
       invariant 0 <= i <= documents
       invariant rng > 0
+      invariant engine.Ready()
       decreases documents - i
     {
       var nextRng, scoreSeed := NextRand(rng);
@@ -44,7 +45,7 @@ module CleanLimitPerf {
       i := i + 1;
     }
 
-    var seedEvents, ignoredSeedQueryId := engine.ProcessItemWhenReady(SeedDocsItem(seedDocs[..]));
+    var seedEvents, ignoredSeedQueryId := engine.ProcessItem(SeedDocsItem(seedDocs[..]));
     summary := UpdateSummary(summary, seedEvents);
 
     if !engine.Ready() {
@@ -67,7 +68,7 @@ module CleanLimitPerf {
       var minScore := minSeed % range;
       var maxScore := minScore + width;
       var spec := QuerySpec(minScore, maxScore, queryLimit);
-      var events, ignoredQueryId := engine.ProcessItemWhenReady(QueryAddItem(spec));
+      var events, ignoredQueryId := engine.ProcessItem(QueryAddItem(spec));
       summary := UpdateSummary(summary, events);
       i := i + 1;
     }
@@ -98,7 +99,7 @@ module CleanLimitPerf {
           }
           case HasState(docState) => {
             var updatedDocState := DocState(scoreSeed % range);
-            var events, ignoredQueryId2 := engine.ProcessItemWhenReady(DocChangeItem(docId, HasState(docState), HasState(updatedDocState)));
+              var events, ignoredQueryId2 := engine.ProcessItem(DocChangeItem(docId, HasState(docState), HasState(updatedDocState)));
             summary := UpdateSummary(summary, events);
           }
         }
@@ -115,7 +116,7 @@ module CleanLimitPerf {
         var nextRng5, scoreSeed := NextRand(rng);
         rng := nextRng5;
         var newDoc := DocState(scoreSeed % range);
-        var events, ignoredQueryId3 := engine.ProcessItemWhenReady(DocChangeItem(nextDocId, NoState, HasState(newDoc)));
+        var events, ignoredQueryId3 := engine.ProcessItem(DocChangeItem(nextDocId, NoState, HasState(newDoc)));
         summary := UpdateSummary(summary, events);
         nextDocId := nextDocId + 1;
         insert := insert + 1;
@@ -137,7 +138,7 @@ module CleanLimitPerf {
           case NoState => {
           }
           case HasState(docState) => {
-            var events, ignoredQueryId4 := engine.ProcessItemWhenReady(DocChangeItem(docId, HasState(docState), NoState));
+            var events, ignoredQueryId4 := engine.ProcessItem(DocChangeItem(docId, HasState(docState), NoState));
             summary := UpdateSummary(summary, events);
           }
         }
