@@ -51,3 +51,7 @@ This document persists user instructions and our operating agreements. It is aut
 ## This Instruction (2026-03-05, later)
 - “I meant the whole stack, not just the Doc Index Treap, try to reimplement the whole thunderdb-ts in Dafny, using clear structures and contracts, resolving the current problems in the ts implementation. Don't use similar DocsIndexBench-py, actually I want you to remove that folder you created to test the solution and use instead Dafny alone.”
   - Actioned: added `specs/dafny/ThunderDbStack.dfy` and `specs/dafny/ThunderDbStackBench.dfy` as the executable whole-stack Dafny worker path and pure-Dafny benchmark harness; removed the temporary Python-target benchmark artifacts from `/tmp`.
+
+## This Instruction (2026-11-25)
+- Inspect all branches and consolidate the latest useful work, resolving competing implementations with the eventual goal of implementing the intended whole system in Dafny.
+- The `dafny-integration` branch combines `main3` with the source from `origin/binclean`. See the roadmap for the remaining branch differences, validation limits, and deferred work.

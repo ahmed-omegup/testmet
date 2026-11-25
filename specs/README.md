@@ -11,6 +11,8 @@ This directory captures specification-oriented development artifacts for the rea
 - glossary-and-status.md – Central glossary, acceptance criteria, risks, and progress snapshot for future sessions
  - working-instructions.md – Persistent user instructions and working agreements
 - dafny/README.md – Dafny verification models, docs-index proofs, and the whole-stack worker harness
+- dafny-ts/README.md – TypeScript-shaped Dafny state machines and parity harnesses
+- clean-dafny/README.md – Deferred engine and pending-retrieval model
 
 ## Goals
 1. Persist architectural intent and rationale.

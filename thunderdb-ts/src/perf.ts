@@ -274,7 +274,8 @@ async function runLocal(
     if (++i % 1000 === 0) console.log(i)
   }
   const p = gen.next();
-  if (p.done || !(p.value instanceof Promise)) {
+  if (p.done) return p.value;
+  if (!(p.value instanceof Promise)) {
     throw new Error('expected final result to be a promise');
   }
   await p.value;
@@ -297,7 +298,7 @@ function* runEmbed(
 
 
   const docs = checkQuery ? {
-    db: new Map<DocId, PerfDocState>(), queries: new Map<QueryId, [QuerySpec, Map<DocId, PerfDocState | null>]>()
+    db: new Map<DocId, PerfDocState>(), queries: new Map<QueryId, [QuerySpec, Map<DocId, PerfDocState>]>()
   } : undefined;
 
   const docStore = config.enableRetrieval
@@ -326,9 +327,6 @@ function* runEmbed(
 
   const start = performance.now();
   let streamedEvents = 0;
-  const ignore = (qId: QueryId) => {
-    return qId !== 497n
-  }
   const gen = runLimitStream(
     getScore,
     (event: LimitMatchEvent<PerfDocState>) => {
@@ -340,13 +338,13 @@ function* runEmbed(
       }
       if (docs) {
         for (const qId of event.matchesOld) {
-          if(!ignore(qId)) docs.queries.get(qId)![1].set(event.docId, null);
+          docs.queries.get(qId)![1].delete(event.docId);
         }
         for (const qId of event.matchesNew) {
-          if(!ignore(qId)) docs.queries.get(qId)![1].set(event.docId, event.new);
+          if (event.new) docs.queries.get(qId)![1].set(event.docId, event.new);
         }
         for (const [qId, evicted] of event.evictions) {
-          if(!ignore(qId)) docs.queries.get(qId)![1].delete(evicted);
+          docs.queries.get(qId)![1].delete(evicted);
         }
       }
       if (event.kind === 'match') {
@@ -411,11 +409,8 @@ function* runEmbed(
         expectedMatches.set(docId, state);
       }
     }
-    for (const [k, q] of query) {
-      if (q === null) query.delete(k);
-    }
     const sortedMatches = Array.from(expectedMatches.entries()).sort((a, b) => {
-      return getScore(a[1]) - getScore(b[1]);
+      return getScore(a[1]) - getScore(b[1]) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
     }).slice(0, Number(querySpec.limit));
     if (sortedMatches.length !== query.size) {
       console.log('query spec:', qId, querySpec);

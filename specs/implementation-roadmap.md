@@ -122,3 +122,12 @@ Acceptance Criteria (Future):
 - Notifications are connection-centric and include full old/new DocState as agreed.
 - Query limits on WebSocket default to `u32::MAX`; no proactive hole-filling yet.
 - Hole-filling remains planned in Phase 2; current behavior: deletions reduce counts and emit `removed`, replacements are not fetched proactively.
+
+## Dafny Integration (2026-11-25)
+
+- The `dafny-integration` branch starts from `main3` and includes the `origin/binclean` Dafny reference, TypeScript-shaped, and clean deferred-engine tracks. The current branch's query-index and SpacetimeDB work is retained.
+- `origin/ww` retains an earlier pending-retrieval implementation and handwritten C# benchmark drivers; its generated binaries and host-specific project paths are not incorporated. The clean Dafny engine retains a pending registry, while the newer TypeScript-shaped model uses numbered batches. These lifecycles must be reconciled, including cancellation of an evicted or removed query's in-flight retrieval, before claiming whole-stack parity.
+- Local `main2` only moves a binary-search helper in `dynqueries.ts`; it does not change the algorithm. The RethinkDB retest branch changes workload behavior, including upserting missing documents on updates, and removes imports needed by the other backends; it was not adopted as the common benchmark baseline. Its history and results remain on `rethink-retest`.
+- The pure Dafny models are reference and proof scaffolding, not a complete replacement for the network, storage, replication, and connection layers. The clean engine's deferred path and the TypeScript batch lifecycle still require cross-implementation tests and contracts for pending and processing races, query removal, and evictions.
+- Some smoke and performance harnesses use `assume {:axiom}` or `{:verify false}`. A passing executable parity scenario is not a proof of all behavior. Dafny verification and smoke runs were not performed in this environment because Dafny and .NET were unavailable; the README commands contain paths from a different machine.
+- Next: install Dafny 4.11, verify each model and run smoke/parity harnesses; establish a shared whole-stack behavioral contract; add deterministic interleaving tests for pending and processing retrievals; then prove or explicitly document refinement gaps before implementing the remaining external layers.
