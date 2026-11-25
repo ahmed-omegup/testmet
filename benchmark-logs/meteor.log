@@ -1,0 +1,652 @@
+ mongo Pulling 
+ fbfd783f7a59 Pulling fs layer 
+ e79e499203c9 Pulling fs layer 
+ f97b55066391 Pulling fs layer 
+ 01d7766a2e4a Pulling fs layer 
+ 427c118b2079 Pulling fs layer 
+ 8d23bbf2b216 Pulling fs layer 
+ e46eb2190ffc Pulling fs layer 
+ cea2e6a72e6b Pulling fs layer 
+ fbfd783f7a59 Download complete 
+ 8d23bbf2b216 Download complete 
+ e79e499203c9 Download complete 
+ cea2e6a72e6b Download complete 
+ 01d7766a2e4a Downloading  1.049MB/29.73MB
+ f97b55066391 Downloading  1.049MB/303.1MB
+ 01d7766a2e4a Downloading  3.146MB/29.73MB
+ f97b55066391 Downloading  1.049MB/303.1MB
+ 01d7766a2e4a Downloading  3.146MB/29.73MB
+ e46eb2190ffc Downloading  1.049MB/1.51MB
+ f97b55066391 Downloading  2.097MB/303.1MB
+ 01d7766a2e4a Downloading  4.194MB/29.73MB
+ 427c118b2079 Download complete 
+ e46eb2190ffc Downloading  1.049MB/1.51MB
+ f97b55066391 Downloading  2.097MB/303.1MB
+ 01d7766a2e4a Downloading  4.194MB/29.73MB
+ 01d7766a2e4a Downloading   7.34MB/29.73MB
+ e46eb2190ffc Download complete 
+ f97b55066391 Downloading  3.146MB/303.1MB
+ f97b55066391 Downloading  3.146MB/303.1MB
+ 01d7766a2e4a Downloading  8.389MB/29.73MB
+ f97b55066391 Downloading  3.146MB/303.1MB
+ 01d7766a2e4a Downloading  8.389MB/29.73MB
+ f97b55066391 Downloading  3.146MB/303.1MB
+ 01d7766a2e4a Downloading  10.49MB/29.73MB
+ f97b55066391 Downloading  3.146MB/303.1MB
+ 01d7766a2e4a Downloading  11.53MB/29.73MB
+ f97b55066391 Downloading  3.146MB/303.1MB
+ 01d7766a2e4a Downloading  11.53MB/29.73MB
+ f97b55066391 Downloading  4.194MB/303.1MB
+ 01d7766a2e4a Downloading  13.63MB/29.73MB
+ f97b55066391 Downloading  4.194MB/303.1MB
+ 01d7766a2e4a Downloading  13.63MB/29.73MB
+ f97b55066391 Downloading  4.194MB/303.1MB
+ 01d7766a2e4a Downloading  14.68MB/29.73MB
+ f97b55066391 Downloading  4.194MB/303.1MB
+ 01d7766a2e4a Downloading  15.73MB/29.73MB
+ f97b55066391 Downloading  4.194MB/303.1MB
+ 01d7766a2e4a Downloading  16.78MB/29.73MB
+ f97b55066391 Downloading  4.194MB/303.1MB
+ 01d7766a2e4a Downloading  16.78MB/29.73MB
+ f97b55066391 Downloading  5.243MB/303.1MB
+ 01d7766a2e4a Downloading  16.78MB/29.73MB
+ f97b55066391 Downloading  5.243MB/303.1MB
+ 01d7766a2e4a Downloading  18.87MB/29.73MB
+ 01d7766a2e4a Downloading  19.92MB/29.73MB
+ f97b55066391 Downloading  5.243MB/303.1MB
+ 01d7766a2e4a Downloading  20.97MB/29.73MB
+ f97b55066391 Downloading  6.291MB/303.1MB
+ 01d7766a2e4a Downloading  20.97MB/29.73MB
+ f97b55066391 Downloading  6.291MB/303.1MB
+ f97b55066391 Downloading  6.291MB/303.1MB
+ 01d7766a2e4a Downloading  20.97MB/29.73MB
+ f97b55066391 Downloading  6.291MB/303.1MB
+ 01d7766a2e4a Downloading  22.02MB/29.73MB
+ f97b55066391 Downloading   7.34MB/303.1MB
+ 01d7766a2e4a Downloading  24.12MB/29.73MB
+ 01d7766a2e4a Downloading  24.12MB/29.73MB
+ f97b55066391 Downloading   7.34MB/303.1MB
+ f97b55066391 Downloading   7.34MB/303.1MB
+ 01d7766a2e4a Downloading  25.17MB/29.73MB
+ f97b55066391 Downloading  8.389MB/303.1MB
+ 01d7766a2e4a Downloading  26.21MB/29.73MB
+ 01d7766a2e4a Downloading  27.26MB/29.73MB
+ f97b55066391 Downloading  8.389MB/303.1MB
+ 01d7766a2e4a Downloading  28.31MB/29.73MB
+ f97b55066391 Downloading  8.389MB/303.1MB
+ f97b55066391 Downloading  9.437MB/303.1MB
+ 01d7766a2e4a Downloading  28.31MB/29.73MB
+ f97b55066391 Downloading  9.437MB/303.1MB
+ 01d7766a2e4a Downloading  29.73MB/29.73MB
+ f97b55066391 Downloading  9.437MB/303.1MB
+ 01d7766a2e4a Download complete 
+ 01d7766a2e4a Extracting 1 s
+ f97b55066391 Downloading  10.49MB/303.1MB
+ 01d7766a2e4a Extracting 1 s
+ f97b55066391 Downloading  10.49MB/303.1MB
+ 01d7766a2e4a Extracting 1 s
+ f97b55066391 Downloading  11.53MB/303.1MB
+ 01d7766a2e4a Extracting 1 s
+ f97b55066391 Downloading  11.53MB/303.1MB
+ 01d7766a2e4a Extracting 1 s
+ f97b55066391 Downloading  12.58MB/303.1MB
+ 01d7766a2e4a Extracting 1 s
+ f97b55066391 Downloading  12.58MB/303.1MB
+ 01d7766a2e4a Extracting 1 s
+ f97b55066391 Downloading  13.63MB/303.1MB
+ 01d7766a2e4a Pull complete 
+ f97b55066391 Downloading  13.63MB/303.1MB
+ e79e499203c9 Pull complete 
+ e46eb2190ffc Extracting 1 s
+ f97b55066391 Downloading  14.68MB/303.1MB
+ 427c118b2079 Pull complete 
+ e46eb2190ffc Pull complete 
+ f97b55066391 Downloading  15.73MB/303.1MB
+ fbfd783f7a59 Pull complete 
+ f97b55066391 Downloading  15.73MB/303.1MB
+ cea2e6a72e6b Pull complete 
+ f97b55066391 Downloading  16.78MB/303.1MB
+ f97b55066391 Downloading  16.78MB/303.1MB
+ f97b55066391 Downloading  17.83MB/303.1MB
+ f97b55066391 Downloading  17.83MB/303.1MB
+ f97b55066391 Downloading  18.87MB/303.1MB
+ f97b55066391 Downloading  19.92MB/303.1MB
+ f97b55066391 Downloading  19.92MB/303.1MB
+ f97b55066391 Downloading  20.97MB/303.1MB
+ f97b55066391 Downloading  20.97MB/303.1MB
+ f97b55066391 Downloading  22.02MB/303.1MB
+ f97b55066391 Downloading  23.07MB/303.1MB
+ f97b55066391 Downloading  23.07MB/303.1MB
+ f97b55066391 Downloading  24.12MB/303.1MB
+ f97b55066391 Downloading  24.12MB/303.1MB
+ f97b55066391 Downloading  25.17MB/303.1MB
+ f97b55066391 Downloading  25.17MB/303.1MB
+ f97b55066391 Downloading  26.21MB/303.1MB
+ f97b55066391 Downloading  27.26MB/303.1MB
+ f97b55066391 Downloading  27.26MB/303.1MB
+ f97b55066391 Downloading  28.31MB/303.1MB
+ f97b55066391 Downloading  29.36MB/303.1MB
+ f97b55066391 Downloading  29.36MB/303.1MB
+ f97b55066391 Downloading  30.41MB/303.1MB
+ f97b55066391 Downloading  30.41MB/303.1MB
+ f97b55066391 Downloading  31.46MB/303.1MB
+ f97b55066391 Downloading  32.51MB/303.1MB
+ f97b55066391 Downloading  33.55MB/303.1MB
+ f97b55066391 Downloading  33.55MB/303.1MB
+ f97b55066391 Downloading   34.6MB/303.1MB
+ f97b55066391 Downloading  35.65MB/303.1MB
+ f97b55066391 Downloading   36.7MB/303.1MB
+ f97b55066391 Downloading   36.7MB/303.1MB
+ f97b55066391 Downloading  37.75MB/303.1MB
+ f97b55066391 Downloading   38.8MB/303.1MB
+ f97b55066391 Downloading   38.8MB/303.1MB
+ f97b55066391 Downloading  39.85MB/303.1MB
+ f97b55066391 Downloading  40.89MB/303.1MB
+ f97b55066391 Downloading  40.89MB/303.1MB
+ f97b55066391 Downloading  41.94MB/303.1MB
+ f97b55066391 Downloading  42.99MB/303.1MB
+ f97b55066391 Downloading  44.04MB/303.1MB
+ f97b55066391 Downloading  45.09MB/303.1MB
+ f97b55066391 Downloading  45.09MB/303.1MB
+ f97b55066391 Downloading  46.14MB/303.1MB
+ f97b55066391 Downloading  47.19MB/303.1MB
+ f97b55066391 Downloading  47.19MB/303.1MB
+ f97b55066391 Downloading  48.23MB/303.1MB
+ f97b55066391 Downloading  48.23MB/303.1MB
+ f97b55066391 Downloading  49.28MB/303.1MB
+ f97b55066391 Downloading  50.33MB/303.1MB
+ f97b55066391 Downloading  50.33MB/303.1MB
+ f97b55066391 Downloading  51.38MB/303.1MB
+ f97b55066391 Downloading  51.38MB/303.1MB
+ f97b55066391 Downloading  52.43MB/303.1MB
+ f97b55066391 Downloading  53.48MB/303.1MB
+ f97b55066391 Downloading  53.48MB/303.1MB
+ f97b55066391 Downloading  54.53MB/303.1MB
+ f97b55066391 Downloading  54.53MB/303.1MB
+ f97b55066391 Downloading  55.57MB/303.1MB
+ f97b55066391 Downloading  55.57MB/303.1MB
+ f97b55066391 Downloading  56.62MB/303.1MB
+ f97b55066391 Downloading  56.62MB/303.1MB
+ f97b55066391 Downloading  57.67MB/303.1MB
+ f97b55066391 Downloading  57.67MB/303.1MB
+ f97b55066391 Downloading  58.72MB/303.1MB
+ f97b55066391 Downloading  58.72MB/303.1MB
+ f97b55066391 Downloading  59.77MB/303.1MB
+ f97b55066391 Downloading  59.77MB/303.1MB
+ f97b55066391 Downloading  60.82MB/303.1MB
+ f97b55066391 Downloading  60.82MB/303.1MB
+ f97b55066391 Downloading  61.87MB/303.1MB
+ f97b55066391 Downloading  61.87MB/303.1MB
+ f97b55066391 Downloading  62.91MB/303.1MB
+ f97b55066391 Downloading  62.91MB/303.1MB
+ f97b55066391 Downloading  63.96MB/303.1MB
+ f97b55066391 Downloading  63.96MB/303.1MB
+ f97b55066391 Downloading  63.96MB/303.1MB
+ f97b55066391 Downloading  65.01MB/303.1MB
+ f97b55066391 Downloading  65.01MB/303.1MB
+ f97b55066391 Downloading  66.06MB/303.1MB
+ f97b55066391 Downloading  66.06MB/303.1MB
+ f97b55066391 Downloading  67.11MB/303.1MB
+ f97b55066391 Downloading  67.11MB/303.1MB
+ f97b55066391 Downloading  67.11MB/303.1MB
+ f97b55066391 Downloading  68.16MB/303.1MB
+ f97b55066391 Downloading  68.16MB/303.1MB
+ f97b55066391 Downloading  69.21MB/303.1MB
+ f97b55066391 Downloading  69.21MB/303.1MB
+ f97b55066391 Downloading  70.25MB/303.1MB
+ f97b55066391 Downloading  70.25MB/303.1MB
+ f97b55066391 Downloading   71.3MB/303.1MB
+ f97b55066391 Downloading   71.3MB/303.1MB
+ f97b55066391 Downloading  72.35MB/303.1MB
+ f97b55066391 Downloading  72.35MB/303.1MB
+ f97b55066391 Downloading   73.4MB/303.1MB
+ f97b55066391 Downloading   73.4MB/303.1MB
+ f97b55066391 Downloading  74.45MB/303.1MB
+ f97b55066391 Downloading  74.45MB/303.1MB
+ f97b55066391 Downloading   75.5MB/303.1MB
+ f97b55066391 Downloading   75.5MB/303.1MB
+ f97b55066391 Downloading  76.55MB/303.1MB
+ f97b55066391 Downloading  76.55MB/303.1MB
+ f97b55066391 Downloading  77.59MB/303.1MB
+ f97b55066391 Downloading  77.59MB/303.1MB
+ f97b55066391 Downloading  78.64MB/303.1MB
+ f97b55066391 Downloading  78.64MB/303.1MB
+ f97b55066391 Downloading  79.69MB/303.1MB
+ f97b55066391 Downloading  79.69MB/303.1MB
+ f97b55066391 Downloading  80.74MB/303.1MB
+ f97b55066391 Downloading  81.79MB/303.1MB
+ f97b55066391 Downloading  81.79MB/303.1MB
+ f97b55066391 Downloading  82.84MB/303.1MB
+ f97b55066391 Downloading  82.84MB/303.1MB
+ f97b55066391 Downloading  83.89MB/303.1MB
+ f97b55066391 Downloading  84.93MB/303.1MB
+ f97b55066391 Downloading  84.93MB/303.1MB
+ f97b55066391 Downloading  85.98MB/303.1MB
+ f97b55066391 Downloading  85.98MB/303.1MB
+ f97b55066391 Downloading  87.03MB/303.1MB
+ f97b55066391 Downloading  87.03MB/303.1MB
+ f97b55066391 Downloading  87.24MB/303.1MB
+ f97b55066391 Downloading  88.08MB/303.1MB
+ f97b55066391 Downloading  89.13MB/303.1MB
+ f97b55066391 Downloading  89.13MB/303.1MB
+ f97b55066391 Downloading  90.18MB/303.1MB
+ f97b55066391 Downloading  90.18MB/303.1MB
+ f97b55066391 Downloading  91.23MB/303.1MB
+ f97b55066391 Downloading  92.27MB/303.1MB
+ f97b55066391 Downloading  92.27MB/303.1MB
+ f97b55066391 Downloading  93.32MB/303.1MB
+ f97b55066391 Downloading  94.37MB/303.1MB
+ f97b55066391 Downloading  94.37MB/303.1MB
+ f97b55066391 Downloading  95.42MB/303.1MB
+ f97b55066391 Downloading  96.47MB/303.1MB
+ f97b55066391 Downloading  97.52MB/303.1MB
+ f97b55066391 Downloading  97.52MB/303.1MB
+ f97b55066391 Downloading  98.57MB/303.1MB
+ f97b55066391 Downloading  99.61MB/303.1MB
+ f97b55066391 Downloading  99.61MB/303.1MB
+ f97b55066391 Downloading  100.7MB/303.1MB
+ f97b55066391 Downloading  101.7MB/303.1MB
+ f97b55066391 Downloading  101.7MB/303.1MB
+ f97b55066391 Downloading  102.8MB/303.1MB
+ f97b55066391 Downloading  103.8MB/303.1MB
+ f97b55066391 Downloading  103.8MB/303.1MB
+ f97b55066391 Downloading  104.9MB/303.1MB
+ f97b55066391 Downloading  104.9MB/303.1MB
+ f97b55066391 Downloading  105.9MB/303.1MB
+ f97b55066391 Downloading    107MB/303.1MB
+ f97b55066391 Downloading    107MB/303.1MB
+ f97b55066391 Downloading    108MB/303.1MB
+ f97b55066391 Downloading  109.1MB/303.1MB
+ f97b55066391 Downloading  110.1MB/303.1MB
+ f97b55066391 Downloading  111.1MB/303.1MB
+ f97b55066391 Downloading  111.1MB/303.1MB
+ f97b55066391 Downloading  112.2MB/303.1MB
+ f97b55066391 Downloading  112.2MB/303.1MB
+ f97b55066391 Downloading  113.2MB/303.1MB
+ f97b55066391 Downloading  114.3MB/303.1MB
+ f97b55066391 Downloading  114.3MB/303.1MB
+ f97b55066391 Downloading  115.3MB/303.1MB
+ f97b55066391 Downloading  115.3MB/303.1MB
+ f97b55066391 Downloading  116.4MB/303.1MB
+ f97b55066391 Downloading  117.4MB/303.1MB
+ f97b55066391 Downloading  117.4MB/303.1MB
+ f97b55066391 Downloading  118.5MB/303.1MB
+ f97b55066391 Downloading  119.5MB/303.1MB
+ f97b55066391 Downloading  119.5MB/303.1MB
+ f97b55066391 Downloading  120.6MB/303.1MB
+ f97b55066391 Downloading  120.6MB/303.1MB
+ f97b55066391 Downloading  121.6MB/303.1MB
+ f97b55066391 Downloading  122.7MB/303.1MB
+ f97b55066391 Downloading  123.7MB/303.1MB
+ f97b55066391 Downloading  123.7MB/303.1MB
+ f97b55066391 Downloading  124.8MB/303.1MB
+ f97b55066391 Downloading  125.8MB/303.1MB
+ f97b55066391 Downloading  125.8MB/303.1MB
+ f97b55066391 Downloading  126.9MB/303.1MB
+ f97b55066391 Downloading  127.9MB/303.1MB
+ f97b55066391 Downloading  127.9MB/303.1MB
+ f97b55066391 Downloading    129MB/303.1MB
+ f97b55066391 Downloading    130MB/303.1MB
+ f97b55066391 Downloading  131.1MB/303.1MB
+ f97b55066391 Downloading  131.1MB/303.1MB
+ f97b55066391 Downloading  132.1MB/303.1MB
+ f97b55066391 Downloading  133.2MB/303.1MB
+ f97b55066391 Downloading  134.2MB/303.1MB
+ f97b55066391 Downloading  135.3MB/303.1MB
+ f97b55066391 Downloading  135.3MB/303.1MB
+ f97b55066391 Downloading  136.3MB/303.1MB
+ f97b55066391 Downloading  137.4MB/303.1MB
+ f97b55066391 Downloading  138.4MB/303.1MB
+ f97b55066391 Downloading  139.5MB/303.1MB
+ f97b55066391 Downloading  139.5MB/303.1MB
+ f97b55066391 Downloading  140.5MB/303.1MB
+ f97b55066391 Downloading  141.6MB/303.1MB
+ f97b55066391 Downloading  142.6MB/303.1MB
+ f97b55066391 Downloading  142.6MB/303.1MB
+ f97b55066391 Downloading  143.7MB/303.1MB
+ f97b55066391 Downloading  143.7MB/303.1MB
+ f97b55066391 Downloading  144.7MB/303.1MB
+ f97b55066391 Downloading  144.7MB/303.1MB
+ f97b55066391 Downloading  145.8MB/303.1MB
+ f97b55066391 Downloading  146.8MB/303.1MB
+ f97b55066391 Downloading  146.8MB/303.1MB
+ f97b55066391 Downloading  147.8MB/303.1MB
+ f97b55066391 Downloading  147.8MB/303.1MB
+ f97b55066391 Downloading  148.9MB/303.1MB
+ f97b55066391 Downloading  149.9MB/303.1MB
+ f97b55066391 Downloading  149.9MB/303.1MB
+ f97b55066391 Downloading    151MB/303.1MB
+ f97b55066391 Downloading    151MB/303.1MB
+ f97b55066391 Downloading    151MB/303.1MB
+ f97b55066391 Downloading    152MB/303.1MB
+ f97b55066391 Downloading    152MB/303.1MB
+ f97b55066391 Downloading  153.1MB/303.1MB
+ f97b55066391 Downloading  153.1MB/303.1MB
+ f97b55066391 Downloading  154.1MB/303.1MB
+ f97b55066391 Downloading  154.1MB/303.1MB
+ f97b55066391 Downloading  155.2MB/303.1MB
+ f97b55066391 Downloading  155.2MB/303.1MB
+ f97b55066391 Downloading  156.2MB/303.1MB
+ f97b55066391 Downloading  156.2MB/303.1MB
+ f97b55066391 Downloading  157.3MB/303.1MB
+ f97b55066391 Downloading  157.3MB/303.1MB
+ f97b55066391 Downloading  158.3MB/303.1MB
+ f97b55066391 Downloading  158.3MB/303.1MB
+ f97b55066391 Downloading  159.4MB/303.1MB
+ f97b55066391 Downloading  159.4MB/303.1MB
+ f97b55066391 Downloading  160.4MB/303.1MB
+ f97b55066391 Downloading  160.4MB/303.1MB
+ f97b55066391 Downloading  161.5MB/303.1MB
+ f97b55066391 Downloading  161.5MB/303.1MB
+ f97b55066391 Downloading  162.5MB/303.1MB
+ f97b55066391 Downloading  163.6MB/303.1MB
+ f97b55066391 Downloading  163.6MB/303.1MB
+ f97b55066391 Downloading  163.6MB/303.1MB
+ f97b55066391 Downloading  164.6MB/303.1MB
+ f97b55066391 Downloading  164.6MB/303.1MB
+ f97b55066391 Downloading  165.7MB/303.1MB
+ f97b55066391 Downloading  165.7MB/303.1MB
+ f97b55066391 Downloading  166.7MB/303.1MB
+ f97b55066391 Downloading  167.8MB/303.1MB
+ f97b55066391 Downloading  167.8MB/303.1MB
+ f97b55066391 Downloading  168.8MB/303.1MB
+ f97b55066391 Downloading  168.8MB/303.1MB
+ f97b55066391 Downloading  169.9MB/303.1MB
+ f97b55066391 Downloading  169.9MB/303.1MB
+ f97b55066391 Downloading  170.9MB/303.1MB
+ f97b55066391 Downloading  170.9MB/303.1MB
+ f97b55066391 Downloading    172MB/303.1MB
+ f97b55066391 Downloading    172MB/303.1MB
+ f97b55066391 Downloading    173MB/303.1MB
+ f97b55066391 Downloading  174.1MB/303.1MB
+ f97b55066391 Downloading  174.1MB/303.1MB
+ f97b55066391 Downloading  175.1MB/303.1MB
+ f97b55066391 Downloading  176.2MB/303.1MB
+ f97b55066391 Downloading  176.2MB/303.1MB
+ f97b55066391 Downloading  177.2MB/303.1MB
+ f97b55066391 Downloading  178.3MB/303.1MB
+ f97b55066391 Downloading  178.3MB/303.1MB
+ f97b55066391 Downloading  179.3MB/303.1MB
+ f97b55066391 Downloading  180.4MB/303.1MB
+ f97b55066391 Downloading  180.4MB/303.1MB
+ f97b55066391 Downloading  181.4MB/303.1MB
+ f97b55066391 Downloading  182.5MB/303.1MB
+ f97b55066391 Downloading  182.5MB/303.1MB
+ f97b55066391 Downloading  183.5MB/303.1MB
+ f97b55066391 Downloading  184.5MB/303.1MB
+ f97b55066391 Downloading  185.6MB/303.1MB
+ f97b55066391 Downloading  185.6MB/303.1MB
+ f97b55066391 Downloading  186.6MB/303.1MB
+ f97b55066391 Downloading  186.6MB/303.1MB
+ f97b55066391 Downloading  187.7MB/303.1MB
+ f97b55066391 Downloading  187.7MB/303.1MB
+ f97b55066391 Downloading  187.7MB/303.1MB
+ f97b55066391 Downloading  188.7MB/303.1MB
+ f97b55066391 Downloading  189.8MB/303.1MB
+ f97b55066391 Downloading  189.8MB/303.1MB
+ f97b55066391 Downloading  190.8MB/303.1MB
+ f97b55066391 Downloading  190.8MB/303.1MB
+ f97b55066391 Downloading  191.9MB/303.1MB
+ f97b55066391 Downloading  191.9MB/303.1MB
+ f97b55066391 Downloading  192.9MB/303.1MB
+ f97b55066391 Downloading    194MB/303.1MB
+ f97b55066391 Downloading    194MB/303.1MB
+ f97b55066391 Downloading    195MB/303.1MB
+ f97b55066391 Downloading    195MB/303.1MB
+ f97b55066391 Downloading  196.1MB/303.1MB
+ f97b55066391 Downloading  197.1MB/303.1MB
+ f97b55066391 Downloading  197.1MB/303.1MB
+ f97b55066391 Downloading  198.2MB/303.1MB
+ f97b55066391 Downloading  199.2MB/303.1MB
+ f97b55066391 Downloading  199.2MB/303.1MB
+ f97b55066391 Downloading  200.3MB/303.1MB
+ f97b55066391 Downloading  201.3MB/303.1MB
+ f97b55066391 Downloading  202.4MB/303.1MB
+ f97b55066391 Downloading  202.4MB/303.1MB
+ f97b55066391 Downloading  203.4MB/303.1MB
+ f97b55066391 Downloading  204.5MB/303.1MB
+ f97b55066391 Downloading  204.5MB/303.1MB
+ f97b55066391 Downloading  205.5MB/303.1MB
+ f97b55066391 Downloading  206.6MB/303.1MB
+ f97b55066391 Downloading  206.6MB/303.1MB
+ f97b55066391 Downloading  207.6MB/303.1MB
+ f97b55066391 Downloading  208.7MB/303.1MB
+ f97b55066391 Downloading  209.7MB/303.1MB
+ f97b55066391 Downloading  209.7MB/303.1MB
+ f97b55066391 Downloading  210.8MB/303.1MB
+ f97b55066391 Downloading  210.8MB/303.1MB
+ f97b55066391 Downloading  211.8MB/303.1MB
+ f97b55066391 Downloading  212.9MB/303.1MB
+ f97b55066391 Downloading  213.9MB/303.1MB
+ f97b55066391 Downloading  213.9MB/303.1MB
+ f97b55066391 Downloading    215MB/303.1MB
+ f97b55066391 Downloading    216MB/303.1MB
+ f97b55066391 Downloading    216MB/303.1MB
+ f97b55066391 Downloading  217.1MB/303.1MB
+ f97b55066391 Downloading  218.1MB/303.1MB
+ f97b55066391 Downloading  218.1MB/303.1MB
+ f97b55066391 Downloading  219.2MB/303.1MB
+ f97b55066391 Downloading  219.2MB/303.1MB
+ f97b55066391 Downloading  220.2MB/303.1MB
+ f97b55066391 Downloading  220.2MB/303.1MB
+ f97b55066391 Downloading  221.2MB/303.1MB
+ f97b55066391 Downloading  221.2MB/303.1MB
+ f97b55066391 Downloading  222.3MB/303.1MB
+ f97b55066391 Downloading  223.3MB/303.1MB
+ f97b55066391 Downloading  223.3MB/303.1MB
+ f97b55066391 Downloading  224.4MB/303.1MB
+ f97b55066391 Downloading  224.4MB/303.1MB
+ f97b55066391 Downloading  225.4MB/303.1MB
+ f97b55066391 Downloading  225.4MB/303.1MB
+ f97b55066391 Downloading  226.5MB/303.1MB
+ f97b55066391 Downloading  226.5MB/303.1MB
+ f97b55066391 Downloading  227.5MB/303.1MB
+ f97b55066391 Downloading  227.5MB/303.1MB
+ f97b55066391 Downloading  228.6MB/303.1MB
+ f97b55066391 Downloading  228.6MB/303.1MB
+ f97b55066391 Downloading  229.6MB/303.1MB
+ f97b55066391 Downloading  229.6MB/303.1MB
+ f97b55066391 Downloading  229.6MB/303.1MB
+ f97b55066391 Downloading  230.7MB/303.1MB
+ f97b55066391 Downloading  230.7MB/303.1MB
+ f97b55066391 Downloading  231.7MB/303.1MB
+ f97b55066391 Downloading  231.7MB/303.1MB
+ f97b55066391 Downloading  232.8MB/303.1MB
+ f97b55066391 Downloading  232.8MB/303.1MB
+ f97b55066391 Downloading  233.8MB/303.1MB
+ f97b55066391 Downloading  233.8MB/303.1MB
+ f97b55066391 Downloading  233.8MB/303.1MB
+ f97b55066391 Downloading  234.9MB/303.1MB
+ f97b55066391 Downloading  234.9MB/303.1MB
+ f97b55066391 Downloading  235.9MB/303.1MB
+ f97b55066391 Downloading  235.9MB/303.1MB
+ f97b55066391 Downloading    237MB/303.1MB
+ f97b55066391 Downloading    237MB/303.1MB
+ f97b55066391 Downloading    238MB/303.1MB
+ f97b55066391 Downloading    238MB/303.1MB
+ f97b55066391 Downloading  239.1MB/303.1MB
+ f97b55066391 Downloading  239.1MB/303.1MB
+ f97b55066391 Downloading  240.1MB/303.1MB
+ f97b55066391 Downloading  240.1MB/303.1MB
+ f97b55066391 Downloading  241.2MB/303.1MB
+ f97b55066391 Downloading  241.2MB/303.1MB
+ f97b55066391 Downloading  242.2MB/303.1MB
+ f97b55066391 Downloading  242.2MB/303.1MB
+ f97b55066391 Downloading  243.3MB/303.1MB
+ f97b55066391 Downloading  243.3MB/303.1MB
+ f97b55066391 Downloading  243.3MB/303.1MB
+ f97b55066391 Downloading  244.3MB/303.1MB
+ f97b55066391 Downloading  244.3MB/303.1MB
+ f97b55066391 Downloading  245.4MB/303.1MB
+ f97b55066391 Downloading  245.4MB/303.1MB
+ f97b55066391 Downloading  246.4MB/303.1MB
+ f97b55066391 Downloading  246.4MB/303.1MB
+ f97b55066391 Downloading  247.5MB/303.1MB
+ f97b55066391 Downloading  247.5MB/303.1MB
+ f97b55066391 Downloading  248.5MB/303.1MB
+ f97b55066391 Downloading  248.5MB/303.1MB
+ f97b55066391 Downloading  249.6MB/303.1MB
+ f97b55066391 Downloading  249.6MB/303.1MB
+ f97b55066391 Downloading  250.6MB/303.1MB
+ f97b55066391 Downloading  250.6MB/303.1MB
+ f97b55066391 Downloading  251.7MB/303.1MB
+ f97b55066391 Downloading  251.7MB/303.1MB
+ f97b55066391 Downloading  252.7MB/303.1MB
+ f97b55066391 Downloading  252.7MB/303.1MB
+ f97b55066391 Downloading  253.8MB/303.1MB
+ f97b55066391 Downloading  254.8MB/303.1MB
+ f97b55066391 Downloading  254.8MB/303.1MB
+ f97b55066391 Downloading  255.9MB/303.1MB
+ f97b55066391 Downloading  256.9MB/303.1MB
+ f97b55066391 Downloading  256.9MB/303.1MB
+ f97b55066391 Downloading  257.9MB/303.1MB
+ f97b55066391 Downloading    259MB/303.1MB
+ f97b55066391 Downloading    259MB/303.1MB
+ f97b55066391 Downloading    260MB/303.1MB
+ f97b55066391 Downloading    260MB/303.1MB
+ f97b55066391 Downloading  261.1MB/303.1MB
+ f97b55066391 Downloading  261.1MB/303.1MB
+ f97b55066391 Downloading  262.1MB/303.1MB
+ f97b55066391 Downloading  262.1MB/303.1MB
+ f97b55066391 Downloading  263.2MB/303.1MB
+ f97b55066391 Downloading  264.2MB/303.1MB
+ f97b55066391 Downloading  264.2MB/303.1MB
+ f97b55066391 Downloading  265.3MB/303.1MB
+ f97b55066391 Downloading  265.3MB/303.1MB
+ f97b55066391 Downloading  266.3MB/303.1MB
+ f97b55066391 Downloading  267.4MB/303.1MB
+ f97b55066391 Downloading  268.4MB/303.1MB
+ f97b55066391 Downloading  268.4MB/303.1MB
+ f97b55066391 Downloading  269.5MB/303.1MB
+ f97b55066391 Downloading  270.5MB/303.1MB
+ f97b55066391 Downloading  270.5MB/303.1MB
+ f97b55066391 Downloading  271.6MB/303.1MB
+ f97b55066391 Downloading  272.6MB/303.1MB
+ f97b55066391 Downloading  272.6MB/303.1MB
+ f97b55066391 Downloading  273.7MB/303.1MB
+ f97b55066391 Downloading  274.7MB/303.1MB
+ f97b55066391 Downloading  274.7MB/303.1MB
+ f97b55066391 Downloading  275.8MB/303.1MB
+ f97b55066391 Downloading  276.8MB/303.1MB
+ f97b55066391 Downloading  276.8MB/303.1MB
+ f97b55066391 Downloading  277.9MB/303.1MB
+ f97b55066391 Downloading  277.9MB/303.1MB
+ f97b55066391 Downloading  278.9MB/303.1MB
+ f97b55066391 Downloading  278.9MB/303.1MB
+ f97b55066391 Downloading    280MB/303.1MB
+ f97b55066391 Downloading    280MB/303.1MB
+ f97b55066391 Downloading    281MB/303.1MB
+ f97b55066391 Downloading    281MB/303.1MB
+ f97b55066391 Downloading  282.1MB/303.1MB
+ f97b55066391 Downloading  283.1MB/303.1MB
+ f97b55066391 Downloading  283.1MB/303.1MB
+ f97b55066391 Downloading  284.2MB/303.1MB
+ f97b55066391 Downloading  284.2MB/303.1MB
+ f97b55066391 Downloading  285.2MB/303.1MB
+ f97b55066391 Downloading  286.3MB/303.1MB
+ f97b55066391 Downloading  286.3MB/303.1MB
+ f97b55066391 Downloading  287.3MB/303.1MB
+ f97b55066391 Downloading  288.4MB/303.1MB
+ f97b55066391 Downloading  288.4MB/303.1MB
+ f97b55066391 Downloading  289.4MB/303.1MB
+ f97b55066391 Downloading  289.4MB/303.1MB
+ f97b55066391 Downloading  290.5MB/303.1MB
+ f97b55066391 Downloading  291.5MB/303.1MB
+ f97b55066391 Downloading  291.5MB/303.1MB
+ f97b55066391 Downloading  292.6MB/303.1MB
+ f97b55066391 Downloading  293.6MB/303.1MB
+ f97b55066391 Downloading  293.6MB/303.1MB
+ f97b55066391 Downloading  294.6MB/303.1MB
+ f97b55066391 Downloading  294.6MB/303.1MB
+ f97b55066391 Downloading  295.7MB/303.1MB
+ f97b55066391 Downloading  296.7MB/303.1MB
+ f97b55066391 Downloading  297.8MB/303.1MB
+ f97b55066391 Downloading  297.8MB/303.1MB
+ f97b55066391 Downloading  298.8MB/303.1MB
+ f97b55066391 Downloading  299.9MB/303.1MB
+ f97b55066391 Downloading  299.9MB/303.1MB
+ f97b55066391 Downloading  299.9MB/303.1MB
+ f97b55066391 Downloading  300.9MB/303.1MB
+ f97b55066391 Downloading    302MB/303.1MB
+ f97b55066391 Downloading    302MB/303.1MB
+ f97b55066391 Downloading  303.1MB/303.1MB
+ f97b55066391 Downloading  303.1MB/303.1MB
+ f97b55066391 Download complete 
+ f97b55066391 Extracting 1 s
+ f97b55066391 Extracting 1 s
+ f97b55066391 Extracting 1 s
+ f97b55066391 Extracting 1 s
+ f97b55066391 Extracting 1 s
+ f97b55066391 Extracting 1 s
+ f97b55066391 Extracting 1 s
+ f97b55066391 Extracting 1 s
+ f97b55066391 Extracting 1 s
+ f97b55066391 Extracting 1 s
+ f97b55066391 Extracting 1 s
+ f97b55066391 Extracting 2 s
+ f97b55066391 Extracting 2 s
+ f97b55066391 Extracting 2 s
+ f97b55066391 Extracting 2 s
+ f97b55066391 Extracting 2 s
+ f97b55066391 Extracting 2 s
+ f97b55066391 Extracting 2 s
+ f97b55066391 Extracting 2 s
+ f97b55066391 Extracting 2 s
+ f97b55066391 Extracting 2 s
+ f97b55066391 Extracting 3 s
+ f97b55066391 Extracting 3 s
+ f97b55066391 Extracting 3 s
+ f97b55066391 Extracting 3 s
+ f97b55066391 Extracting 3 s
+ f97b55066391 Extracting 3 s
+ f97b55066391 Extracting 3 s
+ f97b55066391 Extracting 3 s
+ f97b55066391 Extracting 3 s
+ f97b55066391 Extracting 3 s
+ f97b55066391 Extracting 4 s
+ 8d23bbf2b216 Extracting 1 s
+ f97b55066391 Pull complete 
+ 8d23bbf2b216 Pull complete 
+ mongo Pulled 
+#1 [internal] load local bake definitions
+#1 reading from stdin 939B done
+#1 DONE 0.0s
+
+#2 [tester internal] load build definition from Dockerfile
+#2 transferring dockerfile: 131B done
+#2 DONE 0.0s
+
+#3 [meteor internal] load build definition from Dockerfile
+#3 transferring dockerfile: 766B done
+#3 DONE 0.1s
+
+#4 [tester internal] load metadata for docker.io/library/node:20
+#4 ...
+
+#5 [meteor internal] load metadata for docker.io/library/meteor332:latest
+#5 ERROR: pull access denied, repository does not exist or may require authorization: server message: insufficient_scope: authorization failed
+
+#6 [meteor internal] load metadata for docker.io/library/node:trixie-slim
+#6 CANCELED
+
+#4 [tester internal] load metadata for docker.io/library/node:20
+#4 CANCELED
+------
+ > [meteor internal] load metadata for docker.io/library/meteor332:latest:
+------
+Dockerfile:2
+
+--------------------
+
+   1 |     # Build stage
+
+   2 | >>> FROM meteor332 AS builder
+
+   3 |     
+
+   4 |     WORKDIR /app
+
+--------------------
+
+target meteor: failed to solve: meteor332: failed to resolve source metadata for docker.io/library/meteor332:latest: pull access denied, repository does not exist or may require authorization: server message: insufficient_scope: authorization failed
+

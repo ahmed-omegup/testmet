@@ -1,0 +1,22 @@
+Counter-only implementation analysis:
+
+CURRENT (Counter-only + eager gap-filling):
+- Runtime: ~1.35s for 1651 events = ~1223 events/sec
+- Hot path: ApplyDocChange loop calling TreapCollectRange per affected query
+- Approx 100 queries affected per update × 1050 updates = ~105k TreeCollectRange calls
+- TreeCollectRange cost: O(log D + k) where D=800, k=25 = ~80 ops per call
+- Total: ~8.4M tree operations
+
+TYPESCRIPT EQUIVALENT (Lazy gap-filling):
+- Runtime: ~52ms for 700k events (long-run baseline) = ~13,461 events/sec
+- On update: O(1) counter increment/decrement per affected query
+- On gap-filling (deferred): Selective TreapCollectRange when needed
+- Estimated ~100k counter ops on updates + ~10k lazy TreeCollectRange on gaps
+- Much lower constant factor
+
+PERFORMANCE GAP: 11x slower (1223 vs 13461 events/sec)
+
+ROOT CAUSE: Eager full recomputation of visible lists on EVERY update
+vs lazy deferred computation in TS
+
+SOLUTION: Implement TypeScript's lazy gap-filling approach

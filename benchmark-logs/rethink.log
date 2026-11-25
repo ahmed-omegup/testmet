@@ -1,0 +1,319 @@
+#1 [internal] load local bake definitions
+#1 reading from stdin 513B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile:
+#2 transferring dockerfile: 131B done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/node:20
+#3 DONE 1.8s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2B done
+#4 DONE 0.0s
+
+#5 [1/3] FROM docker.io/library/node:20@sha256:bd3086f61c05f8925ed2026bee608a40ad9f8a5d28b6e593342237469ee5b621
+#5 resolve docker.io/library/node:20@sha256:bd3086f61c05f8925ed2026bee608a40ad9f8a5d28b6e593342237469ee5b621 0.1s done
+#5 DONE 0.5s
+
+#5 [1/3] FROM docker.io/library/node:20@sha256:bd3086f61c05f8925ed2026bee608a40ad9f8a5d28b6e593342237469ee5b621
+#5 sha256:9b5e565fb66dda94c279392af5358d56750b05cf6d79cd435e142ef7da2e6052 0B / 450B 0.2s
+#5 sha256:84f58084391d83077a93abe7d2a9958aa92c7e7190bb509327d24fed442a232f 0B / 1.25MB 0.2s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 0B / 48.62MB 0.2s
+#5 sha256:f1bca536b1393023caf1f20b42a54a1351d38a3e499d5c3627565b3979b052b4 0B / 3.33kB 0.2s
+#5 sha256:9b5e565fb66dda94c279392af5358d56750b05cf6d79cd435e142ef7da2e6052 450B / 450B 0.4s done
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 0B / 211.51MB 0.2s
+#5 sha256:84f58084391d83077a93abe7d2a9958aa92c7e7190bb509327d24fed442a232f 1.25MB / 1.25MB 0.8s done
+#5 sha256:f1bca536b1393023caf1f20b42a54a1351d38a3e499d5c3627565b3979b052b4 3.33kB / 3.33kB 1.0s done
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 0B / 64.40MB 0.2s
+#5 sha256:aab3b37e4807fe48145826511e16a527bbc4695222ceb966669a4d16729b3b94 0B / 24.04MB 0.2s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 3.15MB / 48.62MB 1.2s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 6.29MB / 48.62MB 1.5s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 9.44MB / 48.62MB 2.4s
+#5 sha256:aab3b37e4807fe48145826511e16a527bbc4695222ceb966669a4d16729b3b94 2.10MB / 24.04MB 1.5s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 13.63MB / 48.62MB 3.2s
+#5 sha256:aab3b37e4807fe48145826511e16a527bbc4695222ceb966669a4d16729b3b94 4.19MB / 24.04MB 2.3s
+#5 sha256:aab3b37e4807fe48145826511e16a527bbc4695222ceb966669a4d16729b3b94 6.29MB / 24.04MB 2.9s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 16.78MB / 48.62MB 4.2s
+#5 sha256:aab3b37e4807fe48145826511e16a527bbc4695222ceb966669a4d16729b3b94 8.39MB / 24.04MB 3.2s
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 11.53MB / 211.51MB 3.9s
+#5 sha256:aab3b37e4807fe48145826511e16a527bbc4695222ceb966669a4d16729b3b94 10.49MB / 24.04MB 3.9s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 19.92MB / 48.62MB 5.4s
+#5 sha256:aab3b37e4807fe48145826511e16a527bbc4695222ceb966669a4d16729b3b94 12.58MB / 24.04MB 4.7s
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 2.10MB / 64.40MB 5.3s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 23.07MB / 48.62MB 6.5s
+#5 sha256:aab3b37e4807fe48145826511e16a527bbc4695222ceb966669a4d16729b3b94 14.68MB / 24.04MB 5.4s
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 23.07MB / 211.51MB 6.8s
+#5 sha256:aab3b37e4807fe48145826511e16a527bbc4695222ceb966669a4d16729b3b94 16.78MB / 24.04MB 6.2s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 26.21MB / 48.62MB 7.5s
+#5 sha256:aab3b37e4807fe48145826511e16a527bbc4695222ceb966669a4d16729b3b94 18.87MB / 24.04MB 6.8s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 29.36MB / 48.62MB 8.4s
+#5 sha256:aab3b37e4807fe48145826511e16a527bbc4695222ceb966669a4d16729b3b94 20.97MB / 24.04MB 7.7s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 32.51MB / 48.62MB 9.3s
+#5 sha256:aab3b37e4807fe48145826511e16a527bbc4695222ceb966669a4d16729b3b94 23.07MB / 24.04MB 8.4s
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 6.29MB / 64.40MB 9.0s
+#5 sha256:aab3b37e4807fe48145826511e16a527bbc4695222ceb966669a4d16729b3b94 24.04MB / 24.04MB 8.9s done
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 34.60MB / 211.51MB 9.6s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 0B / 48.49MB 0.2s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 35.65MB / 48.62MB 10.2s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 38.80MB / 48.62MB 11.1s
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 46.14MB / 211.51MB 11.7s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 41.94MB / 48.62MB 12.3s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 3.15MB / 48.49MB 2.4s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 44.50MB / 48.62MB 13.2s
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 10.49MB / 64.40MB 12.9s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 47.19MB / 48.62MB 14.0s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 6.29MB / 48.49MB 4.1s
+#5 sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 48.62MB / 48.62MB 14.3s done
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 57.67MB / 211.51MB 14.4s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 9.44MB / 48.49MB 5.1s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 12.58MB / 48.49MB 3.5s
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 69.21MB / 211.51MB 14.0s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 15.73MB / 48.49MB 4.6s
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 14.68MB / 64.40MB 13.9s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 18.87MB / 48.49MB 5.3s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 22.02MB / 48.49MB 5.8s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 25.17MB / 48.49MB 6.2s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 28.31MB / 48.49MB 6.7s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 31.46MB / 48.49MB 7.3s
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 80.74MB / 211.51MB 17.0s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 34.60MB / 48.49MB 7.9s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 37.75MB / 48.49MB 8.5s
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 18.87MB / 64.40MB 17.8s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 40.89MB / 48.49MB 8.9s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 44.04MB / 48.49MB 9.7s
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 92.27MB / 211.51MB 19.3s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 47.19MB / 48.49MB 10.3s
+#5 sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 48.49MB / 48.49MB 10.5s done
+#5 extracting sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 103.81MB / 211.51MB 21.1s
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 23.07MB / 64.40MB 20.8s
+#5 extracting sha256:6a7e0620566c7dfbe5d3c9a7601d116556ec17a021b3e824f8ab09d12b0c25c6 1.0s done
+#5 extracting sha256:aab3b37e4807fe48145826511e16a527bbc4695222ceb966669a4d16729b3b94
+#5 extracting sha256:aab3b37e4807fe48145826511e16a527bbc4695222ceb966669a4d16729b3b94 0.4s done
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 27.26MB / 64.40MB 22.3s
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 115.34MB / 211.51MB 23.0s
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 31.46MB / 64.40MB 23.5s
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 126.88MB / 211.51MB 24.5s
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 35.65MB / 64.40MB 24.7s
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 39.85MB / 64.40MB 25.7s
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 138.41MB / 211.51MB 26.5s
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 44.04MB / 64.40MB 26.8s
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 48.23MB / 64.40MB 27.8s
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 149.95MB / 211.51MB 28.4s
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 52.43MB / 64.40MB 28.9s
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 161.48MB / 211.51MB 30.1s
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 56.62MB / 64.40MB 29.8s
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 60.82MB / 64.40MB 30.8s
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 173.02MB / 211.51MB 32.0s
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 64.40MB / 64.40MB 32.8s
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 184.55MB / 211.51MB 33.2s
+#5 sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 64.40MB / 64.40MB 33.0s done
+#5 extracting sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 197.13MB / 211.51MB 34.4s
+#5 extracting sha256:fa27031269f0a970255d56a9e793fc2a9d6bb091463cd5e632af4ae274881601 1.3s done
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 208.67MB / 211.51MB 35.8s
+#5 sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 211.51MB / 211.51MB 36.1s done
+#5 DONE 37.1s
+
+#5 [1/3] FROM docker.io/library/node:20@sha256:bd3086f61c05f8925ed2026bee608a40ad9f8a5d28b6e593342237469ee5b621
+#5 extracting sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884
+#5 extracting sha256:c032818082ff938f43355abf00f71e5531be197952a109867259ad63a917c884 3.5s done
+#5 DONE 40.7s
+
+#5 [1/3] FROM docker.io/library/node:20@sha256:bd3086f61c05f8925ed2026bee608a40ad9f8a5d28b6e593342237469ee5b621
+#5 extracting sha256:f1bca536b1393023caf1f20b42a54a1351d38a3e499d5c3627565b3979b052b4 0.0s done
+#5 extracting sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4
+#5 extracting sha256:9e78956da810a6f1720dd9ce67e9f767c90cb0728400e632c933efa2c82eaec4 1.3s done
+#5 extracting sha256:84f58084391d83077a93abe7d2a9958aa92c7e7190bb509327d24fed442a232f
+#5 extracting sha256:84f58084391d83077a93abe7d2a9958aa92c7e7190bb509327d24fed442a232f 0.1s done
+#5 extracting sha256:9b5e565fb66dda94c279392af5358d56750b05cf6d79cd435e142ef7da2e6052 0.0s done
+#5 DONE 42.1s
+
+#6 [2/3] WORKDIR /app
+#6 DONE 4.3s
+
+#7 [3/3] RUN npm install mongodb ws rethinkdb pg
+#7 13.26 
+#7 13.26 added 29 packages in 13s
+#7 13.26 npm notice
+#7 13.26 npm notice New major version of npm available! 10.8.2 -> 11.11.1
+#7 13.26 npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.11.1
+#7 13.26 npm notice To update run: npm install -g npm@11.11.1
+#7 13.26 npm notice
+#7 DONE 13.4s
+
+#8 exporting to image
+#8 exporting layers
+#8 exporting layers 1.2s done
+#8 exporting manifest sha256:d7f207c64a45a82d633b683c0e219b57330d977fffc60b77091091e7f1f94a14 0.0s done
+#8 exporting config sha256:78fec2866d30890ae444520379b9f5d16856bf62d30d86dee1390d5f0b4745e3 0.0s done
+#8 exporting attestation manifest sha256:6e95bafd1d6fa8538d185f305d7fc302b1ab31c1444616c2fd601819b4b2cdc4
+#8 exporting attestation manifest sha256:6e95bafd1d6fa8538d185f305d7fc302b1ab31c1444616c2fd601819b4b2cdc4 0.1s done
+#8 exporting manifest list sha256:d578c862465ae5e4dd6f0066cce9df46f385b33d7bd0b6faacfdb00a8dcdf521 0.0s done
+#8 naming to docker.io/library/testmet_tester:latest
+#8 naming to docker.io/library/testmet_tester:latest done
+#8 unpacking to docker.io/library/testmet_tester:latest
+#8 unpacking to docker.io/library/testmet_tester:latest 0.4s done
+#8 DONE 1.9s
+
+#9 resolving provenance for metadata file
+#9 DONE 0.1s
+ testmet_tester  Built
+ Network testmet_default  Creating
+ Network testmet_default  Created
+ Container testmet_rethinkdb_1  Creating
+ Container testmet_rethinkdb_1  Created
+ Container testmet_tester_1  Creating
+ Container testmet_tester_1  Created
+Attaching to rethinkdb_1, tester_1
+rethinkdb_1  | Recursively removing directory /data/rethinkdb_data/tmp
+rethinkdb_1  | Initializing directory /data/rethinkdb_data
+rethinkdb_1  | Running rethinkdb 2.4.4~0bookworm (x86_64-linux-gnu) (GCC 12.2.0)...
+rethinkdb_1  | Running on Linux 6.6.87.2-microsoft-standard-WSL2 x86_64
+rethinkdb_1  | Loading data from directory /data/rethinkdb_data
+tester_1     | (node:1) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///app/main.js is not specified and it doesn't parse as CommonJS.
+tester_1     | Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+tester_1     | To eliminate this warning, add "type": "module" to /app/package.json.
+tester_1     | (Use `node --trace-warnings ...` to show where the warning was created)
+rethinkdb_1  | Listening for intracluster connections on port 29015
+rethinkdb_1  | Listening for client driver connections on port 28015
+rethinkdb_1  | Listening for administrative HTTP connections on port 8080
+rethinkdb_1  | Listening on cluster addresses: 127.0.0.1, 172.18.0.2, ::1
+rethinkdb_1  | Listening on driver addresses: 127.0.0.1, 172.18.0.2, ::1
+rethinkdb_1  | Listening on http addresses: 127.0.0.1, 172.18.0.2, ::1
+rethinkdb_1  | Server ready, "970c43f93ec3_l9y" ff6fe464-5a70-4f06-974d-029d5ba0c0bb
+tester_1     | { RANGE: 50000 }
+tester_1     | === BENCHMARK START ===
+tester_1     | Database: RethinkDB
+tester_1     | Customers: 5000, Init time: 10s, Duration: 50s
+tester_1     | 
+tester_1     | === SEEDING RETHINKDB ===
+tester_1     | Table not found, will be created
+tester_1     | Created database: benchmark
+tester_1     | Created table: docs
+tester_1     | Created index on score
+tester_1     | Seeding 10000 documents...
+tester_1     |   Inserted 10000/10000 documents
+tester_1     | Seeding complete: 10000/10000 documents inserted
+tester_1     | 
+tester_1     | === SPAWNING 5000 CUSTOMERS IN 10s (RethinkDB) ===
+tester_1     | Progress: 100/5000 customers spawned (0.18s)
+tester_1     | Progress: 200/5000 customers spawned (0.33s)
+tester_1     | Progress: 300/5000 customers spawned (0.48s)
+tester_1     | Progress: 400/5000 customers spawned (0.64s)
+tester_1     | Progress: 500/5000 customers spawned (0.81s)
+tester_1     | Progress: 600/5000 customers spawned (0.95s)
+tester_1     | Progress: 700/5000 customers spawned (1.10s)
+tester_1     | Progress: 800/5000 customers spawned (1.25s)
+tester_1     | Progress: 900/5000 customers spawned (1.38s)
+tester_1     | Progress: 1000/5000 customers spawned (1.53s)
+tester_1     | Progress: 1100/5000 customers spawned (1.68s)
+tester_1     | Progress: 1200/5000 customers spawned (1.84s)
+tester_1     | Progress: 1300/5000 customers spawned (2.00s)
+tester_1     | Progress: 1400/5000 customers spawned (2.15s)
+tester_1     | Progress: 1500/5000 customers spawned (2.29s)
+tester_1     | Progress: 1600/5000 customers spawned (2.45s)
+tester_1     | Progress: 1700/5000 customers spawned (2.60s)
+tester_1     | Progress: 1800/5000 customers spawned (2.74s)
+tester_1     | Progress: 1900/5000 customers spawned (2.88s)
+tester_1     | Progress: 2000/5000 customers spawned (3.03s)
+tester_1     | Progress: 2100/5000 customers spawned (3.18s)
+tester_1     | Progress: 2200/5000 customers spawned (3.31s)
+tester_1     | Progress: 2300/5000 customers spawned (3.45s)
+tester_1     | Progress: 2400/5000 customers spawned (3.59s)
+tester_1     | Progress: 2500/5000 customers spawned (3.73s)
+tester_1     | Progress: 2600/5000 customers spawned (3.89s)
+tester_1     | Progress: 2700/5000 customers spawned (4.04s)
+tester_1     | Progress: 2800/5000 customers spawned (4.19s)
+tester_1     | Progress: 2900/5000 customers spawned (4.30s)
+tester_1     | Progress: 3000/5000 customers spawned (4.42s)
+tester_1     | Progress: 3100/5000 customers spawned (4.53s)
+tester_1     | Progress: 3200/5000 customers spawned (4.63s)
+tester_1     | Progress: 3300/5000 customers spawned (4.74s)
+tester_1     | Progress: 3400/5000 customers spawned (4.84s)
+tester_1     | Progress: 3500/5000 customers spawned (4.94s)
+tester_1     | Progress: 3600/5000 customers spawned (5.06s)
+tester_1     | Progress: 3700/5000 customers spawned (5.17s)
+tester_1     | Progress: 3800/5000 customers spawned (5.29s)
+tester_1     | Progress: 3900/5000 customers spawned (5.41s)
+tester_1     | Progress: 4000/5000 customers spawned (5.53s)
+tester_1     | Progress: 4100/5000 customers spawned (5.65s)
+tester_1     | Progress: 4200/5000 customers spawned (5.76s)
+tester_1     | Progress: 4300/5000 customers spawned (5.89s)
+tester_1     | Progress: 4400/5000 customers spawned (6.00s)
+tester_1     | Progress: 4500/5000 customers spawned (6.12s)
+tester_1     | Progress: 4600/5000 customers spawned (6.24s)
+tester_1     | Progress: 4700/5000 customers spawned (6.36s)
+tester_1     | Progress: 4800/5000 customers spawned (6.47s)
+tester_1     | Progress: 4900/5000 customers spawned (6.59s)
+tester_1     | Progress: 5000/5000 customers spawned (6.71s)
+tester_1     | All 5000 customers spawned in 6.71s
+tester_1     | 
+tester_1     | === RUNNING UPDATES FOR 50s ===
+tester_1     | ****** 700
+tester_1     | Tick 1/50: 601 operations (-1.6s)
+tester_1     | Tick 2/50: 601 operations (-1.3s)
+tester_1     | Tick 3/50: 601 operations (-1s)
+tester_1     | Tick 4/50: 601 operations (-0.8s)
+tester_1     | Tick 5/50: 601 operations (-0.5s)
+tester_1     | Tick 6/50: 601 operations (-0.2s)
+tester_1     | Tick 7/50: 601 operations (0.1s)
+tester_1     | Tick 8/50: 601 operations (0.3s)
+tester_1     | Tick 9/50: 601 operations (0.8s)
+tester_1     | Tick 10/50: 601 operations (1.3s)
+tester_1     | Tick 11/50: 601 operations (1.8s)
+tester_1     | Tick 12/50: 601 operations (2s)
+tester_1     | Tick 13/50: 601 operations (2.3s)
+tester_1     | Tick 14/50: 601 operations (2.7s)
+tester_1     | Tick 15/50: 601 operations (2.9s)
+tester_1     | Tick 16/50: 601 operations (3.1s)
+tester_1     | Tick 17/50: 601 operations (3.5s)
+tester_1     | Tick 18/50: 601 operations (3.7s)
+tester_1     | Tick 19/50: 601 operations (4s)
+tester_1     | Tick 20/50: 601 operations (4.3s)
+tester_1     | Tick 21/50: 601 operations (4.6s)
+tester_1     | Tick 22/50: 601 operations (5s)
+tester_1     | Tick 23/50: 601 operations (5.6s)
+tester_1     | Tick 24/50: 601 operations (5.9s)
+tester_1     | Tick 25/50: 601 operations (6.6s)
+tester_1     | Tick 26/50: 601 operations (7.1s)
+tester_1     | Tick 27/50: 601 operations (7.6s)
+tester_1     | Tick 28/50: 601 operations (8.4s)
+tester_1     | Tick 29/50: 601 operations (8.9s)
+tester_1     | Tick 30/50: 601 operations (9.1s)
+tester_1     | Tick 31/50: 601 operations (9.5s)
+tester_1     | Tick 32/50: 601 operations (9.8s)
+tester_1     | Tick 33/50: 601 operations (10.1s)
+tester_1     | Tick 34/50: 601 operations (10.8s)
+tester_1     | Tick 35/50: 601 operations (11.1s)
+tester_1     | Tick 36/50: 601 operations (11.4s)
+tester_1     | Tick 37/50: 601 operations (11.8s)
+tester_1     | Tick 38/50: 601 operations (12s)
+tester_1     | Tick 39/50: 601 operations (12.4s)
+tester_1     | Tick 40/50: 601 operations (12.6s)
+tester_1     | Tick 41/50: 601 operations (12.9s)
+tester_1     | Tick 42/50: 601 operations (13.9s)
+tester_1     | Tick 43/50: 601 operations (14.4s)
+tester_1     | Tick 44/50: 601 operations (14.9s)
+tester_1     | Tick 45/50: 601 operations (15.4s)
+tester_1     | Tick 46/50: 601 operations (15.6s)
+tester_1     | Tick 47/50: 601 operations (16.3s)
+tester_1     | Tick 48/50: 601 operations (16.8s)
+tester_1     | Tick 49/50: 601 operations (17.1s)
+tester_1     | Tick 50/50: 601 operations (17.8s)
+tester_1     | Periodic updates complete
+tester_1     | 
+tester_1     | === WAITING FOR CUSTOMERS TO FINISH ===
+tester_1     | Completed customers: 0/5000
+tester_1     | Completed customers: 0/5000
+tester_1     | Completed customers: 0/5000
+tester_1     | Completed customers: 3308/5000
+tester_1     | 
+tester_1     | === BENCHMARK COMPLETE ===
+tester_1     | Successfully completed for 5000 customers
+Gracefully Stopping... press Ctrl+C again to force
+ Container testmet_tester_1  Stopping
+got 3 SIGTERM/SIGINTs, forcefully exiting
