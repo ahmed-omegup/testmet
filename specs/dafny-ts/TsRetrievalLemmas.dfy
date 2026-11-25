@@ -21,9 +21,35 @@ module TsRetrievalLemmas {
   {
   }
 
-  lemma ResolveDocDropsDoc(state: RetrievalWorkerState, docId: DocId, batchHint: BatchNumber)
-    ensures !(docId in ResolveDoc(state, docId, batchHint).state.pendingBatch)
-    ensures !(docId in ResolveDoc(state, docId, batchHint).state.processingBatch)
+  lemma CancelRespectsBatch(state: RetrievalWorkerState, docId: DocId, queryId: QueryId, batchNumber: BatchNumber)
+    ensures batchNumber != state.pendingBatchNumber ==> Cancel(state, docId, queryId, batchNumber) == StateChange(state, false)
+    ensures Cancel(state, docId, queryId, batchNumber).state.processingBatch == state.processingBatch
+    ensures Cancel(state, docId, queryId, batchNumber).state.processingOrder == state.processingOrder
+    ensures forall other :: other != docId ==>
+      (other in Cancel(state, docId, queryId, batchNumber).state.pendingBatch <==> other in state.pendingBatch)
+  {
+  }
+
+  lemma ResolveDocRemovesAtMostOneBatch(state: RetrievalWorkerState, docId: DocId, batchHint: BatchNumber)
+    ensures !ResolveDoc(state, docId, batchHint).changed ==> ResolveDoc(state, docId, batchHint).state == state
+    ensures ResolveDoc(state, docId, batchHint).state.pendingBatch == state.pendingBatch ||
+      ResolveDoc(state, docId, batchHint).state.processingBatch == state.processingBatch
+    ensures ResolveDoc(state, docId, batchHint).changed ==>
+      (!(docId in ResolveDoc(state, docId, batchHint).state.pendingBatch) ||
+       !(docId in ResolveDoc(state, docId, batchHint).state.processingBatch))
+  {
+  }
+
+  lemma ResolveDocCanLeaveAnotherBatch()
+    ensures var state := RetrievalWorkerState(map[5 := [2]], [5], 2, map[5 := [1]], [5], 1, false);
+      5 in ResolveDoc(state, 5, 1).state.pendingBatch &&
+      !(5 in ResolveDoc(state, 5, 1).state.processingBatch)
+  {
+  }
+
+  lemma StaleHintCanResolveAnotherBatch()
+    ensures var state := RetrievalWorkerState(map[], [], 2, map[5 := [1]], [5], 1, false);
+      ResolveDoc(state, 5, 99).changed && !(5 in ResolveDoc(state, 5, 99).state.processingBatch)
   {
   }
 }

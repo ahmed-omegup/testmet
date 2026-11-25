@@ -45,22 +45,49 @@ module DocsIndexModel {
 
   function InsertUnique(es: seq<Entry>, score: Score, id: DocId): seq<Entry>
     requires SortedEntries(es)
+    ensures forall entry :: entry in InsertUnique(es, score, id) <==> entry in es || entry == Entry(score, id)
     ensures SortedEntries(InsertUnique(es, score, id))
   {
     if |es| == 0 then [Entry(score, id)]
     else if es[0].score == score && es[0].id == id then es
     else if score < es[0].score || (score == es[0].score && id < es[0].id) then [Entry(score, id)] + es
-    else [es[0]] + InsertUnique(es[1..], score, id)
+    else
+      var tail := InsertUnique(es[1..], score, id);
+      assert SortedEntries([es[0]] + tail) by {
+        forall index | 0 <= index < |tail|
+          ensures LexLt(es[0], tail[index])
+        {
+          assert tail[index] in tail;
+          if tail[index] in es[1..] {
+            assert exists oldIndex :: 1 <= oldIndex < |es| && es[oldIndex] == tail[index];
+          } else {
+            assert tail[index] == Entry(score, id);
+          }
+        }
+      }
+      [es[0]] + tail
   }
 
   function RemoveOne(es: seq<Entry>, score: Score, id: DocId): seq<Entry>
     requires SortedEntries(es)
+    ensures forall entry :: entry in RemoveOne(es, score, id) <==> entry in es && entry != Entry(score, id)
     ensures SortedEntries(RemoveOne(es, score, id))
   {
     if |es| == 0 then es
     else if es[0].score == score && es[0].id == id then es[1..]
     else if score < es[0].score || (score == es[0].score && id < es[0].id) then es
-    else [es[0]] + RemoveOne(es[1..], score, id)
+    else
+      var tail := RemoveOne(es[1..], score, id);
+      assert SortedEntries([es[0]] + tail) by {
+        forall index | 0 <= index < |tail|
+          ensures LexLt(es[0], tail[index])
+        {
+          assert tail[index] in tail;
+          assert tail[index] in es[1..];
+          assert exists oldIndex :: 1 <= oldIndex < |es| && es[oldIndex] == tail[index];
+        }
+      }
+      [es[0]] + tail
   }
 
   function PositionAt(es: seq<Entry>, idx: nat): nat

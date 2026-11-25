@@ -108,6 +108,7 @@ module ThunderDbMutable {
 
   function QueryPush(tree: QueryTree): QueryTree
     requires tree.QNode?
+    ensures QueryNodeCount(QueryPush(tree)) == QueryNodeCount(tree)
   {
     if tree.add == 0 then tree else
       var left2 :=
@@ -155,7 +156,7 @@ module ThunderDbMutable {
   }
 
   method QuerySplitByKey(tree: QueryTree, key: Score) returns (pair: QueryTreePair)
-    decreases *
+    decreases QueryNodeCount(tree)
   {
     if tree.QEmpty? {
       pair := QueryTreePair(QEmpty, QEmpty);
@@ -172,7 +173,7 @@ module ThunderDbMutable {
   }
 
   method QueryMerge(leftTree: QueryTree, rightTree: QueryTree) returns (result: QueryTree)
-    decreases *
+    decreases QueryNodeCount(leftTree) + QueryNodeCount(rightTree)
   {
     if leftTree.QEmpty? {
       result := rightTree;
@@ -192,7 +193,7 @@ module ThunderDbMutable {
   }
 
   method QueryInsert(tree: QueryTree, key: Score, id: QueryId, effectiveScore: int, maxCap: Score, accAdd: int) returns (result: QueryTree)
-    decreases *
+    decreases tree
   {
     if tree.QEmpty? {
       result := QueryPull(QNode(key, QueryPriorityForKey(key), 0, 0, [QueryIndexEntry(id, effectiveScore - accAdd, maxCap)], 0, NegInfScore, NegInfScore, QEmpty, QEmpty));
@@ -218,7 +219,7 @@ module ThunderDbMutable {
   }
 
   method QueryRemove(tree: QueryTree, key: Score, id: QueryId, baseScore: int, maxCap: Score) returns (result: QueryTree)
-    decreases *
+    decreases QueryNodeCount(tree)
   {
     if tree.QEmpty? {
       result := QEmpty;
@@ -242,7 +243,7 @@ module ThunderDbMutable {
   }
 
   method QueryCollectForValue(tree: QueryTree, accAdd: int, cutoff: int, value: Score) returns (out: seq<QueryId>)
-    decreases *
+    decreases tree
   {
     if tree.QEmpty? || tree.subtreeMaxCap < value {
       out := [];
@@ -264,7 +265,7 @@ module ThunderDbMutable {
   }
 
   method QueryAccumulatedAddAtKey(tree: QueryTree, key: Score) returns (acc: int)
-    decreases *
+    decreases tree
   {
     if tree.QEmpty? {
       acc := 0;
@@ -290,7 +291,6 @@ module ThunderDbMutable {
 
     method RangeAddKeysGreaterThan(key: Score, delta: int)
       modifies this
-      decreases *
     {
       var pair := QuerySplitByKey(this.root, key);
       var rightTree := pair.right;
@@ -305,7 +305,6 @@ module ThunderDbMutable {
 
     method Insert(key: Score, id: QueryId, effectiveScore: int, maxCap: Score)
       modifies this
-      decreases *
     {
       var nextRoot := QueryInsert(this.root, key, id, effectiveScore, maxCap, 0);
       this.root := nextRoot;
@@ -313,20 +312,17 @@ module ThunderDbMutable {
 
     method Remove(key: Score, id: QueryId, baseScore: int, maxCap: Score)
       modifies this
-      decreases *
     {
       var nextRoot := QueryRemove(this.root, key, id, baseScore, maxCap);
       this.root := nextRoot;
     }
 
     method CollectForValue(value: Score, cutoff: int) returns (out: seq<QueryId>)
-      decreases *
     {
       out := QueryCollectForValue(this.root, 0, cutoff, value);
     }
 
     method AccumulatedAddAtKey(key: Score) returns (acc: int)
-      decreases *
     {
       acc := QueryAccumulatedAddAtKey(this.root, key);
     }
@@ -376,7 +372,6 @@ module ThunderDbMutable {
 
     method CollectQueriesForValue(value: Score, docId: DocId) returns (ids: seq<QueryId>)
       requires this.Ready()
-      decreases *
     {
       var cutoff: int := TreapRank(this.docs, value, SomeDoc(docId));
       ids := this.queryIndex.CollectForValue(value, cutoff);
@@ -385,8 +380,8 @@ module ThunderDbMutable {
     method RegisterPendingDocQuery(docId: DocId, queryId: QueryId)
       requires this.Ready()
       ensures this.Ready()
+      ensures this.docs == old(this.docs)
       modifies this
-      decreases *
     {
       var docsForQuery := if queryId in this.pendingByQuery then this.pendingByQuery[queryId] else [];
       docsForQuery := AppendDocIdIfMissing(docsForQuery, docId);
@@ -403,7 +398,6 @@ module ThunderDbMutable {
       requires this.Ready()
       ensures this.Ready()
       modifies this
-      decreases *
     {
       removed := false;
       if queryId in this.pendingByQuery {
@@ -439,7 +433,6 @@ module ThunderDbMutable {
       requires this.Ready()
       ensures this.Ready()
       modifies this
-      decreases *
     {
       if docId in this.pendingByDoc {
         var queriesForDoc := this.pendingByDoc[docId];
@@ -469,7 +462,6 @@ module ThunderDbMutable {
       requires this.Ready()
       ensures this.Ready()
       modifies this
-      decreases *
     {
       cancelled := this.RemovePendingDocQuery(docId, queryId);
       if cancelled && queryId in this.queries {
@@ -484,7 +476,6 @@ module ThunderDbMutable {
       requires this.Ready()
       ensures this.Ready()
       modifies this
-      decreases *
     {
       events := [];
       var queued := this.pendingPairs;
@@ -519,7 +510,6 @@ module ThunderDbMutable {
       requires this.Ready()
       ensures this.Ready()
       modifies this
-      decreases *
     {
       events := [];
       var queued := this.pendingDocs;
@@ -552,7 +542,6 @@ module ThunderDbMutable {
 
     method QueryVisible(id: QueryId) returns (visible: seq<DocId>)
       requires this.Ready()
-      decreases *
     {
       if id in this.queries {
         var state := this.queries[id];
@@ -564,7 +553,6 @@ module ThunderDbMutable {
 
     method CountDocsInRange(spec: QuerySpec) returns (count: nat)
       requires this.Ready()
-      decreases *
     {
       var upper := TreapCountAtMost(this.docs, spec.maxScore);
       var lower := TreapRank(this.docs, spec.minScore, NoDoc);
@@ -578,11 +566,13 @@ module ThunderDbMutable {
 
     method QueryDocAtOffset(state: QueryState, offset: nat) returns (doc: MaybeDocId)
       requires this.Ready()
-      decreases *
+      ensures offset >= Sum(this.docs) ==> doc.NoDoc?
     {
       var addAtKey := this.queryIndex.AccumulatedAddAtKey(state.spec.minScore);
       var effectiveScore := state.baseScore + addAtKey;
       var startRank := if effectiveScore >= state.spec.limit then effectiveScore - state.spec.limit else 0;
+      TreapGetAtRankReturnsEntry(this.docs, startRank + offset);
+      SumEqualsEntriesLength(this.docs);
       match TreapGetAtRank(this.docs, startRank + offset)
       case Missing => {
         doc := NoDoc;
@@ -600,7 +590,6 @@ module ThunderDbMutable {
       requires this.Ready()
       ensures this.Ready()
       modifies this
-      decreases *
     {
       retrievals := [];
       if queryId in this.queries {
@@ -608,8 +597,11 @@ module ThunderDbMutable {
         if state.currentMatches < state.spec.limit {
           var offset := state.currentMatches;
           var found := false;
+          var initialDocs := this.docs;
           while !found
             invariant SumConsistent(this.docs)
+            invariant this.docs == initialDocs
+            decreases if found then 0 else if offset < Sum(initialDocs) then Sum(initialDocs) - offset + 1 else 1
           {
             var candidate := this.QueryDocAtOffset(state, offset);
             match candidate
@@ -634,7 +626,6 @@ module ThunderDbMutable {
 
     method PickOverflowDoc(queryId: QueryId) returns (doc: seq<DocId>)
       requires this.Ready()
-      decreases *
     {
       doc := [];
       if queryId in this.queries {
@@ -672,7 +663,6 @@ module ThunderDbMutable {
       requires this.Ready()
       ensures this.Ready()
       modifies this, this.queryIndex
-      decreases *
     {
       queryId := this.nextQueryId;
       this.nextQueryId := this.nextQueryId + 1;
@@ -697,7 +687,6 @@ module ThunderDbMutable {
       requires this.Ready()
       ensures this.Ready()
       modifies this, this.queryIndex
-      decreases *
     {
       queryId, events := this.AddQueryDeferred(spec);
       var retrievalEvents := this.DrainPendingRetrievals();
@@ -708,7 +697,6 @@ module ThunderDbMutable {
       requires this.Ready()
       ensures this.Ready()
       modifies this, this.queryIndex
-      decreases *
     {
       if id in this.queries {
         var state := this.queries[id];
@@ -733,7 +721,6 @@ module ThunderDbMutable {
       requires this.Ready()
       ensures this.Ready()
       modifies this, this.queryIndex
-      decreases *
     {
       events := this.RemoveQueryDeferred(id);
       var retrievalEvents := this.DrainPendingRetrievals();
@@ -744,7 +731,6 @@ module ThunderDbMutable {
       requires this.Ready()
       ensures this.Ready()
       modifies this, this.queryIndex
-      decreases *
     {
       events := [];
       if oldState.HasState? && newState.HasState? && GetScore(oldState.state) == GetScore(newState.state) {
@@ -892,7 +878,6 @@ module ThunderDbMutable {
       requires this.Ready()
       ensures this.Ready()
       modifies this, this.queryIndex
-      decreases *
     {
       events := this.ApplyDocChangeDeferred(id, oldState, newState);
       var retrievalEvents := this.DrainPendingRetrievals();
@@ -903,7 +888,6 @@ module ThunderDbMutable {
       requires this.Ready()
       ensures this.Ready()
       modifies this, this.queryIndex
-      decreases *
     {
       events := [];
       queryId := 0;
@@ -926,7 +910,6 @@ module ThunderDbMutable {
       requires this.Ready()
       ensures this.Ready()
       modifies this, this.queryIndex
-      decreases *
     {
       events, queryId := this.ProcessItemDeferred(item);
       var retrievalEvents := this.DrainPendingRetrievals();

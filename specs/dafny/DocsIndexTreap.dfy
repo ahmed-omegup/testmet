@@ -317,6 +317,38 @@ module DocsIndexTreap {
     }
   }
 
+  lemma EntriesFromIdsAt(score: Score, ids: seq<DocId>, index: nat)
+    requires index < |ids|
+    ensures index < |EntriesFromIds(score, ids)| && EntriesFromIds(score, ids)[index] == Entry(score, ids[index])
+    decreases index
+  {
+    EntriesFromIdsLength(score, ids);
+    if index > 0 {
+      EntriesFromIdsAt(score, ids[1..], index - 1);
+    }
+  }
+
+  lemma TreapGetAtRankReturnsEntry(t: Treap, rank: nat)
+    requires SumConsistent(t)
+    ensures rank >= |Entries(t)| ==> TreapGetAtRank(t, rank).Missing?
+    ensures rank < |Entries(t)| ==> (TreapGetAtRank(t, rank).Found? &&
+      Entry(TreapGetAtRank(t, rank).score, TreapGetAtRank(t, rank).id) == Entries(t)[rank])
+    ensures rank < |Entries(t)| ==> TreapGetAtRank(t, rank).position <= rank
+    decreases NodeCount(t)
+  {
+    if t.Node? {
+      SumEqualsEntriesLength(t.left);
+      EntriesFromIdsLength(t.score, t.ids);
+      if rank < Sum(t.left) {
+        TreapGetAtRankReturnsEntry(t.left, rank);
+      } else if rank < Sum(t.left) + |t.ids| {
+        EntriesFromIdsAt(t.score, t.ids, rank - Sum(t.left));
+      } else {
+        TreapGetAtRankReturnsEntry(t.right, rank - (Sum(t.left) + |t.ids|));
+      }
+    }
+  }
+
   lemma EntriesFromIdsAllLt(score: Score, ids: seq<DocId>, bound: Score)
     requires score < bound
     ensures AllScoresLt(EntriesFromIds(score, ids), bound)

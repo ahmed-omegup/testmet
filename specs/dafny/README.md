@@ -19,6 +19,7 @@ This directory contains Dafny models/proofs for kernel components.
   - Proves core structural obligations for cached subtree sizes (`sum`).
   - Exposes bridge functions to compare treap-entry view against `DocsIndexModel`.
   - Constructively proves refinement for `rank` and `countAtMost` against `DocsIndexModel`.
+  - Proves rank lookup returns the corresponding flattened entry, reports out-of-bounds ranks as missing, and returns a bucket position no greater than the rank.
   - Remaining work is to extend the same style of proof to `getAtRank`, `collectRange`, and update-preservation facts strong enough to show the full `ValidTreap` invariant is preserved by `add`/`remove`.
 
 - `DocsIndexBench.dfy`: executable lockstep harness for runtime testing and benchmark-style runs.
@@ -34,11 +35,24 @@ This directory contains Dafny models/proofs for kernel components.
   - Seeds documents, registers queries, runs update/insert/delete ticks, and consumes emitted match/retrieval events.
   - Validates that the externally observed query contents still match the worker's final query views.
 
+- `ThunderDbMutable.dfy`: its methods now verify for termination without `decreases *`, including query-tree updates, gap filling, and stream processing. This does not yet prove that its query results or events refine the reference model.
+
 This is an executable/spec reference model and proof scaffold. It is intentionally tree-agnostic (sequence-based) so we can first stabilize semantics, then prove treap refinement against this model.
 
 ## Verify
 
-Using the VS Code extension-bundled Dafny runtime:
+For Dafny 4.11, the following commands use a community-maintained Docker image pinned by digest. The source mount is read-only and the container has no network access:
+
+```bash
+IMAGE=xtrm0/dafny@sha256:57df85811f650c9c5ecf8aa94f8193c61173b60e88ea43c5a7703740c3e4afbd
+docker run --rm --network none --read-only --tmpfs /tmp -v "$PWD/specs:/work/specs:ro" -w /work "$IMAGE" dafny verify specs/dafny/ThunderDbMutable.dfy --verify-included-files
+docker run --rm --network none --read-only --tmpfs /tmp -v "$PWD/specs:/work/specs:ro" -w /work "$IMAGE" dafny verify specs/clean-dafny/CleanPendingLemmas.dfy --verify-included-files
+docker run --rm --network none --read-only --tmpfs /tmp -v "$PWD/specs:/work/specs:ro" -w /work "$IMAGE" dafny verify specs/dafny-ts/TsRetrievalLemmas.dfy --verify-included-files
+```
+
+Verification establishes only the stated contracts. In particular, it does not by itself prove complete query, delivery, or external service semantics.
+
+The following older commands use a VS Code extension-bundled Dafny runtime from the original host:
 
 ```bash
 DAFNY_DLL=/home/asus/.vscode-server/extensions/dafny-lang.ide-vscode-3.5.4/out/resources/4.11.0/github/dafny/Dafny.dll

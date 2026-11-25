@@ -60,7 +60,9 @@ This split is intentional. The pure Dafny state-machine model is appropriate for
 
 ## Current Status
 
-- The proof-oriented stream/query/retrieval layers verify and the smoke harnesses run.
+- The selected stream/query/retrieval lemmas verify with included files, and the smoke harnesses run; this is not a proof of whole-stack parity.
+- The TypeScript-shaped model rejects registering a pair already in the processing batch, but the current TypeScript worker permits it. Both currently allow a stale batch hint to fall back to another batch. These differences require an explicit delivery contract and interleaving tests.
+- Some stream smoke assertions use `assume {:axiom}`; verifying those harnesses does not prove the assumed outcomes.
 - The generated smoke executables run quickly.
 - The generated large-workload benchmark is much slower than the TS perf path, so runtime parity will require a separate runtime-oriented implementation surface instead of further tuning the pure model.
 
