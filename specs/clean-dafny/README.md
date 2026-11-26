@@ -62,6 +62,16 @@ npm --prefix thunderdb-ts run compare:dafny -- --benchmark "$PWD/specs/clean-daf
 
 The `benchmark` mode first warms the Dafny engine and captures inputs, then replays them on a fresh engine between output markers. The TypeScript timing runs three replays after its validation pass, without event normalization. In one local run, the 1,651-step trace had zero content mismatches and 1,086 ordering-only differences; TypeScript took 20.21, 28.08, and 20.89 ms, and Dafny took 228.97, 227.57, and 225.00 ms. This indicates a substantial remaining gap, not a definitive ratio: Dafny timing includes marker-delivery overhead through Docker and replays Dafny objects, while TypeScript converts JSON inputs and yields to its asynchronous retrieval worker. Neither includes LMDB or networking, and one trace cannot establish general correctness or asynchronous interleaving parity.
 
+## 400k-resource Benchmark
+
+Run the dedicated benchmark under Docker limits of 3GB RAM and 2 CPUs:
+
+```bash
+./specs/clean-dafny/run-clean-limit-400k.sh
+```
+
+The scenario seeds 400,000 documents, adds 10,000 customers, performs 350,000 change events across five ticks, and uses a query limit of 50 with density 10. The runner derives throughput, active customers, and retrieval documents per customer per minute from the measured wall time and emitted summary. It is an in-memory clean-engine benchmark, not a networked or LMDB-backed service benchmark.
+
 Run the smoke harness with:
 
 ```bash
