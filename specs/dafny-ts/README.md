@@ -62,7 +62,8 @@ This split is intentional. The pure Dafny state-machine model is appropriate for
 
 - The selected stream/query/retrieval lemmas verify with included files, and the smoke harnesses run; this is not a proof of whole-stack parity.
 - The TypeScript-shaped model rejects registering a pair already in the processing batch, but the current TypeScript worker permits it. Both currently allow a stale batch hint to fall back to another batch. These differences require an explicit delivery contract and interleaving tests.
-- The retry model proves that failed loads preserve the worker state, four completed consecutive failures with an unchanged nonempty processing batch exhaust the retry budget, and restarting preserves the retained state. It also proves that successful payloads contain only documents present in the returned store. These are isolated model facts, not a refinement proof of the TypeScript asynchronous worker or its transport.
+- The retry model proves that failed loads preserve the worker state, four completed consecutive failures with an unchanged nonempty processing batch exhaust the retry budget, and restarting preserves the retained state.
+- `MutableDocumentIndexProof.dfy` verifies native mutable-array seed, score-update, presence, active-count, and active-order contracts. It is only the document-index foundation, not a verified whole-engine or treap implementation. It also proves that successful payloads contain only documents present in the returned store. These are isolated model facts, not a refinement proof of the TypeScript asynchronous worker or its transport.
 - Some stream smoke assertions use `assume {:axiom}`; verifying those harnesses does not prove the assumed outcomes.
 - The generated smoke executables run quickly.
 - The generated large-workload benchmark is much slower than the TS perf path, so runtime parity will require a separate runtime-oriented implementation surface instead of further tuning the pure model.

@@ -46,6 +46,6 @@ Benchmark details:
 * throughput: 350,000 / 98.655 seconds, approximately 212,872 changes/minute
 * raw output: 349,972 match events, 30,136,300 evictions, 360,000 retrieval batches, 500,000 retrieved documents
 
-Measured with `./specs/clean-dafny/run-clean-limit-400k.sh` using `specs/dafny-ts/CleanLimitMutablePerf400k.dfy`, a verification-independent mutable array/bucket runtime. This benchmark avoided the immutable clean-engine store/treap copying that stalled in the proof-oriented 400k run. The eviction and retrieval summaries are not yet equivalent to the TypeScript implementation and must not be interpreted as end-to-end networked parity.
+Measured with `./specs/clean-dafny/run-clean-limit-400k.sh` using `specs/dafny-ts/CleanLimitMutablePerf400k.dfy`, a verification-independent mutable array/bucket runtime. `specs/dafny-ts/MutableDocumentIndexProof.dfy` separately verifies a small native mutable-index contract, but it does not prove this benchmark runtime. This benchmark avoided the immutable clean-engine store/treap copying that stalled in the proof-oriented 400k run. The eviction and retrieval summaries are not yet equivalent to the TypeScript implementation and must not be interpreted as end-to-end networked parity.
 
 The existing 1,651-event clean-engine benchmark remains a separate proof-oriented smoke/performance sample; it does not scale to this workload.
