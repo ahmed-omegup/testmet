@@ -444,6 +444,7 @@ module ThunderDbMutable {
       ensures this.store == old(this.store)
       ensures this.docIds == old(this.docIds)
       ensures this.docs == old(this.docs)
+      ensures this.queries == old(this.queries)
       ensures this.nextQueryId == old(this.nextQueryId)
       modifies this
     {
@@ -461,6 +462,11 @@ module ThunderDbMutable {
     method RemovePendingDocQuery(docId: DocId, queryId: QueryId) returns (removed: bool)
       requires this.Ready()
       ensures this.Ready()
+      ensures this.store == old(this.store)
+      ensures this.docIds == old(this.docIds)
+      ensures this.docs == old(this.docs)
+      ensures this.queries == old(this.queries)
+      ensures this.nextQueryId == old(this.nextQueryId)
       modifies this
     {
       removed := false;
@@ -748,6 +754,9 @@ module ThunderDbMutable {
       ensures this.Ready()
       ensures queryId == old(this.nextQueryId)
       ensures this.nextQueryId == old(this.nextQueryId) + 1
+      ensures queryId in this.queries
+      ensures this.queries[queryId].spec == spec
+      ensures this.queries[queryId].currentMatches == |TreapCollectRange(old(this.docs), spec.minScore, spec.maxScore, spec.limit)|
       modifies this, this.queryIndex
     {
       queryId := this.nextQueryId;
@@ -758,10 +767,14 @@ module ThunderDbMutable {
       var accAtKey := this.queryIndex.AccumulatedAddAtKey(spec.minScore);
       var baseScore := effectiveScore - accAtKey;
       this.queries := this.queries[queryId := QueryState(spec, |visible|, baseScore)];
+      ghost var registeredQueries := this.queries;
+      assert registeredQueries[queryId].spec == spec;
       var i := 0;
       while i < |visible|
         invariant 0 <= i <= |visible|
         invariant SumConsistent(this.docs)
+        invariant this.queries == registeredQueries
+        invariant this.queries[queryId].spec == spec
         invariant this.nextQueryId == old(this.nextQueryId) + 1
       {
         this.RegisterPendingDocQuery(visible[i], queryId);
@@ -784,18 +797,30 @@ module ThunderDbMutable {
     method RemoveQueryDeferred(id: QueryId) returns (events: seq<DownstreamEvent>)
       requires this.Ready()
       ensures this.Ready()
+      ensures id !in this.queries
+      ensures this.store == old(this.store)
+      ensures this.docIds == old(this.docIds)
+      ensures this.docs == old(this.docs)
+      ensures this.nextQueryId == old(this.nextQueryId)
       modifies this, this.queryIndex
     {
       if id in this.queries {
         var state := this.queries[id];
         this.queryIndex.Remove(state.spec.minScore, id, state.baseScore, state.spec.maxScore);
         this.queries := map key | key in this.queries && key != id :: this.queries[key];
+        ghost var remainingQueries := this.queries;
+        assert id !in remainingQueries;
         if id in this.pendingByQuery {
           var pendingDocs := this.pendingByQuery[id];
           var i := 0;
           while i < |pendingDocs|
             invariant 0 <= i <= |pendingDocs|
             invariant SumConsistent(this.docs)
+            invariant this.queries == remainingQueries
+            invariant this.store == old(this.store)
+            invariant this.docIds == old(this.docIds)
+            invariant this.docs == old(this.docs)
+            invariant this.nextQueryId == old(this.nextQueryId)
           {
             var ignored := this.RemovePendingDocQuery(pendingDocs[i], id);
             i := i + 1;
