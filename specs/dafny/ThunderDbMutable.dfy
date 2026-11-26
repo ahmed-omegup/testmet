@@ -385,6 +385,19 @@ module ThunderDbMutable {
       SumConsistent(this.docs)
     }
 
+    ghost predicate QueryRegistryConsistent(state: EngineState)
+      requires this.Ready()
+      reads this
+    {
+      1 <= this.nextQueryId &&
+      this.nextQueryId == state.nextQueryId &&
+      (forall queryId: QueryId :: queryId in this.queries ==>
+        1 <= queryId < this.nextQueryId) &&
+      (forall runtime: QueryRuntime :: runtime in state.queries ==>
+        runtime.id in this.queries &&
+        this.queries[runtime.id].spec == runtime.spec)
+    }
+
     ghost predicate RefinesReference(state: EngineState)
       requires this.Ready()
       reads this
