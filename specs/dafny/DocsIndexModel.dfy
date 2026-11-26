@@ -20,6 +20,45 @@ module DocsIndexModel {
     forall i, j :: 0 <= i < j < |es| ==> LexLt(es[i], es[j])
   }
 
+  lemma SortedEntriesWithSameMembersAreEqual(left: seq<Entry>, right: seq<Entry>)
+    requires SortedEntries(left) && SortedEntries(right)
+    requires forall entry: Entry :: entry in left <==> entry in right
+    ensures left == right
+    decreases |left| + |right|
+  {
+    if |left| == 0 {
+      if |right| > 0 {
+        assert right[0] in right;
+        assert right[0] in left;
+        assert false;
+      }
+      assert right == [];
+    } else if |right| == 0 {
+      assert left[0] in left;
+      assert left[0] in right;
+      assert false;
+      assert left == [];
+    } else {
+      assert left[0] in right;
+      assert right[0] in left;
+      var leftHeadInRight :| 0 <= leftHeadInRight < |right| && right[leftHeadInRight] == left[0];
+      var rightHeadInLeft :| 0 <= rightHeadInLeft < |left| && left[rightHeadInLeft] == right[0];
+      assert left[0] == right[0];
+      assert left[0] !in left[1..];
+      assert right[0] !in right[1..];
+      forall entry: Entry
+        ensures entry in left[1..] <==> entry in right[1..]
+      {
+        assert entry in left <==> entry in right;
+        if entry != left[0] {
+          assert entry in left <==> entry in left[1..];
+          assert entry in right <==> entry in right[1..];
+        }
+      }
+      SortedEntriesWithSameMembersAreEqual(left[1..], right[1..]);
+    }
+  }
+
   function CountStrictLessScore(es: seq<Entry>, score: Score): nat {
     if |es| == 0 then 0
     else (if es[0].score < score then 1 else 0) + CountStrictLessScore(es[1..], score)
@@ -41,6 +80,17 @@ module DocsIndexModel {
     match id
     case NoDoc => CountStrictLessScore(es, score)
     case SomeDoc(doc) => RankWithId(es, score, doc)
+  }
+
+  lemma RankWithIdFindsEntry(es: seq<Entry>, index: nat)
+    requires SortedEntries(es)
+    requires index < |es|
+    ensures RankWithId(es, es[index].score, es[index].id) == index
+    decreases index
+  {
+    if index > 0 {
+      RankWithIdFindsEntry(es[1..], index - 1);
+    }
   }
 
   function InsertUnique(es: seq<Entry>, score: Score, id: DocId): seq<Entry>
@@ -105,6 +155,69 @@ module DocsIndexModel {
     else Found(es[rank].score, es[rank].id, PositionAt(es, rank))
   }
 
+  lemma PositionAtPrefix(prefix: seq<Entry>, suffix: seq<Entry>, index: nat)
+    requires SortedEntries(prefix)
+    requires SortedEntries(prefix + suffix)
+    requires index < |prefix|
+    ensures PositionAt(prefix + suffix, index) == PositionAt(prefix, index)
+    decreases index
+  {
+    if index > 0 {
+      PositionAtPrefix(prefix, suffix, index - 1);
+    }
+  }
+
+  lemma PositionAtSuffix(prefix: seq<Entry>, suffix: seq<Entry>, index: nat)
+    requires SortedEntries(suffix)
+    requires SortedEntries(prefix + suffix)
+    requires index < |suffix|
+    requires |prefix| == 0 || prefix[|prefix| - 1].score != suffix[0].score
+    ensures PositionAt(prefix + suffix, |prefix| + index) == PositionAt(suffix, index)
+    decreases index
+  {
+    if index > 0 {
+      PositionAtSuffix(prefix, suffix, index - 1);
+    }
+  }
+
+  lemma CountStrictLessZero(es: seq<Entry>, score: Score)
+    requires forall index :: 0 <= index < |es| ==> score <= es[index].score
+    ensures CountStrictLessScore(es, score) == 0
+    decreases |es|
+  {
+    if |es| > 0 {
+      CountStrictLessZero(es[1..], score);
+    }
+  }
+
+  lemma CountStrictLessAtBucketStart(es: seq<Entry>, index: nat)
+    requires SortedEntries(es)
+    requires index < |es|
+    requires index == 0 || es[index - 1].score < es[index].score
+    ensures CountStrictLessScore(es, es[index].score) == index
+    decreases index
+  {
+    if index == 0 {
+      CountStrictLessZero(es, es[0].score);
+    } else {
+      CountStrictLessAtBucketStart(es[1..], index - 1);
+    }
+  }
+
+  lemma PositionAtMatchesScoreRank(es: seq<Entry>, index: nat)
+    requires SortedEntries(es)
+    requires index < |es|
+    ensures CountStrictLessScore(es, es[index].score) <= index
+    ensures PositionAt(es, index) == index - CountStrictLessScore(es, es[index].score)
+    decreases index
+  {
+    if index == 0 || es[index - 1].score != es[index].score {
+      CountStrictLessAtBucketStart(es, index);
+    } else {
+      PositionAtMatchesScoreRank(es, index - 1);
+    }
+  }
+
   function CollectRange(es: seq<Entry>, minScore: Score, maxScore: Score, limit: nat): seq<DocId>
     requires SortedEntries(es)
   {
@@ -112,6 +225,22 @@ module DocsIndexModel {
     else if es[0].score < minScore then CollectRange(es[1..], minScore, maxScore, limit)
     else if es[0].score > maxScore then []
     else [es[0].id] + CollectRange(es[1..], minScore, maxScore, limit - 1)
+  }
+
+  lemma CollectRangeSound(es: seq<Entry>, minScore: Score, maxScore: Score, limit: nat)
+    requires SortedEntries(es)
+    ensures |CollectRange(es, minScore, maxScore, limit)| <= limit
+    ensures forall docId: DocId :: docId in CollectRange(es, minScore, maxScore, limit) ==>
+      exists entry: Entry :: entry in es && entry.id == docId && minScore <= entry.score <= maxScore
+    decreases |es|, limit
+  {
+    if |es| > 0 && limit > 0 {
+      if es[0].score < minScore {
+        CollectRangeSound(es[1..], minScore, maxScore, limit);
+      } else if es[0].score <= maxScore {
+        CollectRangeSound(es[1..], minScore, maxScore, limit - 1);
+      }
+    }
   }
 
   lemma RankNoDocMatchesPrefix(es: seq<Entry>, score: Score)

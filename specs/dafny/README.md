@@ -18,9 +18,8 @@ This directory contains Dafny models/proofs for kernel components.
   - Includes treap query functions: rank / countAtMost / getAtRank / collectRange.
   - Proves core structural obligations for cached subtree sizes (`sum`).
   - Exposes bridge functions to compare treap-entry view against `DocsIndexModel`.
-  - Constructively proves refinement for `rank` and `countAtMost` against `DocsIndexModel`.
-  - Proves rank lookup returns the corresponding flattened entry, reports out-of-bounds ranks as missing, and returns a bucket position no greater than the rank.
-  - Remaining work is to extend the same style of proof to `getAtRank`, `collectRange`, and update-preservation facts strong enough to show the full `ValidTreap` invariant is preserved by `add`/`remove`.
+  - Proves `rank`, `countAtMost`, `getAtRank`, and `collectRange` refine `DocsIndexModel` for valid trees.
+  - Proves `add` and `remove` preserve the full `ValidTreap` invariant and produce exactly the reference insertion and deletion sequences.
 
 - `DocsIndexBench.dfy`: executable lockstep harness for runtime testing and benchmark-style runs.
   - Seeds a docs index, then applies update/insert/delete mixes similar in shape to `thunderdb-ts/src/perf.ts`.

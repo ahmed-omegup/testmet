@@ -34,6 +34,14 @@ All six runs reported 1,651 events, 1,502 matches, 4,159 evictions, 1,344 retrie
 - The clean engine's methods verify for termination, and its visible-query collector is proved to return the ordered result of its visibility predicate. The predicate itself and the whole engine are not yet proved to implement the complete top-k or delivery contract.
 - The small and medium parity scenarios and a 100,000-element sequence smoke test pass. These executable tests do not establish parity for all inputs.
 
+## Correctness Status
+
+- The pending registry's two indexes agree, its lists are nonempty and duplicate-free, and its drain order matches the document index. Registration, cancellation, and resolution preserve these properties.
+- The engine establishes and preserves a combined query-registry, pending-registry, document-store, and valid-treap invariant for stream items whose old document state matches the store. This is a proof precondition, not runtime input validation.
+- A grouped drain emits only stored pending documents, emits each eligible pending document exactly once with its registered query IDs, and clears the pending registry. A direct quantified per-query delivery postcondition remains unproved.
+- Query views are proved equal to the reference top-k range query and contain only stored, in-range documents within the requested limit. Full notification and refill semantics, query match-count correctness, and asynchronous transport behavior remain unproved.
+- Repeated seeding of a document replaces its previous tree entry. Seeding after queries are active still lacks a proved policy for updating match counts and notifications.
+
 ## Cross-Language Replay
 
 `CleanLimitCrossTrace.dfy` emits JSON lines containing each input, query ID, and downstream events. Its default fixture covers 15 steps, including zero-ID eviction and refill; `workload` emits the 1,651-step benchmark-shaped trace. `thunderdb-ts/scripts/compare-dafny.ts` replays those exact inputs through the TypeScript stream and its actual retrieval worker with an in-memory document source, allowing a drain after each input.

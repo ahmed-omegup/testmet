@@ -58,3 +58,6 @@ This document persists user instructions and our operating agreements. It is aut
 - Continue substantial work toward a high-performance Dafny implementation whose intended behavior is fully proved. Distinguish checked contracts, executable tests, assumptions, and unproved behavior; do not trade correctness for speed.
 - Resolve the performance gap and keep progressing toward the full verified-system goal; use equivalent workloads and report remaining limitations explicitly.
 - Continue with a shared workload and output comparison, then optimize toward TypeScript performance without weakening the verification goal.
+
+## This Instruction (2026-11-26)
+- Prioritize proving whole-system correctness over performance and other work. Record proved contracts, assumptions, and remaining gaps explicitly.

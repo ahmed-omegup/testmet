@@ -150,3 +150,11 @@ Acceptance Criteria (Future):
 - The shared trace exposed a TypeScript query-difference lower-bound bug, missing notifications for score changes that remain visible, and mishandling of document ID zero. Focused regressions now cover these paths. Match payloads carry full before/after membership so retained subscriptions can receive updates; net added/removed sets must still exclude their intersection as specified by D003.
 - A warmed, in-memory replay measured roughly 20.9 ms median in TypeScript versus 227.6 ms in Dafny on this host. These are directional measurements, not a controlled end-to-end ratio: language-specific replay, asynchronous scheduling, and marker delivery differ. See `clean-dafny/README.md` for exact samples and methodology.
 - Pending work remains: define event ordering and async retrieval semantics, use a shared persisted trace and equivalent timing boundaries, prove the query-index and whole-engine refinements, and profile larger workloads. Passing this trace is not a proof of all behavior.
+
+## Correctness Update (2026-11-26)
+
+- Superseding the earlier proof-status snapshots: valid treaps now have proved rank, count, rank-selection, and range-query refinements. Insert and remove preserve `ValidTreap` and refine the reference sequences exactly.
+- The clean engine preserves a combined structural invariant relating query IDs, pending registrations, the document store, and the treap, assuming each document change supplies the store's actual old state. This assumption is not enforced at runtime.
+- Grouped drain has proved per-document soundness, completeness, uniqueness, and registry cleanup. A direct quantified per-query delivery postcondition could not be verified and remains open; the verified per-document and cross-index guarantees remain available separately.
+- Repeated seeding now replaces an existing document's old treap entry. Seeding while queries are active still needs a defined and verified policy for counts and notifications.
+- Remaining whole-system work: prove match-count, top-k transition, eviction, and notification refinement; resolve input-validation, seed lifecycle, event ordering, and asynchronous retrieval semantics; then connect external storage and transport to the verified model. Existing parity scenarios are tests, not a proof of these properties.

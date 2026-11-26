@@ -67,6 +67,7 @@ module CleanLimitParity {
 
   method NewReadyEngine() returns (engine: CleanEngine)
     ensures engine.Ready()
+    ensures engine.RegistriesConsistent()
     ensures fresh(engine)
   {
     engine := new CleanEngine();
@@ -164,6 +165,7 @@ module CleanLimitParity {
     while i < documents
       invariant 0 <= i <= documents
       invariant rng > 0
+      invariant engine.RegistriesConsistent()
       decreases documents - i
     {
       var nextRng, scoreSeed := NextRand(rng);
@@ -190,6 +192,7 @@ module CleanLimitParity {
       invariant rng > 0
       invariant SumConsistent(state.treap)
       invariant engine.Ready()
+      invariant engine.RegistriesConsistent()
       decreases customers - i
     {
       var nextRng1, widthSeed := NextRand(rng);
@@ -215,6 +218,7 @@ module CleanLimitParity {
       invariant rng > 0
       invariant SumConsistent(state.treap)
       invariant engine.Ready()
+      invariant engine.RegistriesConsistent()
       decreases ticks - tick
     {
       var update := 0;
@@ -223,6 +227,7 @@ module CleanLimitParity {
         invariant rng > 0
         invariant SumConsistent(state.treap)
         invariant engine.Ready()
+        invariant engine.RegistriesConsistent()
         decreases updatesPerTick - update
       {
         if |state.docIds| > 0 {
@@ -254,6 +259,7 @@ module CleanLimitParity {
         invariant rng > 0
         invariant SumConsistent(state.treap)
         invariant engine.Ready()
+        invariant engine.RegistriesConsistent()
         decreases insertsPerTick - insert
       {
         var nextRng5, scoreSeed := NextRand(rng);
@@ -275,6 +281,7 @@ module CleanLimitParity {
         invariant rng > 0
         invariant SumConsistent(state.treap)
         invariant engine.Ready()
+        invariant engine.RegistriesConsistent()
         decreases deletesPerTick - delete
       {
         if |state.docIds| > 0 {

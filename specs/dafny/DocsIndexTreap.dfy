@@ -71,6 +71,27 @@ module DocsIndexTreap {
       OrderedByScore(t.right, SomeScore(t.score), hi)
   }
 
+  ghost predicate LowerBoundRelaxed(original: MaybeScore, relaxed: MaybeScore) {
+    relaxed.NoScore? || (original.SomeScore? && relaxed.SomeScore? && relaxed.v <= original.v)
+  }
+
+  ghost predicate UpperBoundRelaxed(original: MaybeScore, relaxed: MaybeScore) {
+    relaxed.NoScore? || (original.SomeScore? && relaxed.SomeScore? && original.v <= relaxed.v)
+  }
+
+  lemma OrderedByScoreRelaxBounds(t: Treap, lo: MaybeScore, hi: MaybeScore, newLo: MaybeScore, newHi: MaybeScore)
+    requires OrderedByScore(t, lo, hi)
+    requires LowerBoundRelaxed(lo, newLo)
+    requires UpperBoundRelaxed(hi, newHi)
+    ensures OrderedByScore(t, newLo, newHi)
+    decreases NodeCount(t)
+  {
+    if t.Node? {
+      OrderedByScoreRelaxBounds(t.left, lo, SomeScore(t.score), newLo, SomeScore(t.score));
+      OrderedByScoreRelaxBounds(t.right, SomeScore(t.score), hi, SomeScore(t.score), newHi);
+    }
+  }
+
   predicate IdsSortedInTree(t: Treap) {
     if t.Empty? then true
     else SortedStrictIds(t.ids) && IdsSortedInTree(t.left) && IdsSortedInTree(t.right)
@@ -106,11 +127,65 @@ module DocsIndexTreap {
     else [ids[0]] + InsertId(ids[1..], id)
   }
 
+  lemma InsertIdProperties(ids: seq<DocId>, id: DocId)
+    requires SortedStrictIds(ids)
+    ensures SortedStrictIds(InsertId(ids, id))
+    ensures |InsertId(ids, id)| > 0
+    ensures forall other: DocId :: other in InsertId(ids, id) <==> other in ids || other == id
+    decreases |ids|
+  {
+    if |ids| > 0 && ids[0] < id {
+      InsertIdProperties(ids[1..], id);
+      var tail := InsertId(ids[1..], id);
+      forall index | 0 <= index < |tail|
+        ensures ids[0] < tail[index]
+      {
+        assert tail[index] in tail;
+        if tail[index] in ids[1..] {
+          assert exists oldIndex :: 1 <= oldIndex < |ids| && ids[oldIndex] == tail[index];
+        } else {
+          assert tail[index] == id;
+        }
+      }
+      assert SortedStrictIds([ids[0]] + tail);
+    }
+  }
+
   function RemoveId(ids: seq<DocId>, id: DocId): seq<DocId> {
     if |ids| == 0 then ids
     else if ids[0] == id then ids[1..]
     else if id < ids[0] then ids
     else [ids[0]] + RemoveId(ids[1..], id)
+  }
+
+  lemma RemoveIdProperties(ids: seq<DocId>, id: DocId)
+    requires SortedStrictIds(ids)
+    ensures SortedStrictIds(RemoveId(ids, id))
+    ensures |RemoveId(ids, id)| <= |ids|
+    ensures forall other: DocId :: other in RemoveId(ids, id) <==> other in ids && other != id
+    decreases |ids|
+  {
+    if |ids| > 0 && ids[0] < id {
+      RemoveIdProperties(ids[1..], id);
+      var tail := RemoveId(ids[1..], id);
+      forall index | 0 <= index < |tail|
+        ensures ids[0] < tail[index]
+      {
+        assert tail[index] in ids[1..];
+        assert exists oldIndex :: 1 <= oldIndex < |ids| && ids[oldIndex] == tail[index];
+      }
+      assert SortedStrictIds([ids[0]] + tail);
+    }
+  }
+
+  lemma RemoveIdLength(ids: seq<DocId>, id: DocId)
+    requires SortedStrictIds(ids)
+    ensures |RemoveId(ids, id)| == (if id in ids then |ids| - 1 else |ids|)
+    decreases |ids|
+  {
+    if |ids| > 0 && ids[0] < id {
+      RemoveIdLength(ids[1..], id);
+    }
   }
 
   function InsertionIndex(ids: seq<DocId>, id: DocId): nat {
@@ -192,6 +267,59 @@ module DocsIndexTreap {
       Pull(Node(right.score, right.ids, right.prio, 0, Join(left, right.left), right.right))
   }
 
+  lemma JoinPreservesBucketInvariants(left: Treap, right: Treap)
+    requires SumConsistent(left) && SumConsistent(right)
+    requires IdsSortedInTree(left) && IdsSortedInTree(right)
+    requires NonEmptyBuckets(left) && NonEmptyBuckets(right)
+    ensures IdsSortedInTree(Join(left, right))
+    ensures NonEmptyBuckets(Join(left, right))
+    decreases NodeCount(left) + NodeCount(right)
+  {
+    if left.Node? && right.Node? {
+      if left.prio > right.prio {
+        JoinPreservesBucketInvariants(left.right, right);
+      } else {
+        JoinPreservesBucketInvariants(left, right.left);
+      }
+    }
+  }
+
+  lemma JoinPreservesHeap(left: Treap, right: Treap)
+    requires SumConsistent(left) && SumConsistent(right)
+    requires HeapOrdered(left) && HeapOrdered(right)
+    ensures HeapOrdered(Join(left, right))
+    ensures left.Node? && right.Node? ==> (Join(left, right).Node? &&
+      Join(left, right).prio == (if left.prio > right.prio then left.prio else right.prio))
+    decreases NodeCount(left) + NodeCount(right)
+  {
+    if left.Node? && right.Node? {
+      if left.prio > right.prio {
+        JoinPreservesHeap(left.right, right);
+      } else {
+        JoinPreservesHeap(left, right.left);
+      }
+    }
+  }
+
+  lemma JoinPreservesScoreOrder(left: Treap, right: Treap, lo: MaybeScore, hi: MaybeScore, split: Score)
+    requires SumConsistent(left) && SumConsistent(right)
+    requires OrderedByScore(left, lo, SomeScore(split))
+    requires OrderedByScore(right, SomeScore(split), hi)
+    requires ScoreAboveLower(split, lo) && ScoreBelowUpper(split, hi)
+    ensures OrderedByScore(Join(left, right), lo, hi)
+    decreases NodeCount(left) + NodeCount(right)
+  {
+    if left.Empty? {
+      OrderedByScoreRelaxBounds(right, SomeScore(split), hi, lo, hi);
+    } else if right.Empty? {
+      OrderedByScoreRelaxBounds(left, lo, SomeScore(split), lo, hi);
+    } else if left.prio > right.prio {
+      JoinPreservesScoreOrder(left.right, right, SomeScore(left.score), hi, split);
+    } else {
+      JoinPreservesScoreOrder(left, right.left, lo, SomeScore(right.score), split);
+    }
+  }
+
   function Add(t: Treap, score: Score, id: DocId, prioForNew: Priority): Treap
     requires SumConsistent(t)
     decreases NodeCount(t)
@@ -209,6 +337,62 @@ module DocsIndexTreap {
       var right2 := Add(t.right, score, id, prioForNew);
       var n := Pull(Node(t.score, t.ids, t.prio, 0, t.left, right2));
       if right2.Node? && right2.prio > t.prio then RotateLeft(n) else n
+  }
+
+  lemma AddPreservesBucketInvariants(t: Treap, score: Score, id: DocId, priority: Priority)
+    requires SumConsistent(t)
+    requires IdsSortedInTree(t)
+    requires NonEmptyBuckets(t)
+    ensures IdsSortedInTree(Add(t, score, id, priority))
+    ensures NonEmptyBuckets(Add(t, score, id, priority))
+    decreases NodeCount(t)
+  {
+    if t.Node? {
+      if score == t.score {
+        InsertIdProperties(t.ids, id);
+      } else if score < t.score {
+        AddPreservesBucketInvariants(t.left, score, id, priority);
+      } else {
+        AddPreservesBucketInvariants(t.right, score, id, priority);
+      }
+    }
+  }
+
+  lemma AddPreservesHeap(t: Treap, score: Score, id: DocId, priority: Priority)
+    requires SumConsistent(t)
+    requires HeapOrdered(t)
+    ensures HeapOrdered(Add(t, score, id, priority))
+    ensures Add(t, score, id, priority).Node?
+    ensures t.Node? ==> Add(t, score, id, priority).prio >= t.prio
+    ensures t.Node? && Add(t, score, id, priority).prio > t.prio ==>
+      ((!Add(t, score, id, priority).left.Node? || Add(t, score, id, priority).left.prio <= t.prio) &&
+       (!Add(t, score, id, priority).right.Node? || Add(t, score, id, priority).right.prio <= t.prio))
+    decreases NodeCount(t)
+  {
+    if t.Node? {
+      if score < t.score {
+        AddPreservesHeap(t.left, score, id, priority);
+      } else if score > t.score {
+        AddPreservesHeap(t.right, score, id, priority);
+      }
+    }
+  }
+
+  lemma AddPreservesScoreOrder(t: Treap, lo: MaybeScore, hi: MaybeScore, score: Score, id: DocId, priority: Priority)
+    requires SumConsistent(t)
+    requires OrderedByScore(t, lo, hi)
+    requires ScoreAboveLower(score, lo)
+    requires ScoreBelowUpper(score, hi)
+    ensures OrderedByScore(Add(t, score, id, priority), lo, hi)
+    decreases NodeCount(t)
+  {
+    if t.Node? {
+      if score < t.score {
+        AddPreservesScoreOrder(t.left, lo, SomeScore(t.score), score, id, priority);
+      } else if score > t.score {
+        AddPreservesScoreOrder(t.right, SomeScore(t.score), hi, score, id, priority);
+      }
+    }
   }
 
   function Remove(t: Treap, score: Score, id: DocId): Treap
@@ -230,6 +414,79 @@ module DocsIndexTreap {
       Pull(Node(t.score, t.ids, t.prio, 0, Remove(t.left, score, id), t.right))
     else
       Pull(Node(t.score, t.ids, t.prio, 0, t.left, Remove(t.right, score, id)))
+  }
+
+  lemma RemovePreservesBucketInvariants(t: Treap, score: Score, id: DocId)
+    requires SumConsistent(t)
+    requires IdsSortedInTree(t)
+    requires NonEmptyBuckets(t)
+    ensures IdsSortedInTree(Remove(t, score, id))
+    ensures NonEmptyBuckets(Remove(t, score, id))
+    decreases NodeCount(t)
+  {
+    if t.Node? {
+      if score == t.score {
+        RemoveIdProperties(t.ids, id);
+        JoinPreservesBucketInvariants(t.left, t.right);
+      } else if score < t.score {
+        RemovePreservesBucketInvariants(t.left, score, id);
+      } else {
+        RemovePreservesBucketInvariants(t.right, score, id);
+      }
+    }
+  }
+
+  lemma RemovePreservesHeap(t: Treap, score: Score, id: DocId)
+    requires SumConsistent(t)
+    requires HeapOrdered(t)
+    ensures HeapOrdered(Remove(t, score, id))
+    ensures t.Node? && Remove(t, score, id).Node? ==> Remove(t, score, id).prio <= t.prio
+    decreases NodeCount(t)
+  {
+    if t.Node? {
+      if score == t.score {
+        JoinPreservesHeap(t.left, t.right);
+      } else if score < t.score {
+        RemovePreservesHeap(t.left, score, id);
+      } else {
+        RemovePreservesHeap(t.right, score, id);
+      }
+    }
+  }
+
+  lemma RemovePreservesScoreOrder(t: Treap, lo: MaybeScore, hi: MaybeScore, score: Score, id: DocId)
+    requires SumConsistent(t)
+    requires OrderedByScore(t, lo, hi)
+    ensures OrderedByScore(Remove(t, score, id), lo, hi)
+    decreases NodeCount(t)
+  {
+    if t.Node? {
+      if score == t.score {
+        JoinPreservesScoreOrder(t.left, t.right, lo, hi, t.score);
+      } else if score < t.score {
+        RemovePreservesScoreOrder(t.left, lo, SomeScore(t.score), score, id);
+      } else {
+        RemovePreservesScoreOrder(t.right, SomeScore(t.score), hi, score, id);
+      }
+    }
+  }
+
+  lemma AddPreservesValidTreap(t: Treap, score: Score, id: DocId, priority: Priority)
+    requires ValidTreap(t)
+    ensures ValidTreap(Add(t, score, id, priority))
+  {
+    AddPreservesBucketInvariants(t, score, id, priority);
+    AddPreservesHeap(t, score, id, priority);
+    AddPreservesScoreOrder(t, NoScore, NoScore, score, id, priority);
+  }
+
+  lemma RemovePreservesValidTreap(t: Treap, score: Score, id: DocId)
+    requires ValidTreap(t)
+    ensures ValidTreap(Remove(t, score, id))
+  {
+    RemovePreservesBucketInvariants(t, score, id);
+    RemovePreservesHeap(t, score, id);
+    RemovePreservesScoreOrder(t, NoScore, NoScore, score, id);
   }
 
   function TreapRank(t: Treap, score: Score, id: MaybeDocId): nat
@@ -275,6 +532,93 @@ module DocsIndexTreap {
 
   function SatSub(a: nat, b: nat): nat {
     if b <= a then a - b else 0
+  }
+
+  ghost function FilterRangeIds(es: seq<Entry>, minScore: Score, maxScore: Score): seq<DocId> {
+    if |es| == 0 then []
+    else ((if minScore <= es[0].score <= maxScore then [es[0].id] else []) +
+      FilterRangeIds(es[1..], minScore, maxScore))
+  }
+
+  lemma FilterRangeConcat(left: seq<Entry>, right: seq<Entry>, minScore: Score, maxScore: Score)
+    ensures FilterRangeIds(left + right, minScore, maxScore) ==
+      FilterRangeIds(left, minScore, maxScore) + FilterRangeIds(right, minScore, maxScore)
+    decreases |left|
+  {
+    if |left| == 0 {
+      assert left == [];
+      assert left + right == right;
+      assert FilterRangeIds(left, minScore, maxScore) == [];
+    } else {
+      assert left + right == [left[0]] + (left[1..] + right);
+      assert (left + right)[1..] == left[1..] + right;
+      FilterRangeConcat(left[1..], right, minScore, maxScore);
+    }
+  }
+
+  lemma FilterRangeBucket(score: Score, ids: seq<DocId>, minScore: Score, maxScore: Score)
+    ensures FilterRangeIds(EntriesFromIds(score, ids), minScore, maxScore) ==
+      (if minScore <= score <= maxScore then ids else [])
+    decreases |ids|
+  {
+    if |ids| > 0 {
+      FilterRangeBucket(score, ids[1..], minScore, maxScore);
+    }
+  }
+
+  lemma TakePrefixWithinLimit<T>(items: seq<T>, limit: nat)
+    ensures |TakePrefix(items, limit)| <= limit
+    decreases |items|, limit
+  {
+    if |items| > 0 && limit > 0 {
+      TakePrefixWithinLimit(items[1..], limit - 1);
+    }
+  }
+
+  lemma TakePrefixConcat<T>(left: seq<T>, right: seq<T>, limit: nat)
+    ensures TakePrefix(left + right, limit) ==
+      TakePrefix(left, limit) + TakePrefix(right, SatSub(limit, |TakePrefix(left, limit)|))
+    decreases |left|, limit
+  {
+    if |left| == 0 {
+      assert left == [];
+      assert left + right == right;
+      assert TakePrefix(left, limit) == [];
+    } else if limit > 0 {
+      assert left + right == [left[0]] + (left[1..] + right);
+      assert (left + right)[1..] == left[1..] + right;
+      TakePrefixWithinLimit(left[1..], limit - 1);
+      TakePrefixConcat(left[1..], right, limit - 1);
+      assert SatSub(limit, 1 + |TakePrefix(left[1..], limit - 1)|) ==
+        SatSub(limit - 1, |TakePrefix(left[1..], limit - 1)|);
+    }
+  }
+
+  lemma FilterRangeAboveMax(es: seq<Entry>, minScore: Score, maxScore: Score)
+    requires forall index :: 0 <= index < |es| ==> es[index].score > maxScore
+    ensures FilterRangeIds(es, minScore, maxScore) == []
+    decreases |es|
+  {
+    if |es| > 0 {
+      FilterRangeAboveMax(es[1..], minScore, maxScore);
+    }
+  }
+
+  lemma CollectRangeMatchesFilter(es: seq<Entry>, minScore: Score, maxScore: Score, limit: nat)
+    requires SortedEntries(es)
+    ensures CollectRange(es, minScore, maxScore, limit) == TakePrefix(FilterRangeIds(es, minScore, maxScore), limit)
+    decreases |es|, limit
+  {
+    if |es| > 0 && limit > 0 {
+      if es[0].score < minScore {
+        CollectRangeMatchesFilter(es[1..], minScore, maxScore, limit);
+        assert FilterRangeIds(es, minScore, maxScore) == FilterRangeIds(es[1..], minScore, maxScore);
+      } else if es[0].score > maxScore {
+        FilterRangeAboveMax(es, minScore, maxScore);
+      } else {
+        CollectRangeMatchesFilter(es[1..], minScore, maxScore, limit - 1);
+      }
+    }
   }
 
   function TreapCollectRange(t: Treap, minScore: Score, maxScore: Score, limit: nat): seq<DocId>
@@ -332,12 +676,81 @@ module DocsIndexTreap {
     else es[0].score > score && AllScoresGt(es[1..], score)
   }
 
+  lemma FilterRangeBelowMin(es: seq<Entry>, minScore: Score, maxScore: Score)
+    requires AllScoresLt(es, minScore)
+    ensures FilterRangeIds(es, minScore, maxScore) == []
+    decreases |es|
+  {
+    if |es| > 0 {
+      FilterRangeBelowMin(es[1..], minScore, maxScore);
+    }
+  }
+
+  lemma FilterRangeAboveBound(es: seq<Entry>, minScore: Score, maxScore: Score)
+    requires AllScoresGt(es, maxScore)
+    ensures FilterRangeIds(es, minScore, maxScore) == []
+    decreases |es|
+  {
+    if |es| > 0 {
+      FilterRangeAboveBound(es[1..], minScore, maxScore);
+    }
+  }
+
+  lemma AllScoresLtAt(es: seq<Entry>, score: Score, index: nat)
+    requires AllScoresLt(es, score)
+    requires index < |es|
+    ensures es[index].score < score
+    decreases index
+  {
+    if index > 0 {
+      AllScoresLtAt(es[1..], score, index - 1);
+    }
+  }
+
+  lemma AllScoresGtAt(es: seq<Entry>, score: Score, index: nat)
+    requires AllScoresGt(es, score)
+    requires index < |es|
+    ensures es[index].score > score
+    decreases index
+  {
+    if index > 0 {
+      AllScoresGtAt(es[1..], score, index - 1);
+    }
+  }
+
+  lemma AllScoresLtMember(es: seq<Entry>, score: Score, entry: Entry)
+    requires AllScoresLt(es, score)
+    requires entry in es
+    ensures entry.score < score
+  {
+    var index :| 0 <= index < |es| && es[index] == entry;
+    AllScoresLtAt(es, score, index);
+  }
+
+  lemma AllScoresGtMember(es: seq<Entry>, score: Score, entry: Entry)
+    requires AllScoresGt(es, score)
+    requires entry in es
+    ensures entry.score > score
+  {
+    var index :| 0 <= index < |es| && es[index] == entry;
+    AllScoresGtAt(es, score, index);
+  }
+
   lemma EntriesFromIdsLength(score: Score, ids: seq<DocId>)
     ensures |EntriesFromIds(score, ids)| == |ids|
     decreases |ids|
   {
     if |ids| > 0 {
       EntriesFromIdsLength(score, ids[1..]);
+    }
+  }
+
+  lemma EntriesFromIdsMembership(score: Score, ids: seq<DocId>, entry: Entry)
+    ensures entry in EntriesFromIds(score, ids) <==> entry.score == score && entry.id in ids
+    decreases |ids|
+  {
+    if |ids| > 0 {
+      EntriesFromIdsMembership(score, ids[1..], entry);
     }
   }
 
@@ -365,6 +778,27 @@ module DocsIndexTreap {
     if index > 0 {
       EntriesFromIdsAt(score, ids[1..], index - 1);
     }
+  }
+
+  lemma EntriesFromIdsAreSorted(score: Score, ids: seq<DocId>)
+    requires SortedStrictIds(ids)
+    ensures SortedEntries(EntriesFromIds(score, ids))
+  {
+    EntriesFromIdsLength(score, ids);
+    forall left, right | 0 <= left < right < |EntriesFromIds(score, ids)|
+      ensures LexLt(EntriesFromIds(score, ids)[left], EntriesFromIds(score, ids)[right])
+    {
+      EntriesFromIdsAt(score, ids, left);
+      EntriesFromIdsAt(score, ids, right);
+    }
+  }
+
+  lemma SortedEntriesConcat(left: seq<Entry>, right: seq<Entry>)
+    requires SortedEntries(left) && SortedEntries(right)
+    requires forall leftIndex, rightIndex :: 0 <= leftIndex < |left| && 0 <= rightIndex < |right| ==>
+      LexLt(left[leftIndex], right[rightIndex])
+    ensures SortedEntries(left + right)
+  {
   }
 
   lemma TreapGetAtRankReturnsEntry(t: Treap, rank: nat)
@@ -951,6 +1385,268 @@ module DocsIndexTreap {
     ensures TreapCountAtMost(t, score) == CountAtMost(Entries(t), score)
   {
     TreapCountAtMostRefinesModelBounded(t, NoScore, NoScore, score);
+  }
+
+  lemma EntriesSortedFromTree(t: Treap, lo: MaybeScore, hi: MaybeScore)
+    requires OrderedByScore(t, lo, hi)
+    requires IdsSortedInTree(t)
+    ensures SortedEntries(Entries(t))
+    decreases NodeCount(t)
+  {
+    if t.Node? {
+      var left := Entries(t.left);
+      var bucket := EntriesFromIds(t.score, t.ids);
+      var right := Entries(t.right);
+      EntriesSortedFromTree(t.left, lo, SomeScore(t.score));
+      EntriesSortedFromTree(t.right, SomeScore(t.score), hi);
+      EntriesFromIdsAreSorted(t.score, t.ids);
+      EntriesLtFromOrdered(t.left, lo, t.score);
+      EntriesGtFromOrdered(t.right, t.score, hi);
+      EntriesFromIdsLength(t.score, t.ids);
+      forall leftIndex, bucketIndex | 0 <= leftIndex < |left| && 0 <= bucketIndex < |bucket|
+        ensures LexLt(left[leftIndex], bucket[bucketIndex])
+      {
+        AllScoresLtAt(left, t.score, leftIndex);
+        EntriesFromIdsAt(t.score, t.ids, bucketIndex);
+      }
+      SortedEntriesConcat(left, bucket);
+      forall prefixIndex, rightIndex | 0 <= prefixIndex < |left + bucket| && 0 <= rightIndex < |right|
+        ensures LexLt((left + bucket)[prefixIndex], right[rightIndex])
+      {
+        AllScoresGtAt(right, t.score, rightIndex);
+        if prefixIndex < |left| {
+          AllScoresLtAt(left, t.score, prefixIndex);
+        } else {
+          EntriesFromIdsAt(t.score, t.ids, prefixIndex - |left|);
+        }
+      }
+      SortedEntriesConcat(left + bucket, right);
+    }
+  }
+
+  lemma TreapGetAtRankPosition(t: Treap, lo: MaybeScore, hi: MaybeScore, rank: nat)
+    requires SumConsistent(t)
+    requires OrderedByScore(t, lo, hi)
+    requires rank < Sum(t)
+    ensures TreapGetAtRank(t, rank).Found?
+    ensures TreapRank(t, TreapGetAtRank(t, rank).score, NoDoc) <= rank
+    ensures TreapGetAtRank(t, rank).position == rank - TreapRank(t, TreapGetAtRank(t, rank).score, NoDoc)
+    decreases NodeCount(t)
+  {
+    if t.Node? {
+      if rank < Sum(t.left) {
+        TreapGetAtRankPosition(t.left, lo, SomeScore(t.score), rank);
+        SumEqualsEntriesLength(t.left);
+        TreapGetAtRankReturnsEntry(t.left, rank);
+        EntriesLtFromOrdered(t.left, lo, t.score);
+        AllScoresLtAt(Entries(t.left), t.score, rank);
+      } else if rank < Sum(t.left) + |t.ids| {
+      } else {
+        var rightRank := rank - (Sum(t.left) + |t.ids|);
+        TreapGetAtRankPosition(t.right, SomeScore(t.score), hi, rightRank);
+        SumEqualsEntriesLength(t.right);
+        TreapGetAtRankReturnsEntry(t.right, rightRank);
+        EntriesGtFromOrdered(t.right, t.score, hi);
+        AllScoresGtAt(Entries(t.right), t.score, rightRank);
+      }
+    }
+  }
+
+  lemma TreapGetAtRankRefinesModel(t: Treap, rank: nat)
+    requires SumConsistent(t)
+    requires OrderedByScore(t, NoScore, NoScore)
+    requires SortedEntries(Entries(t))
+    ensures TreapGetAtRank(t, rank) == GetAtRank(Entries(t), rank)
+  {
+    SumEqualsEntriesLength(t);
+    TreapGetAtRankReturnsEntry(t, rank);
+    if rank < Sum(t) {
+      TreapGetAtRankPosition(t, NoScore, NoScore, rank);
+      TreapRankNoDocRefinesBounded(t, NoScore, NoScore, TreapGetAtRank(t, rank).score);
+      PositionAtMatchesScoreRank(Entries(t), rank);
+    }
+  }
+
+  lemma ValidTreapGetAtRankRefinesModel(t: Treap, rank: nat)
+    requires ValidTreap(t)
+    ensures SortedEntries(Entries(t))
+    ensures TreapGetAtRank(t, rank) == GetAtRank(Entries(t), rank)
+  {
+    EntriesSortedFromTree(t, NoScore, NoScore);
+    TreapGetAtRankRefinesModel(t, rank);
+  }
+
+  lemma ValidTreapRankFindsEntry(t: Treap, index: nat)
+    requires ValidTreap(t)
+    requires index < |Entries(t)|
+    ensures TreapRank(t, Entries(t)[index].score, SomeDoc(Entries(t)[index].id)) == index
+  {
+    EntriesSortedFromTree(t, NoScore, NoScore);
+    RankWithIdFindsEntry(Entries(t), index);
+    TreapRankRefinesModel(t, Entries(t)[index].score, SomeDoc(Entries(t)[index].id));
+  }
+
+  lemma TreapCollectRangeMatchesFilter(t: Treap, lo: MaybeScore, hi: MaybeScore, minScore: Score, maxScore: Score, limit: nat)
+    requires SumConsistent(t)
+    requires OrderedByScore(t, lo, hi)
+    ensures TreapCollectRange(t, minScore, maxScore, limit) ==
+      TakePrefix(FilterRangeIds(Entries(t), minScore, maxScore), limit)
+    decreases NodeCount(t)
+  {
+    if t.Node? && limit > 0 {
+      var leftEntries := Entries(t.left);
+      var bucketEntries := EntriesFromIds(t.score, t.ids);
+      var rightEntries := Entries(t.right);
+      var leftIds := FilterRangeIds(leftEntries, minScore, maxScore);
+      var bucketIds := FilterRangeIds(bucketEntries, minScore, maxScore);
+      var rightIds := FilterRangeIds(rightEntries, minScore, maxScore);
+
+      if minScore < t.score {
+        TreapCollectRangeMatchesFilter(t.left, lo, SomeScore(t.score), minScore, maxScore, limit);
+      } else {
+        EntriesLtFromOrdered(t.left, lo, t.score);
+        if t.score < minScore {
+          AllScoresLtWeaken(leftEntries, t.score, minScore);
+        }
+        FilterRangeBelowMin(leftEntries, minScore, maxScore);
+      }
+      var leftOut := if minScore < t.score then TreapCollectRange(t.left, minScore, maxScore, limit) else [];
+      assert leftOut == TakePrefix(leftIds, limit);
+      var remaining := SatSub(limit, |leftOut|);
+      FilterRangeBucket(t.score, t.ids, minScore, maxScore);
+      var selfOut := if t.score >= minScore && t.score <= maxScore then TakePrefix(t.ids, remaining) else [];
+      assert selfOut == TakePrefix(bucketIds, remaining);
+      var rightLimit := SatSub(remaining, |selfOut|);
+      if t.score < maxScore {
+        TreapCollectRangeMatchesFilter(t.right, SomeScore(t.score), hi, minScore, maxScore, rightLimit);
+      } else {
+        EntriesGtFromOrdered(t.right, t.score, hi);
+        if maxScore < t.score {
+          AllScoresGtWeaken(rightEntries, t.score, maxScore);
+        }
+        FilterRangeAboveBound(rightEntries, minScore, maxScore);
+      }
+      FilterRangeConcat(bucketEntries, rightEntries, minScore, maxScore);
+      FilterRangeConcat(leftEntries, bucketEntries + rightEntries, minScore, maxScore);
+      TakePrefixConcat(leftIds, bucketIds + rightIds, limit);
+      TakePrefixConcat(bucketIds, rightIds, remaining);
+      assert Entries(t) == leftEntries + (bucketEntries + rightEntries);
+    }
+  }
+
+  lemma ValidTreapCollectRangeRefinesModel(t: Treap, minScore: Score, maxScore: Score, limit: nat)
+    requires ValidTreap(t)
+    ensures SortedEntries(Entries(t))
+    ensures TreapCollectRange(t, minScore, maxScore, limit) == CollectRange(Entries(t), minScore, maxScore, limit)
+  {
+    EntriesSortedFromTree(t, NoScore, NoScore);
+    TreapCollectRangeMatchesFilter(t, NoScore, NoScore, minScore, maxScore, limit);
+    CollectRangeMatchesFilter(Entries(t), minScore, maxScore, limit);
+  }
+
+  lemma AddPreservesEntryMembership(t: Treap, score: Score, id: DocId, priority: Priority, entry: Entry)
+    requires SumConsistent(t)
+    requires IdsSortedInTree(t)
+    ensures entry in Entries(Add(t, score, id, priority)) <==> entry in Entries(t) || entry == Entry(score, id)
+    decreases NodeCount(t)
+  {
+    if t.Empty? {
+      EntriesFromIdsMembership(score, [id], entry);
+    } else if score == t.score {
+      InsertIdProperties(t.ids, id);
+      EntriesFromIdsMembership(t.score, t.ids, entry);
+      EntriesFromIdsMembership(t.score, InsertId(t.ids, id), entry);
+    } else if score < t.score {
+      AddPreservesEntryMembership(t.left, score, id, priority, entry);
+      var left := Add(t.left, score, id, priority);
+      if left.Node? && left.prio > t.prio {
+        var node := Pull(Node(t.score, t.ids, t.prio, 0, left, t.right));
+        RotateRightPreservesEntries(node);
+      }
+    } else {
+      AddPreservesEntryMembership(t.right, score, id, priority, entry);
+      var right := Add(t.right, score, id, priority);
+      if right.Node? && right.prio > t.prio {
+        var node := Pull(Node(t.score, t.ids, t.prio, 0, t.left, right));
+        RotateLeftPreservesEntries(node);
+      }
+    }
+  }
+
+  lemma JoinPreservesEntryMembership(left: Treap, right: Treap, entry: Entry)
+    requires SumConsistent(left) && SumConsistent(right)
+    ensures entry in Entries(Join(left, right)) <==> entry in Entries(left) || entry in Entries(right)
+    decreases NodeCount(left) + NodeCount(right)
+  {
+    if left.Node? && right.Node? {
+      if left.prio > right.prio {
+        JoinPreservesEntryMembership(left.right, right, entry);
+      } else {
+        JoinPreservesEntryMembership(left, right.left, entry);
+      }
+    }
+  }
+
+  lemma RemovePreservesEntryMembership(t: Treap, lo: MaybeScore, hi: MaybeScore, score: Score, id: DocId, entry: Entry)
+    requires SumConsistent(t)
+    requires OrderedByScore(t, lo, hi)
+    requires IdsSortedInTree(t)
+    ensures entry in Entries(Remove(t, score, id)) <==> entry in Entries(t) && entry != Entry(score, id)
+    decreases NodeCount(t)
+  {
+    if t.Node? {
+      EntriesLtFromOrdered(t.left, lo, t.score);
+      EntriesGtFromOrdered(t.right, t.score, hi);
+      if entry in Entries(t.left) {
+        AllScoresLtMember(Entries(t.left), t.score, entry);
+      }
+      if entry in Entries(t.right) {
+        AllScoresGtMember(Entries(t.right), t.score, entry);
+      }
+      EntriesFromIdsMembership(t.score, t.ids, entry);
+      if score == t.score {
+        RemoveIdProperties(t.ids, id);
+        RemoveIdLength(t.ids, id);
+        EntriesFromIdsMembership(t.score, RemoveId(t.ids, id), entry);
+        JoinPreservesEntryMembership(t.left, t.right, entry);
+      } else if score < t.score {
+        RemovePreservesEntryMembership(t.left, lo, SomeScore(t.score), score, id, entry);
+      } else {
+        RemovePreservesEntryMembership(t.right, SomeScore(t.score), hi, score, id, entry);
+      }
+    }
+  }
+
+  lemma ValidTreapAddRefinesModel(t: Treap, score: Score, id: DocId, priority: Priority)
+    requires ValidTreap(t)
+    ensures SortedEntries(Entries(t))
+    ensures Entries(Add(t, score, id, priority)) == InsertUnique(Entries(t), score, id)
+  {
+    EntriesSortedFromTree(t, NoScore, NoScore);
+    AddPreservesValidTreap(t, score, id, priority);
+    EntriesSortedFromTree(Add(t, score, id, priority), NoScore, NoScore);
+    forall entry: Entry
+      ensures entry in Entries(Add(t, score, id, priority)) <==> entry in InsertUnique(Entries(t), score, id)
+    {
+      AddPreservesEntryMembership(t, score, id, priority, entry);
+    }
+    SortedEntriesWithSameMembersAreEqual(Entries(Add(t, score, id, priority)), InsertUnique(Entries(t), score, id));
+  }
+
+  lemma ValidTreapRemoveRefinesModel(t: Treap, score: Score, id: DocId)
+    requires ValidTreap(t)
+    ensures SortedEntries(Entries(t))
+    ensures Entries(Remove(t, score, id)) == RemoveOne(Entries(t), score, id)
+  {
+    EntriesSortedFromTree(t, NoScore, NoScore);
+    RemovePreservesValidTreap(t, score, id);
+    EntriesSortedFromTree(Remove(t, score, id), NoScore, NoScore);
+    forall entry: Entry
+      ensures entry in Entries(Remove(t, score, id)) <==> entry in RemoveOne(Entries(t), score, id)
+    {
+      RemovePreservesEntryMembership(t, NoScore, NoScore, score, id, entry);
+    }
+    SortedEntriesWithSameMembersAreEqual(Entries(Remove(t, score, id)), RemoveOne(Entries(t), score, id));
   }
 
   lemma PullPreservesEntries(t: Treap)

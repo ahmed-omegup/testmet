@@ -10,6 +10,11 @@ module CleanLimitSmoke {
   method Main()
     decreases *
   {
+    var reseeded := new CleanEngine();
+    reseeded.SeedDocs([SeedDoc(7, DocState(1)), SeedDoc(7, DocState(2))]);
+    expect Entries(reseeded.docs) == [Entry(2, 7)];
+    expect reseeded.store[7] == DocState(2);
+
     var largeIds := seq(100000, (index: nat) => index as int);
     expect InsertionIndex(largeIds, 100000) == 100000;
     expect RemoveDocId(largeIds, 99999) == largeIds[..99999];
