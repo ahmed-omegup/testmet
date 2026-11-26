@@ -70,7 +70,7 @@ Run the dedicated benchmark under Docker limits of 3GB RAM and 2 CPUs:
 ./specs/clean-dafny/run-clean-limit-400k.sh
 ```
 
-The scenario seeds 400,000 documents, adds 10,000 customers, performs 350,000 change events across five ticks, and uses a query limit of 50 with density 10. The runner derives throughput, active customers, and retrieval documents per customer per minute from the measured wall time and emitted summary. It is an in-memory clean-engine benchmark, not a networked or LMDB-backed service benchmark.
+The scenario seeds 400,000 documents, adds 10,000 customers, performs 350,000 change events across five ticks, and uses a query limit of 50 with density 10. The runner derives throughput, active customers, and retrieval documents per customer per minute from the measured wall time and emitted summary. It uses the verification-independent mutable array/bucket surface in `specs/dafny-ts/CleanLimitMutablePerf400k.dfy`; it is not the proof-oriented immutable clean engine and is not a networked or LMDB-backed service benchmark.
 
 Run the smoke harness with:
 

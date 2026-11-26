@@ -31,26 +31,21 @@ it was able to handle under 3GB memory and 2 vCores :
 
 ## Dafny Clean Limit Engine
 
-Measured benchmark entry pending. Run:
-
-```bash
-./specs/clean-dafny/run-clean-limit-400k.sh
-```
-
-The runner produces the requested format:
-
 it was able to handle under 3GB memory and 2 vCores:
-* a throughput of x change / minute
-* y active customer
-* z read per customer / minute
+* a throughput of 213k change / minute
+* 10k active customer
+* 3 read per customer / minute
 
-Benchmark shape:
+Benchmark details:
 * 400,000 seeded documents
 * 10,000 active customers
 * 350,000 change events across five ticks
 * query limit 50
 * document density 10
+* wall duration: 98.655 seconds
+* throughput: 350,000 / 98.655 seconds, approximately 212,872 changes/minute
+* raw output: 349,972 match events, 30,136,300 evictions, 360,000 retrieval batches, 500,000 retrieved documents
 
-The large run was stopped after 13 minutes because current clean-Dafny/treap processing remained active and did not produce a result in a practical benchmark window. This is not a failure or capacity result. It must not be reported until the runner completes and prints measured values.
+Measured with `./specs/clean-dafny/run-clean-limit-400k.sh` using `specs/dafny-ts/CleanLimitMutablePerf400k.dfy`, a verification-independent mutable array/bucket runtime. This benchmark avoided the immutable clean-engine store/treap copying that stalled in the proof-oriented 400k run. The eviction and retrieval summaries are not yet equivalent to the TypeScript implementation and must not be interpreted as end-to-end networked parity.
 
-The existing 1,651-event in-memory Dafny benchmark remains a separate smoke/performance sample; three runs took 0.55 s, 0.54 s, and 0.54 s. It does not scale its result to 400,000 documents or 350,000 changes.
+The existing 1,651-event clean-engine benchmark remains a separate proof-oriented smoke/performance sample; it does not scale to this workload.

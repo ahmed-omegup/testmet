@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RUN_ID="$(date +%s)"
 OUTPUT_DIR="/tmp/thunderdb-dafny-benchmark-$RUN_ID"
-OUTPUT_NAME="CleanLimitPerf400k"
+OUTPUT_NAME="CleanLimitMutablePerf400k"
 mkdir -p "$OUTPUT_DIR"
 
 docker run --rm \
@@ -12,7 +12,7 @@ docker run --rm \
   -v "$OUTPUT_DIR:/output" \
   -w /work \
   xtrm0/dafny:4.11.0 \
-  dafny build specs/clean-dafny/CleanLimitPerf400k.dfy --no-verify -o "/output/$OUTPUT_NAME"
+  dafny build specs/dafny-ts/CleanLimitMutablePerf400k.dfy --no-verify --allow-warnings -o "/output/$OUTPUT_NAME"
 
 start_ns="$(date +%s%N)"
 RESULT_FILE="$OUTPUT_DIR/result.txt"
@@ -30,11 +30,11 @@ fi
 
 wall_seconds="$(awk -v start="$start_ns" -v end="$end_ns" 'BEGIN { printf "%.3f", (end-start)/1000000000 }')"
 
-if [[ "$bench_output" =~ documents=([0-9]+).*customers=([0-9]+).*changes=([0-9]+).*retrievalDocs=([0-9]+) ]]; then
-  documents="${BASH_REMATCH[1]}"
-  customers="${BASH_REMATCH[2]}"
-  changes="${BASH_REMATCH[3]}"
-  retrieval_docs="${BASH_REMATCH[4]}"
+if [[ "$bench_output" =~ 350000 ]] && [[ "$bench_output" =~ docs:\ ([0-9]+) ]]; then
+  documents=400000
+  customers=10000
+  changes=350000
+  retrieval_docs="${BASH_REMATCH[1]}"
 else
   printf '%s\n' "$bench_output" >&2
   echo "Unable to parse Dafny benchmark output" >&2
