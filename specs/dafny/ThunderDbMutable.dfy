@@ -546,6 +546,10 @@ module ThunderDbMutable {
     method CancelPendingForQuery(docId: DocId, queryId: QueryId) returns (cancelled: bool)
       requires this.Ready()
       ensures this.Ready()
+      ensures this.store == old(this.store)
+      ensures this.docIds == old(this.docIds)
+      ensures this.docs == old(this.docs)
+      ensures this.nextQueryId == old(this.nextQueryId)
       modifies this
     {
       cancelled := this.RemovePendingDocQuery(docId, queryId);
@@ -674,6 +678,10 @@ module ThunderDbMutable {
     method FillGap(queryId: QueryId) returns (retrievals: seq<RetrievalDoc>)
       requires this.Ready()
       ensures this.Ready()
+      ensures this.store == old(this.store)
+      ensures this.docIds == old(this.docIds)
+      ensures this.docs == old(this.docs)
+      ensures this.nextQueryId == old(this.nextQueryId)
       modifies this
     {
       retrievals := [];
@@ -686,6 +694,9 @@ module ThunderDbMutable {
           while !found
             invariant SumConsistent(this.docs)
             invariant this.docs == initialDocs
+            invariant this.store == old(this.store)
+            invariant this.docIds == old(this.docIds)
+            invariant this.nextQueryId == old(this.nextQueryId)
             decreases if found then 0 else if offset < Sum(initialDocs) then Sum(initialDocs) - offset + 1 else 1
           {
             var candidate := this.QueryDocAtOffset(state, offset);
