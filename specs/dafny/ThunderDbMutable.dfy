@@ -690,30 +690,40 @@ module ThunderDbMutable {
       }
     }
 
+    method SeedDocsRecursive(input: seq<SeedDoc>)
+      requires this.Ready()
+      requires ValidTreap(this.docs)
+      ensures this.Ready()
+      ensures ValidTreap(this.docs)
+      ensures this.store == ApplySeedStore(old(this.store), input)
+      ensures this.docIds == ApplySeedDocIds(old(this.docIds), input)
+      modifies this
+      decreases |input|
+    {
+      if |input| > 0 {
+        if input[0].id in this.store {
+          var previousScore := GetScore(this.store[input[0].id]);
+          RemovePreservesValidTreap(this.docs, previousScore, input[0].id);
+          this.docs := Remove(this.docs, previousScore, input[0].id);
+        }
+        this.store := this.store[input[0].id := input[0].state];
+        this.docIds := AppendDocIdIfMissing(this.docIds, input[0].id);
+        AddPreservesValidTreap(this.docs, input[0].state.scoreValue, input[0].id, PriorityFor(input[0].state.scoreValue, input[0].id));
+        this.docs := Add(this.docs, input[0].state.scoreValue, input[0].id, PriorityFor(input[0].state.scoreValue, input[0].id));
+        this.SeedDocsRecursive(input[1..]);
+      }
+    }
+
     method SeedDocs(input: seq<SeedDoc>)
       requires this.Ready()
       requires ValidTreap(this.docs)
       ensures this.Ready()
       ensures ValidTreap(this.docs)
+      ensures this.store == ApplySeedStore(old(this.store), input)
+      ensures this.docIds == ApplySeedDocIds(old(this.docIds), input)
       modifies this
     {
-      var i := 0;
-      while i < |input|
-        invariant 0 <= i <= |input|
-        invariant SumConsistent(this.docs)
-        invariant ValidTreap(this.docs)
-      {
-        if input[i].id in this.store {
-          var previousScore := GetScore(this.store[input[i].id]);
-          RemovePreservesValidTreap(this.docs, previousScore, input[i].id);
-          this.docs := Remove(this.docs, previousScore, input[i].id);
-        }
-        this.store := this.store[input[i].id := input[i].state];
-        this.docIds := AppendDocIdIfMissing(this.docIds, input[i].id);
-        AddPreservesValidTreap(this.docs, input[i].state.scoreValue, input[i].id, PriorityFor(input[i].state.scoreValue, input[i].id));
-        this.docs := Add(this.docs, input[i].state.scoreValue, input[i].id, PriorityFor(input[i].state.scoreValue, input[i].id));
-        i := i + 1;
-      }
+      this.SeedDocsRecursive(input);
     }
 
     method AddQueryDeferred(spec: QuerySpec) returns (queryId: QueryId, events: seq<DownstreamEvent>)
