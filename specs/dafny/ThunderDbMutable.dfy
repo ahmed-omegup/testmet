@@ -386,6 +386,7 @@ module ThunderDbMutable {
     }
 
     ghost predicate RefinesReference(state: EngineState)
+      requires this.Ready()
       reads this
     {
       this.store == state.store &&
@@ -397,7 +398,24 @@ module ThunderDbMutable {
         runtime.id in this.queries &&
         this.queries[runtime.id].spec == runtime.spec) &&
       (forall queryId: QueryId :: queryId in this.queries ==>
-        exists runtime: QueryRuntime :: runtime in state.queries && runtime.id == queryId)
+        exists runtime: QueryRuntime :: runtime in state.queries && runtime.id == queryId &&
+          runtime.visible == this.QueryVisibleLocal(queryId))
+    }
+
+    function QueryVisibleLocal(queryId: QueryId): seq<DocId>
+      requires this.Ready()
+      reads this
+    {
+      if queryId in this.queries then
+        this.CollectVisibleLocal(this.queries[queryId].spec)
+      else []
+    }
+
+    function CollectVisibleLocal(spec: QuerySpec): seq<DocId>
+      requires this.Ready()
+      reads this
+    {
+      TreapCollectRange(this.docs, spec.minScore, spec.maxScore, spec.limit)
     }
 
     method CollectQueriesForValue(value: Score, docId: DocId) returns (ids: seq<QueryId>)
