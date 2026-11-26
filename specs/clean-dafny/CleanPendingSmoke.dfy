@@ -5,8 +5,7 @@ module CleanPendingSmoke {
   import opened ThunderDbStack
   import opened CleanPendingRuntime
 
-  method {:verify false} Main()
-    decreases *
+  method Main()
   {
     var registry := new PendingRegistry();
 
@@ -40,6 +39,12 @@ module CleanPendingSmoke {
     expect docs[1].docId == 12;
     expect docs[1].queries == [3];
     expect registry.state == EmptyPendingState();
+
+    var missingRegistry := new PendingRegistry();
+    missingRegistry.Register(0, 4);
+    var missingDocs := missingRegistry.DrainGrouped(map[]);
+    expect missingDocs == [];
+    expect missingRegistry.state == EmptyPendingState();
 
     print "clean-pending-smoke passed\n";
   }

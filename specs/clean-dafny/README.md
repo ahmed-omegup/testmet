@@ -38,7 +38,7 @@ All six runs reported 1,651 events, 1,502 matches, 4,159 evictions, 1,344 retrie
 
 - The pending registry's two indexes agree, its lists are nonempty and duplicate-free, and its drain order matches the document index. Registration, cancellation, and resolution preserve these properties.
 - The engine establishes and preserves a combined query-registry, pending-registry, document-store, and valid-treap invariant for stream items whose old document state matches the store. This is a proof precondition, not runtime input validation.
-- A grouped drain emits only stored pending documents, emits each eligible pending document exactly once with its registered query IDs, and clears the pending registry. A direct quantified per-query delivery postcondition remains unproved.
+- A grouped drain emits only stored pending documents, emits each eligible pending document exactly once, and clears the pending registry. When the registry is consistent and all pending documents are stored, a quantified postcondition proves that emitted document-query pairs are exactly the registered pairs, without duplicate query IDs. Missing stored documents are skipped and cleared; that behavior does not satisfy the all-pairs guarantee.
 - Query views are proved equal to the reference top-k range query and contain only stored, in-range documents within the requested limit. Full notification and refill semantics, query match-count correctness, and asynchronous transport behavior remain unproved.
 - Repeated seeding of a document replaces its previous tree entry. Seeding after queries are active still lacks a proved policy for updating match counts and notifications.
 

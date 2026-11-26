@@ -158,3 +158,10 @@ Acceptance Criteria (Future):
 - Grouped drain has proved per-document soundness, completeness, uniqueness, and registry cleanup. A direct quantified per-query delivery postcondition could not be verified and remains open; the verified per-document and cross-index guarantees remain available separately.
 - Repeated seeding now replaces an existing document's old treap entry. Seeding while queries are active still needs a defined and verified policy for counts and notifications.
 - Remaining whole-system work: prove match-count, top-k transition, eviction, and notification refinement; resolve input-validation, seed lifecycle, event ordering, and asynchronous retrieval semantics; then connect external storage and transport to the verified model. Existing parity scenarios are tests, not a proof of these properties.
+
+## Per-Query Delivery Update (2026-11-26)
+
+- Superseding the earlier per-query proof gap: `GroupedPairsExact` and a direct quantified drain postcondition prove that a grouped drain contains exactly the registered document-query pairs when the pending registry is consistent and every pending document exists in the store. Existing guarantees separately prove document-state soundness, no duplicate document deliveries, and no duplicate query IDs within a delivery.
+- If a pending document is absent from the store, the current drain skips it and clears the registry; the all-pairs theorem explicitly does not apply. This behavior is covered by a smoke test and still needs an end-to-end failure/retry policy.
+- The new predicates, lemmas, and postconditions are ghost-only. Generated executable C# changed only in embedded Dafny source metadata and source-location text. Three paired release runs took 0.457, 0.438, and 0.449 seconds before the proof and 0.451, 0.445, and 0.478 seconds after, with identical summaries; this small sample shows no clear runtime regression.
+- Next correctness work remains unchanged: prove match-count, top-k transition, eviction, and notification refinement, and establish the missing-document and asynchronous delivery contracts before claiming whole-system correctness.

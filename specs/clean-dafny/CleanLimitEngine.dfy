@@ -566,15 +566,33 @@ module CleanLimitEngine {
         (forall docId: DocId :: old(docId in this.pendingState.byDoc && docId in this.store) ==>
           |events| == 1 && events[0].RetrievalEvent? &&
           RetrievalDoc(docId, old(this.store[docId]), old(this.pendingState.byDoc[docId])) in events[0].docs)
+      ensures old(PendingConsistent(this.pendingState) && this.PendingDocsStored()) ==>
+        GroupedPairsDelivered(old(this.pendingState), old(this.store),
+          if |events| == 0 then [] else if events[0].RetrievalEvent? then events[0].docs else [])
+      ensures old(PendingConsistent(this.pendingState) && this.PendingDocsStored()) ==>
+        GroupedPairsExact(old(this.pendingState),
+          if |events| == 0 then [] else if events[0].RetrievalEvent? then events[0].docs else [])
+      ensures old(PendingConsistent(this.pendingState) && this.PendingDocsStored()) ==>
+        (forall queryId: QueryId, docId: DocId ::
+          old(queryId in this.pendingState.byQuery && docId in this.pendingState.byQuery[queryId]) <==>
+          (|events| == 1 && events[0].RetrievalEvent? &&
+           (exists entry: RetrievalDoc :: entry in events[0].docs && entry.docId == docId && queryId in entry.queries)))
       ensures old(PendingConsistent(this.pendingState)) && |events| > 0 ==>
         events[0].RetrievalEvent? &&
         (forall left, right :: 0 <= left < right < |events[0].docs| ==> events[0].docs[left].docId != events[0].docs[right].docId)
+      ensures old(PendingConsistent(this.pendingState)) && |events| > 0 ==>
+        (events[0].RetrievalEvent? &&
+         (forall index :: 0 <= index < |events[0].docs| ==> Distinct(events[0].docs[index].queries)))
       modifies this
     {
       var docs := BuildGroupedRetrievals(this.pendingState.docOrder, this.pendingState.byDoc, this.store);
       GroupedRetrievalsSoundAndComplete(this.pendingState.docOrder, this.pendingState.byDoc, this.store);
       if PendingConsistent(this.pendingState) {
         GroupedRetrievalsHaveUniqueDocs(this.pendingState.docOrder, this.pendingState.byDoc, this.store);
+        if this.PendingDocsStored() {
+          GroupedRetrievalsDeliverPairs(this.pendingState, this.store);
+          GroupedRetrievalsHaveExactPairs(this.pendingState, this.store);
+        }
       }
       this.pendingState := EmptyPendingState();
       EmptyPendingPairsAgree();

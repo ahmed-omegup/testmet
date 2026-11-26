@@ -61,3 +61,4 @@ This document persists user instructions and our operating agreements. It is aut
 
 ## This Instruction (2026-11-26)
 - Prioritize proving whole-system correctness over performance and other work. Record proved contracts, assumptions, and remaining gaps explicitly.
+- Continue the per-query delivery proof while monitoring runtime performance; proof-only changes must not silently add execution overhead.

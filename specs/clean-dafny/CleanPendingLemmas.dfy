@@ -273,6 +273,56 @@ module CleanPendingLemmas {
     }
   }
 
+  ghost predicate GroupedPairsDelivered(state: PendingState, store: map<DocId, DocState>, docs: seq<RetrievalDoc>) {
+    forall queryId: QueryId, docId: DocId ::
+      (queryId in state.byQuery && docId in state.byQuery[queryId]) ==>
+        (docId in store && docId in state.byDoc && queryId in state.byDoc[docId] &&
+         RetrievalDoc(docId, store[docId], state.byDoc[docId]) in docs)
+  }
+
+  lemma GroupedRetrievalsDeliverPairs(state: PendingState, store: map<DocId, DocState>)
+    requires PendingConsistent(state)
+    requires forall docId: DocId :: docId in state.byDoc ==> docId in store
+    ensures GroupedPairsDelivered(state, store, BuildGroupedRetrievals(state.docOrder, state.byDoc, store))
+  {
+    GroupedRetrievalsSoundAndComplete(state.docOrder, state.byDoc, store);
+    forall queryId: QueryId, docId: DocId | queryId in state.byQuery && docId in state.byQuery[queryId]
+      ensures docId in store && docId in state.byDoc && queryId in state.byDoc[docId] &&
+        RetrievalDoc(docId, store[docId], state.byDoc[docId]) in BuildGroupedRetrievals(state.docOrder, state.byDoc, store)
+    {
+      assert docId in state.byDoc;
+      assert docId in state.docOrder;
+    }
+  }
+
+  ghost predicate GroupedPairsExact(state: PendingState, docs: seq<RetrievalDoc>) {
+    forall queryId: QueryId, docId: DocId ::
+      (queryId in state.byQuery && docId in state.byQuery[queryId]) <==>
+      (exists entry: RetrievalDoc :: entry in docs && entry.docId == docId && queryId in entry.queries)
+  }
+
+  lemma GroupedRetrievalsHaveExactPairs(state: PendingState, store: map<DocId, DocState>)
+    requires PendingConsistent(state)
+    requires forall docId: DocId :: docId in state.byDoc ==> docId in store
+    ensures GroupedPairsExact(state, BuildGroupedRetrievals(state.docOrder, state.byDoc, store))
+  {
+    GroupedRetrievalsDeliverPairs(state, store);
+    GroupedRetrievalsSoundAndComplete(state.docOrder, state.byDoc, store);
+    var docs := BuildGroupedRetrievals(state.docOrder, state.byDoc, store);
+    forall queryId: QueryId, docId: DocId
+      ensures (queryId in state.byQuery && docId in state.byQuery[queryId]) <==>
+        (exists entry: RetrievalDoc :: entry in docs && entry.docId == docId && queryId in entry.queries)
+    {
+      if queryId in state.byQuery && docId in state.byQuery[queryId] {
+        assert RetrievalDoc(docId, store[docId], state.byDoc[docId]) in docs;
+      }
+      if exists entry: RetrievalDoc :: entry in docs && entry.docId == docId && queryId in entry.queries {
+        var entry: RetrievalDoc :| entry in docs && entry.docId == docId && queryId in entry.queries;
+        assert docId in state.byDoc && queryId in state.byDoc[docId];
+      }
+    }
+  }
+
   lemma GroupedRetrievalsHaveUniqueDocs(order: seq<DocId>, byDoc: map<DocId, seq<QueryId>>, store: map<DocId, DocState>)
     requires Distinct(order)
     ensures forall left, right :: 0 <= left < right < |BuildGroupedRetrievals(order, byDoc, store)| ==>
