@@ -139,6 +139,7 @@ const log: typeof console.log = debugEvictions ? () => { } : console.log
 export const handleTransport = <ClientLine, ServerLine>(transport: LineTransport<ClientLine, ServerLine>, sendMessage: (transport: LineTransport<ClientLine, ServerLine>, message: ServerMessage) => void, parse: (line: ServerLine) => ClientMessage) => {
   let handshakeComplete = false;
   let closing = false;
+  let finishing = false;
   const runtime = new WorkerRuntime({
     docStoreDurability: DOCSTORE_DURABILITY,
     progressStep: WORKER_PROGRESS_STEP,
@@ -181,6 +182,11 @@ export const handleTransport = <ClientLine, ServerLine>(transport: LineTransport
       return;
     }
 
+    if (finishing) {
+      sendMessage(transport, { type: 'error', message: 'run already ended' });
+      return;
+    }
+
     switch (payload.type) {
       case 'event': {
         try {
@@ -194,16 +200,17 @@ export const handleTransport = <ClientLine, ServerLine>(transport: LineTransport
       }
       case 'end': {
         log('[worker] received end of stream');
-        try {
-          log('[worker] finishing run...');
-          const summary = runtime.finishRun();
+        finishing = true;
+        log('[worker] finishing run...');
+        void runtime.finishRun().then(summary => {
+          if (closing) return;
           log('[worker] run finished');
           log(`[worker] match events: ${formatNumber(summary.matchEvents)} (evictions: ${formatNumber(summary.evictions)})`);
           log(`[worker] retrieval batches: ${formatNumber(summary.retrievalBatches)} (docs: ${formatNumber(summary.retrievalDocs)})`);
           sendMessage(transport, { type: 'summary', summary });
-        } catch (err) {
-          sendMessage(transport, { type: 'error', message: err instanceof Error ? err.message : 'run failed' });
-        }
+        }).catch(err => {
+          if (!closing) sendMessage(transport, { type: 'error', message: err instanceof Error ? err.message : 'run failed' });
+        });
         break;
       }
       default:

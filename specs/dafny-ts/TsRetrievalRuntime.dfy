@@ -15,6 +15,22 @@ module TsRetrievalRuntime {
 
   datatype StateChange = StateChange(state: RetrievalWorkerState, changed: bool)
 
+  datatype LoadRetryState = LoadRetryState(worker: RetrievalWorkerState, failures: nat, exhausted: bool)
+
+  function LoadFailed(state: LoadRetryState): LoadRetryState
+    requires !state.exhausted && state.failures <= 3
+  {
+    if |state.worker.processingBatch| == 0 then LoadRetryState(state.worker, 0, false)
+    else if state.failures < 3 then LoadRetryState(state.worker, state.failures + 1, false)
+    else LoadRetryState(state.worker, state.failures, true)
+  }
+
+  function RestartFailedLoad(state: LoadRetryState): LoadRetryState
+    requires state.exhausted
+  {
+    LoadRetryState(state.worker, 0, false)
+  }
+
   function EmptyWorkerState(): RetrievalWorkerState {
     RetrievalWorkerState(map[], [], 1, map[], [], 0, false)
   }
@@ -109,7 +125,7 @@ module TsRetrievalRuntime {
   }
 
   function ShouldExit(state: RetrievalWorkerState): bool {
-    state.stopped && !HasPendingWork(state)
+    state.stopped && !HasPendingWork(state) && |state.processingBatch| == 0
   }
 
   function BuildPayload(state: RetrievalWorkerState, store: map<DocId, DocState>): seq<RetrievalDoc>

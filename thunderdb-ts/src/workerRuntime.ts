@@ -92,10 +92,6 @@ export class WorkerRuntime {
         docStore: runState.docStore,
       });
       that.log('[worker] run completed');
-      if (runState.retrievalJob) {
-        runState.retrievalJob.stop();
-        that.log('[worker] retrieval job stopped');
-      }
       return buildSummary(runState, performance.now());
     })();
     this.runGenerator.next()
@@ -117,10 +113,14 @@ export class WorkerRuntime {
     }
   }
 
-  finishRun(): WorkerRunSummary {
+  async finishRun(): Promise<WorkerRunSummary> {
     const res = this.runGenerator!.next()
     if (!res.done) throw new Error('run generator did not complete as expected');
-    return res.value;
+    if (this.runState.retrievalJob) {
+      await this.runState.retrievalJob.stop();
+      this.log('[worker] retrieval job stopped');
+    }
+    return buildSummary(this.runState, performance.now());
   }
 
   private maybeLogProgress(state: RunState): void {

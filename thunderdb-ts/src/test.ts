@@ -5,6 +5,9 @@ import path from 'node:path';
 import { runLimitStream, StreamItem } from './limit-index/limitStream';
 import { QuerySpec, LimitMatchEvent, DocId, Score, DocStateDom, QueryId, DownstreamEvent, RetrievalEvent } from './limit-index/types';
 import { RetrievalJobWorker } from './retrievalJob';
+import { WorkerRuntime } from './workerRuntime';
+import { ServerMessage, SocketDocState } from './socketProtocol';
+import { createInProcessWorkerClient } from './transport';
 import { LmdbDocStore } from './docStore';
 import { DynamicRangeQueries } from './limit-index/LimitQueries';
 
@@ -209,6 +212,117 @@ async function testRetrievalJobWorker() {
   await worker.stop();
 }
 
+async function testRetrievalRetriesLoadFailure() {
+  let attempts = 0;
+  const events: RetrievalEvent<DemoDocState>[] = [];
+  const worker = new RetrievalJobWorker<DemoDocState>(
+    async ids => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('temporary load failure');
+      return new Map(ids.map(id => [id, docState(42)]));
+    },
+    event => events.push(event),
+  );
+  try {
+    worker.register(did(7), qid(3));
+    await waitFor(() => events.length === 1, 500);
+    assert.strictEqual(attempts, 2);
+    assert.deepStrictEqual(events[0]!.docs, [{ docId: did(7), state: docState(42), queries: [qid(3)] }]);
+  } finally {
+    await worker.stop();
+  }
+}
+
+async function testRetrievalRecoveryAfterExhaustion() {
+  let failing = true;
+  let attempts = 0;
+  const events: RetrievalEvent<DemoDocState>[] = [];
+  const worker = new RetrievalJobWorker<DemoDocState>(
+    async ids => {
+      attempts += 1;
+      if (failing) throw new Error('persistent load failure');
+      return new Map(ids.map(id => [id, docState(42)]));
+    },
+    event => events.push(event),
+  );
+  const batch = worker.register(did(7), qid(3));
+  await waitFor(() => attempts === 1);
+  const pendingBatch = worker.register(did(8), qid(4));
+  await waitFor(() => worker.getFailure() !== null, 500);
+  assert.throws(() => worker.register(did(9), qid(5)), /persistent load failure/);
+  await assert.rejects(worker.stop(), /persistent load failure/);
+  assert.strictEqual(attempts, 4);
+  assert.strictEqual(events.length, 0);
+  failing = false;
+  assert.strictEqual(worker.retryFailed(), true);
+  await worker.stop();
+  assert.strictEqual(events.length, 2);
+  assert.strictEqual(events[0]!.batchNumber, batch);
+  assert.strictEqual(events[1]!.batchNumber, pendingBatch);
+  assert.deepStrictEqual(events[0]!.docs, [{ docId: did(7), state: docState(42), queries: [qid(3)] }]);
+  assert.deepStrictEqual(events[1]!.docs, [{ docId: did(8), state: docState(42), queries: [qid(4)] }]);
+}
+
+async function testCanceledInFlightFailureDoesNotStopWorker() {
+  let attempts = 0;
+  let rejectLoad!: (error: Error) => void;
+  const events: RetrievalEvent<DemoDocState>[] = [];
+  const worker = new RetrievalJobWorker<DemoDocState>(
+    async ids => {
+      attempts += 1;
+      if (attempts <= 3) throw new Error('temporary failure');
+      if (attempts === 4) return new Promise((_resolve, reject) => { rejectLoad = reject; });
+      return new Map(ids.map(id => [id, docState(42)]));
+    },
+    event => events.push(event),
+  );
+  const batch = worker.register(did(7), qid(3));
+  await waitFor(() => attempts === 4, 500);
+  assert(worker.resolveDoc(did(7), batch));
+  worker.register(did(8), qid(4));
+  rejectLoad(new Error('late failure'));
+  await worker.stop();
+  assert.strictEqual(attempts, 5);
+  assert.deepStrictEqual(events.flatMap(event => event.docs), [{ docId: did(8), state: docState(42), queries: [qid(4)] }]);
+}
+
+async function testRuntimeWaitsForRetrievalFailure() {
+  const worker = new RetrievalJobWorker<SocketDocState>(
+    async () => { throw new Error('runtime load failure'); },
+    () => {},
+  );
+  const runtime = new WorkerRuntime();
+  (runtime as unknown as { runState: { retrievalJob: RetrievalJobWorker<SocketDocState> } }).runState.retrievalJob = worker;
+  worker.register(did(7), qid(3));
+  await assert.rejects(async () => runtime.finishRun(), /runtime load failure/);
+}
+
+async function testTransportCompletesOnce() {
+  const client = createInProcessWorkerClient();
+  const messages: ServerMessage[] = [];
+  client.onLine(message => messages.push(message));
+  client.send({ type: 'hello', role: 'client', version: 1 });
+  client.send({ type: 'end' });
+  client.send({ type: 'end' });
+  await waitFor(() => messages.some(message => message.type === 'summary'));
+  assert.strictEqual(messages.filter(message => message.type === 'summary').length, 1);
+  assert(messages.some(message => message.type === 'error' && message.message === 'run already ended'));
+  client.close();
+}
+
+async function testMissingRetrievalIsNotRetried() {
+  let attempts = 0;
+  const events: RetrievalEvent<DemoDocState>[] = [];
+  const worker = new RetrievalJobWorker<DemoDocState>(
+    async () => { attempts += 1; return new Map(); },
+    event => events.push(event),
+  );
+  worker.register(did(7), qid(3));
+  await worker.stop();
+  assert.strictEqual(attempts, 1);
+  assert.strictEqual(events.length, 0);
+}
+
 async function testQueryAddSeedsRetrievals() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'thunderdb-stream-'));
   const store = new LmdbDocStore<DemoDocState>(dir);
@@ -283,6 +397,12 @@ async function main() {
   testLimitPlaceholder();
   testEvictions();
   await testRetrievalJobWorker();
+  await testRetrievalRetriesLoadFailure();
+  await testRetrievalRecoveryAfterExhaustion();
+  await testCanceledInFlightFailureDoesNotStopWorker();
+  await testRuntimeWaitsForRetrievalFailure();
+  await testTransportCompletesOnce();
+  await testMissingRetrievalIsNotRetried();
   await testQueryAddSeedsRetrievals();
   await testGapFillRegistersRetrievals();
   console.log('Tests passed');

@@ -5,6 +5,42 @@ module TsRetrievalLemmas {
   import opened ThunderDbStack
   import opened TsRetrievalRuntime
 
+  lemma LoadFailurePreservesWorker(state: LoadRetryState)
+    requires !state.exhausted && state.failures <= 3
+    ensures LoadFailed(state).worker == state.worker
+    ensures LoadFailed(state).failures <= 3
+    ensures |state.worker.processingBatch| == 0 ==> !LoadFailed(state).exhausted
+    ensures |state.worker.processingBatch| > 0 && state.failures == 3 ==> LoadFailed(state).exhausted
+  {
+  }
+
+  lemma FourFailedLoadsExhaustRetries(worker: RetrievalWorkerState)
+    requires |worker.processingBatch| > 0
+    ensures var first := LoadFailed(LoadRetryState(worker, 0, false));
+      var second := LoadFailed(first);
+      var third := LoadFailed(second);
+      var fourth := LoadFailed(third);
+      fourth.exhausted && fourth.worker == worker
+  {
+  }
+
+  lemma RestartPreservesWorker(state: LoadRetryState)
+    requires state.exhausted
+    ensures RestartFailedLoad(state).worker == state.worker
+    ensures RestartFailedLoad(state).failures == 0 && !RestartFailedLoad(state).exhausted
+  {
+  }
+
+  lemma PayloadOnlyContainsStoredDocs(order: seq<DocId>, batch: map<DocId, seq<QueryId>>, store: map<DocId, DocState>)
+    ensures forall index :: 0 <= index < |BuildPayloadFrom(order, batch, store)| ==>
+      BuildPayloadFrom(order, batch, store)[index].docId in store
+    decreases |order|
+  {
+    if |order| > 0 {
+      PayloadOnlyContainsStoredDocs(order[1..], batch, store);
+    }
+  }
+
   lemma RegisterAddsPendingDoc(state: RetrievalWorkerState, docId: DocId, queryId: QueryId)
     requires CanRegister(state, docId, queryId)
     ensures docId in Register(state, docId, queryId).pendingBatch

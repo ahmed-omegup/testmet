@@ -19,15 +19,15 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
   private resolvePending: (() => void) | null = null;
   private loop: Promise<void>;
   private stopped = false;
+  private loadFailure: Error | null = null;
+  private terminalFailure: Error | null = null;
 
   constructor(
     private readonly loadDocs: (docIds: DocId[]) => Promise<Map<DocId, DocState>>,
     private readonly emit: (event: RetrievalEvent<DocState>) => void,
     private readonly options: { batchIntervalMs?: number } = {}
   ) {
-    this.loop = this.runLoop();
-    // Silence unused variable lint
-    void this.loop;
+    this.loop = this.startLoop();
   }
 
   async stop(): Promise<void> {
@@ -41,11 +41,25 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
   }
 
   register(docId: DocId, queryId: QueryId): BatchNumber {
+    if (this.stopped) throw new Error('Cannot register after retrieval worker has stopped');
+    if (this.terminalFailure) throw this.terminalFailure;
     const entry = this.pendingBatch.get(docId) ?? { queries: new Set<QueryId>() };
     entry.queries.add(queryId);
     this.pendingBatch.set(docId, entry);
     this.signalPending();
     return this.pendingBatchNumber;
+  }
+
+  retryFailed(): boolean {
+    if (!this.loadFailure || !this.terminalFailure) return false;
+    this.loadFailure = null;
+    this.terminalFailure = null;
+    this.loop = this.startLoop();
+    return true;
+  }
+
+  getFailure(): Error | null {
+    return this.terminalFailure;
   }
 
   cancel(docId: DocId, queryId: QueryId, batchNumber: BatchNumber): boolean {
@@ -69,42 +83,67 @@ export class RetrievalJobWorker<DocState extends DocStateDom> {
 
   private async runLoop(): Promise<void> {
     while (true) {
-      if (this.stopped && this.pendingBatch.size === 0) {
-        break;
-      }
-      if (this.pendingBatch.size === 0) {
-        await this.waitForPending();
+      if (this.processingBatch.size === 0) {
+        this.processingBatchNumber = null;
         if (this.stopped && this.pendingBatch.size === 0) break;
-        continue;
+        if (this.pendingBatch.size === 0) {
+          await this.waitForPending();
+          if (this.stopped && this.pendingBatch.size === 0) break;
+          continue;
+        }
+        this.processingBatch = this.pendingBatch;
+        this.processingBatchNumber = this.pendingBatchNumber;
+        this.pendingBatch = new Map();
+        this.pendingBatchNumber += 1n;
       }
-      const nextProcessing = this.pendingBatch;
-      const currentBatchNumber = this.pendingBatchNumber;
-      this.processingBatch = nextProcessing;
-      this.processingBatchNumber = currentBatchNumber;
-      this.pendingBatch = new Map();
-      this.pendingBatchNumber = currentBatchNumber + 1n;
-      const docIds = Array.from(this.processingBatch.keys());
-      try {
-        const docs = await this.loadDocs(docIds);
-        const payload: RetrievalBatchDoc<DocState>[] = [];
-        for (const docId of docIds) {
-          const entry = this.processingBatch.get(docId);
-          if (!entry) continue;
-          const state = docs.get(docId);
-          if (!state) continue;
-          payload.push({ docId, state, queries: Array.from(entry.queries) });
+      const currentBatchNumber = this.processingBatchNumber!;
+      let retries = 0;
+      let docIds: DocId[];
+      let docs: Map<DocId, DocState>;
+      while (true) {
+        docIds = Array.from(this.processingBatch.keys());
+        if (!docIds.length) {
+          docs = new Map();
+          break;
         }
-        if (payload.length) {
-          this.emit({ kind: 'retrieval', batchNumber: currentBatchNumber, docs: payload });
+        try {
+          docs = await this.loadDocs(docIds);
+          break;
+        } catch (error) {
+          if (this.processingBatch.size === 0) continue;
+          if (retries >= 3) {
+            this.loadFailure = error instanceof Error ? error : new Error('Retrieval document load failed', { cause: error });
+            throw this.loadFailure;
+          }
+          retries += 1;
+          await this.delay(25);
         }
-      } catch (err) {
-        console.error('retrieval-job: failed to load docs', err);
+      }
+      const payload: RetrievalBatchDoc<DocState>[] = [];
+      for (const docId of docIds) {
+        const entry = this.processingBatch.get(docId);
+        if (!entry) continue;
+        const state = docs.get(docId);
+        if (!state) continue;
+        payload.push({ docId, state, queries: Array.from(entry.queries) });
+      }
+      if (payload.length) {
+        this.emit({ kind: 'retrieval', batchNumber: currentBatchNumber, docs: payload });
       }
       this.processingBatch.clear();
       this.processingBatchNumber = null;
       const delayMs = this.options.batchIntervalMs ?? 0;
       if (delayMs > 0) await this.delay(delayMs);
     }
+  }
+
+  private startLoop(): Promise<void> {
+    const loop = this.runLoop();
+    void loop.catch(error => {
+      this.terminalFailure = error instanceof Error ? error : new Error('Retrieval worker failed', { cause: error });
+      console.error('retrieval-job: worker stopped', this.terminalFailure);
+    });
+    return loop;
   }
 
   private pickSource(docId: DocId, batchHint?: BatchNumber): SourceLookup<DocState> | null {
