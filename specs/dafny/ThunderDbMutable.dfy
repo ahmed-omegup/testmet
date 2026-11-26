@@ -863,9 +863,9 @@ module ThunderDbMutable {
       ensures oldState.HasState? && newState.HasState? && GetScore(oldState.state) == GetScore(newState.state) ==>
         (|events| == 0 || (|events| == 1 && events[0].MatchEvent?))
       ensures oldState.HasState? && newState.HasState? && GetScore(oldState.state) == GetScore(newState.state) ==>
-        this.docs == old(this.docs) && this.docIds == old(this.docIds)
+        id in this.store && this.store[id] == newState.state
       ensures oldState.HasState? && newState.HasState? && GetScore(oldState.state) == GetScore(newState.state) ==>
-        (|events| == 0 || (|events| == 1 && events[0].MatchEvent?))
+        (forall index :: 0 <= index < |events| ==> events[index].MatchEvent?)
       modifies this, this.queryIndex
     {
       events := [];
