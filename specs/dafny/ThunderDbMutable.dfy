@@ -502,14 +502,29 @@ module ThunderDbMutable {
     method ResolvePendingForDoc(docId: DocId)
       requires this.Ready()
       ensures this.Ready()
+      ensures this.store == old(this.store)
+      ensures this.docIds == old(this.docIds)
+      ensures this.docs == old(this.docs)
+      ensures this.queries == old(this.queries)
+      ensures this.nextQueryId == old(this.nextQueryId)
       modifies this
     {
+      ghost var originalStore := this.store;
+      ghost var originalDocIds := this.docIds;
+      ghost var originalDocs := this.docs;
+      ghost var originalQueries := this.queries;
+      ghost var originalNextQueryId := this.nextQueryId;
       if docId in this.pendingByDoc {
         var queriesForDoc := this.pendingByDoc[docId];
         var i := 0;
         while i < |queriesForDoc|
           invariant 0 <= i <= |queriesForDoc|
           invariant SumConsistent(this.docs)
+          invariant this.store == originalStore
+          invariant this.docIds == originalDocIds
+          invariant this.docs == originalDocs
+          invariant this.queries == originalQueries
+          invariant this.nextQueryId == originalNextQueryId
         {
           if queriesForDoc[i] in this.pendingByQuery {
             var docsForQuery := this.pendingByQuery[queriesForDoc[i]];
@@ -843,6 +858,10 @@ module ThunderDbMutable {
     method ApplyDocChangeDeferred(id: DocId, oldState: MaybeDocState, newState: MaybeDocState) returns (events: seq<DownstreamEvent>)
       requires this.Ready()
       ensures this.Ready()
+      ensures oldState.HasState? && newState.HasState? && GetScore(oldState.state) == GetScore(newState.state) ==>
+        this.docs == old(this.docs) && this.docIds == old(this.docIds)
+      ensures oldState.HasState? && newState.HasState? && GetScore(oldState.state) == GetScore(newState.state) ==>
+        (|events| == 0 || (|events| == 1 && events[0].MatchEvent?))
       modifies this, this.queryIndex
     {
       events := [];
