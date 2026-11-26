@@ -382,7 +382,7 @@ export class QueriesTreap implements QueriesIndex {
 		const thresholdExclude = excludeCutoff - accHere;
 		const startIdx = this.upperBound(n.localScores, thresholdInclude + 1n);
 		if (startIdx >= n.localScores.length) return;
-		const allExcludeOutOfRange = n.localMaxCap < excludeValue;
+		const allExcludeOutOfRange = n.key > excludeValue || n.localMaxCap < excludeValue;
 		const allExcludeInRange = n.localMinCap >= excludeValue;
 		if (allExcludeOutOfRange) {
 			this.iterateLocalRange(n, startIdx, n.localScores.length, includeAllowed, visit);

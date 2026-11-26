@@ -356,7 +356,7 @@ export class DynamicRangeQueries {
         if (info.currentMatches >= info.k) return null;
         this.debugQueryEvent(`fillGap attempt query=${id.toString()}`, info);
         const doc = this.docForQueryAt(info, info.currentMatches);
-        if (!doc) {
+        if (doc === null) {
             this.debugQueryEvent(`fillGap miss query=${id.toString()}`, info);
             return null;
         }

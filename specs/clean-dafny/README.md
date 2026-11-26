@@ -34,6 +34,25 @@ All six runs reported 1,651 events, 1,502 matches, 4,159 evictions, 1,344 retrie
 - The clean engine's methods verify for termination, and its visible-query collector is proved to return the ordered result of its visibility predicate. The predicate itself and the whole engine are not yet proved to implement the complete top-k or delivery contract.
 - The small and medium parity scenarios and a 100,000-element sequence smoke test pass. These executable tests do not establish parity for all inputs.
 
+## Cross-Language Replay
+
+`CleanLimitCrossTrace.dfy` emits JSON lines containing each input, query ID, and downstream events. Its default fixture covers 15 steps, including zero-ID eviction and refill; `workload` emits the 1,651-step benchmark-shaped trace. `thunderdb-ts/scripts/compare-dafny.ts` replays those exact inputs through the TypeScript stream and its actual retrieval worker with an in-memory document source, allowing a drain after each input.
+
+The comparator checks event sequence and batch boundaries and compares query IDs, document IDs, scores, and evictions. It separately counts ordering-only differences inside match arrays and retrieval batches; it does not claim that ordering is unobservable. Query IDs on the TypeScript side are inferred from sequential query-adds because the stream does not return them. A nonzero content-mismatch count causes a failing exit status.
+
+With Dafny 4.11 and .NET available, build and run from the repository root:
+
+```bash
+mkdir -p specs/clean-dafny/dist
+dafny verify specs/clean-dafny/CleanLimitCrossTrace.dfy --verify-included-files
+dafny build specs/clean-dafny/CleanLimitCrossTrace.dfy --no-verify -o specs/clean-dafny/dist/CrossTrace
+dotnet build specs/clean-dafny/dist/CrossTrace.csproj -c Release -o specs/clean-dafny/dist/release
+npm --prefix thunderdb-ts run compare:dafny -- "$PWD/specs/clean-dafny/dist/release/CrossTrace"
+npm --prefix thunderdb-ts run compare:dafny -- --benchmark "$PWD/specs/clean-dafny/dist/release/CrossTrace" workload --timed "$PWD/specs/clean-dafny/dist/release/CrossTrace" benchmark
+```
+
+The `benchmark` mode first warms the Dafny engine and captures inputs, then replays them on a fresh engine between output markers. The TypeScript timing runs three replays after its validation pass, without event normalization. In one local run, the 1,651-step trace had zero content mismatches and 1,086 ordering-only differences; TypeScript took 20.21, 28.08, and 20.89 ms, and Dafny took 228.97, 227.57, and 225.00 ms. This indicates a substantial remaining gap, not a definitive ratio: Dafny timing includes marker-delivery overhead through Docker and replays Dafny objects, while TypeScript converts JSON inputs and yields to its asynchronous retrieval worker. Neither includes LMDB or networking, and one trace cannot establish general correctness or asynchronous interleaving parity.
+
 Run the smoke harness with:
 
 ```bash

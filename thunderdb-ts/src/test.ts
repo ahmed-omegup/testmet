@@ -6,6 +6,7 @@ import { runLimitStream, StreamItem } from './limit-index/limitStream';
 import { QuerySpec, LimitMatchEvent, DocId, Score, DocStateDom, QueryId, DownstreamEvent, RetrievalEvent } from './limit-index/types';
 import { RetrievalJobWorker } from './retrievalJob';
 import { LmdbDocStore } from './docStore';
+import { DynamicRangeQueries } from './limit-index/LimitQueries';
 
 // Cast helpers for branded types
 const did = (n: number) => BigInt(n) as DocId;
@@ -14,6 +15,105 @@ const score = (n: number) => n as Score;
 type DemoDocState = DocStateDom & { value: Score };
 const docState = (s: number): DemoDocState => ({ value: score(s) } as DemoDocState);
 const getScore = (s: DemoDocState) => s.value;
+
+function testDifferenceRespectsLowerBound() {
+  const queries = new DynamicRangeQueries();
+  queries.seedDocuments([{ id: did(1), score: score(41) }]);
+  const id = queries.addQuery(score(40), 2n, score(60));
+  assert.deepStrictEqual(queries.getQueriesCoveringButNot(score(41), did(1), score(16), did(1)), [id]);
+  assert.deepStrictEqual(queries.getQueriesCoveringButNot(score(16), did(1), score(41), did(1)), []);
+}
+
+function testQueryDifferenceMatchesSeparateLookups() {
+  const queries = new DynamicRangeQueries();
+  queries.seedDocuments([
+    { id: did(0), score: score(1) },
+    { id: did(1), score: score(2) },
+    { id: did(2), score: score(2) },
+    { id: did(3), score: score(4) },
+  ]);
+  for (const minimum of [0, 2, 4]) {
+    for (const maximum of [2, 4, 6]) {
+      if (minimum <= maximum) {
+        for (const limit of [0n, 1n, 3n]) queries.addQuery(score(minimum), limit, score(maximum));
+      }
+    }
+  }
+  const ordered = (ids: QueryId[]) => ids.map(String).sort();
+  for (const included of [0, 1, 2, 3, 4, 5]) {
+    for (const excluded of [0, 1, 2, 3, 4, 5]) {
+      for (const includeId of [null, did(0), did(2), did(4)]) {
+        for (const excludeId of [null, did(0), did(2), did(4)]) {
+          const exclude = new Set(queries.getQueriesCovering(score(excluded), excludeId));
+          const expected = queries.getQueriesCovering(score(included), includeId).filter(query => !exclude.has(query));
+          const actual = queries.getQueriesCoveringButNot(score(included), includeId, score(excluded), excludeId);
+          assert.deepStrictEqual(ordered(actual), ordered(expected), `include=${included}/${includeId} exclude=${excluded}/${excludeId}`);
+        }
+      }
+    }
+  }
+}
+
+function testScoreChangePreservesSharedMatches() {
+  const events = collect([
+    { kind: 'seed-docs', docs: [{ id: did(1), state: docState(10) }] },
+    { kind: 'query-add', spec: { minScore: score(0), maxScore: score(100), limit: 2n } },
+    { kind: 'doc-change', change: { id: did(1), old: docState(10), new: docState(20) } },
+  ]);
+  assert.strictEqual(events.length, 1);
+  assert.deepStrictEqual(events[0]!.matchesOld, [qid(1)]);
+  assert.deepStrictEqual(events[0]!.matchesNew, [qid(1)]);
+}
+
+function testUnmatchedSameScoreIsSilent() {
+  const events = collect([
+    { kind: 'seed-docs', docs: [{ id: did(1), state: docState(10) }] },
+    { kind: 'query-add', spec: { minScore: score(20), maxScore: score(100), limit: 2n } },
+    { kind: 'doc-change', change: { id: did(1), old: docState(10), new: docState(10) } },
+  ]);
+  assert.strictEqual(events.length, 0);
+}
+
+function testZeroDocumentGapAndEviction() {
+  const queries = new DynamicRangeQueries();
+  queries.seedDocuments([{ id: did(0), score: score(20) }, { id: did(1), score: score(10) }]);
+  const query = queries.addQuery(score(0), 1n, score(100));
+  queries.removeDocument(score(10), did(1));
+  assert.strictEqual(queries.fillGap(query), did(0));
+
+  const events = collect([
+    { kind: 'seed-docs', docs: [{ id: did(0), state: docState(10) }] },
+    { kind: 'query-add', spec: { minScore: score(0), maxScore: score(100), limit: 1n } },
+    { kind: 'doc-change', change: { id: did(1), old: null, new: docState(5) } },
+  ]);
+  assert.deepStrictEqual(events[0]!.evictions, [[qid(1), did(0)]]);
+}
+
+async function testZeroDocumentGapRetrieval() {
+  const docs = new Map<DocId, DemoDocState>([[did(0), docState(20)], [did(1), docState(10)]]);
+  const events: RetrievalEvent<DemoDocState>[] = [];
+  const worker = new RetrievalJobWorker<DemoDocState>(
+    async ids => new Map(ids.flatMap(id => {
+      const value = docs.get(id);
+      return value ? [[id, value] as const] : [];
+    })),
+    event => events.push(event),
+  );
+  const stream = runLimitStream(getScore, () => {}, { retrievalJob: worker });
+  try {
+    stream.next();
+    stream.next({ kind: 'seed-docs', docs: [...docs].map(([id, value]) => ({ id, state: value })) });
+    stream.next({ kind: 'query-add', spec: { minScore: score(0), maxScore: score(100), limit: 1n } });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    docs.delete(did(1));
+    stream.next({ kind: 'doc-change', change: { id: did(1), old: docState(10), new: null } });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert(events.some(event => event.docs.some(doc => doc.docId === did(0) && doc.queries.includes(qid(1)))));
+  } finally {
+    stream.next();
+    await worker.stop();
+  }
+}
 
 function collect(items: StreamItem<DemoDocState>[]): LimitMatchEvent<DemoDocState>[] {
   const out: LimitMatchEvent<DemoDocState>[] = [];
@@ -173,6 +273,12 @@ async function testGapFillRegistersRetrievals() {
 }
 
 async function main() {
+  testDifferenceRespectsLowerBound();
+  testQueryDifferenceMatchesSeparateLookups();
+  testScoreChangePreservesSharedMatches();
+  testUnmatchedSameScoreIsSilent();
+  testZeroDocumentGapAndEviction();
+  await testZeroDocumentGapRetrieval();
   testBasic();
   testLimitPlaceholder();
   testEvictions();

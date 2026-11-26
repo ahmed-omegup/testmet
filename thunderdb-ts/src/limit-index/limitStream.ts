@@ -44,25 +44,20 @@ const handleChange = <DocState extends DocStateDom>(
   if (oldScore !== null && newScore !== null) {
     if (oldScore === newScore) {
       const covering = queries.getQueriesCovering(oldScore, id);
-      emit({
-        kind: 'match',
-        docId: id,
-        old,
-        new: next,
-        matchesOld: covering,
-        matchesNew: covering,
-        evictions: [],
-      });
+      if (covering.length) {
+        emit({
+          kind: 'match',
+          docId: id,
+          old,
+          new: next,
+          matchesOld: covering,
+          matchesNew: covering,
+          evictions: [],
+        });
+      }
       notifyRetrieval();
       return;
     }
-  }
-
-  let diffOldNotNew: QueryId[] | null = null;
-  let diffNewNotOld: QueryId[] | null = null;
-  if (oldScore !== null && newScore !== null) {
-    diffOldNotNew = queries.getQueriesCoveringButNot(oldScore, id, newScore, id);
-    diffNewNotOld = queries.getQueriesCoveringButNot(newScore, id, oldScore, id);
   }
 
   if (oldScore !== null) {
@@ -79,25 +74,7 @@ const handleChange = <DocState extends DocStateDom>(
   const matchesNewSet = new Set(matchesNew);
 
   // Gap filling: queries that lost this doc should pull the next best candidate.
-  const lostQueries = diffOldNotNew
-    ? new Set(diffOldNotNew)
-    : (() => {
-        const set = new Set<QueryId>();
-        for (const q of matchesOld) {
-          if (!matchesNewSet.has(q)) set.add(q);
-        }
-        return set;
-      })();
-
-  const gainedQueries = diffNewNotOld
-    ? new Set(diffNewNotOld)
-    : (() => {
-        const set = new Set<QueryId>();
-        for (const q of matchesNew) {
-          if (!matchesOldSet.has(q)) set.add(q);
-        }
-        return set;
-      })();
+  const lostQueries = new Set(matchesOld.filter(query => !matchesNewSet.has(query)));
   if (DEBUG_QUERY_ID !== null && lostQueries.has(DEBUG_QUERY_ID)) {
     console.error('[debug lostQueries]', {
       docId: id.toString(),
@@ -108,7 +85,7 @@ const handleChange = <DocState extends DocStateDom>(
   }
   for (const q of lostQueries) {
     const replacement = queries.fillGap(q);
-    if (replacement && retrievalJob) {
+    if (replacement !== null && retrievalJob) {
       if (DEBUG_QUERY_ID !== null && q === DEBUG_QUERY_ID) {
         console.error('[debug fillGap replacement]', {
           docId: id.toString(),
@@ -127,22 +104,19 @@ const handleChange = <DocState extends DocStateDom>(
   }
   for (const q of overflowQueries) {
     const evictedDoc = queries.pickOverflowDoc(q);
-    if (evictedDoc) {
+    if (evictedDoc !== null) {
       evictions.push([q, evictedDoc]);
     }
   }
 
-  const outputMatchesOld = diffOldNotNew ?? Array.from(lostQueries);
-  const outputMatchesNew = diffNewNotOld ?? Array.from(gainedQueries);
-
-  if (outputMatchesOld.length || outputMatchesNew.length || evictions.length) {
+  if (matchesOld.length || matchesNew.length || evictions.length) {
     emit({
       kind: 'match',
       docId: id,
       old,
       new: next,
-      matchesOld: outputMatchesOld,
-      matchesNew: outputMatchesNew,
+      matchesOld,
+      matchesNew,
       evictions,
     });
   }

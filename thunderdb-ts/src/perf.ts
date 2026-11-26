@@ -195,7 +195,7 @@ const buildEvents = function* (): Generator<WireStreamItem> {
     // updates
     for (let u = 0; u < config.updatesPerTick; u++) {
       const id = pickDocId(rand);
-      if (!id) break;
+      if (id === null) break;
       const old = docStates.get(id) ?? null;
       const updated = createDoc(randomScore(rand));
       updateDoc(id, updated);
@@ -213,7 +213,7 @@ const buildEvents = function* (): Generator<WireStreamItem> {
     // deletes
     for (let del = 0; del < config.deletesPerTick; del++) {
       const id = pickDocId(rand);
-      if (!id) break;
+      if (id === null) break;
       const old = docStates.get(id) ?? null;
       if (!old) continue;
       removeDoc(id);
