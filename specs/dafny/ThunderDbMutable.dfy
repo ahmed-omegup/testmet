@@ -441,7 +441,10 @@ module ThunderDbMutable {
     method RegisterPendingDocQuery(docId: DocId, queryId: QueryId)
       requires this.Ready()
       ensures this.Ready()
+      ensures this.store == old(this.store)
+      ensures this.docIds == old(this.docIds)
       ensures this.docs == old(this.docs)
+      ensures this.nextQueryId == old(this.nextQueryId)
       modifies this
     {
       var docsForQuery := if queryId in this.pendingByQuery then this.pendingByQuery[queryId] else [];
@@ -741,7 +744,10 @@ module ThunderDbMutable {
 
     method AddQueryDeferred(spec: QuerySpec) returns (queryId: QueryId, events: seq<DownstreamEvent>)
       requires this.Ready()
+      requires 1 <= this.nextQueryId
       ensures this.Ready()
+      ensures queryId == old(this.nextQueryId)
+      ensures this.nextQueryId == old(this.nextQueryId) + 1
       modifies this, this.queryIndex
     {
       queryId := this.nextQueryId;
@@ -756,6 +762,7 @@ module ThunderDbMutable {
       while i < |visible|
         invariant 0 <= i <= |visible|
         invariant SumConsistent(this.docs)
+        invariant this.nextQueryId == old(this.nextQueryId) + 1
       {
         this.RegisterPendingDocQuery(visible[i], queryId);
         i := i + 1;
@@ -765,6 +772,7 @@ module ThunderDbMutable {
 
     method AddQuery(spec: QuerySpec) returns (queryId: QueryId, events: seq<DownstreamEvent>)
       requires this.Ready()
+      requires 1 <= this.nextQueryId
       ensures this.Ready()
       modifies this, this.queryIndex
     {
@@ -966,6 +974,7 @@ module ThunderDbMutable {
 
     method ProcessItemDeferred(item: StreamItem) returns (events: seq<DownstreamEvent>, queryId: QueryId)
       requires this.Ready()
+      requires 1 <= this.nextQueryId
       requires ValidTreap(this.docs)
       ensures this.Ready()
       modifies this, this.queryIndex
@@ -989,6 +998,7 @@ module ThunderDbMutable {
 
     method ProcessItem(item: StreamItem) returns (events: seq<DownstreamEvent>, queryId: QueryId)
       requires this.Ready()
+      requires 1 <= this.nextQueryId
       requires ValidTreap(this.docs)
       ensures this.Ready()
       modifies this, this.queryIndex
