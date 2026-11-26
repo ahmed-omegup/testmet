@@ -34,7 +34,7 @@ This directory contains Dafny models/proofs for kernel components.
   - Seeds documents, registers queries, runs update/insert/delete ticks, and consumes emitted match/retrieval events.
   - Validates that the externally observed query contents still match the worker's final query views.
 
-- `ThunderDbMutable.dfy`: its methods now verify for termination without `decreases *`, including query-tree updates, gap filling, and stream processing. This does not yet prove that its query results or events refine the reference model.
+- `ThunderDbMutable.dfy`: its methods now verify for termination without `decreases *`, including query-tree updates, gap filling, and stream processing. It now also propagates `ValidTreap` through reseeding and stream-item processing and links mutable fields to an empty ghost reference state. It does not yet prove whole-system query, event, and retrieval refinement.
 
 This is an executable/spec reference model and proof scaffold. It is intentionally tree-agnostic (sequence-based) so we can first stabilize semantics, then prove treap refinement against this model.
 

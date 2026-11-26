@@ -28,6 +28,20 @@ module ThunderDbMutable {
 
   datatype QueryTreePair = QueryTreePair(left: QueryTree, right: QueryTree)
 
+  function ApplySeedStore(store: map<DocId, DocState>, input: seq<SeedDoc>): map<DocId, DocState>
+    decreases |input|
+  {
+    if |input| == 0 then store
+    else ApplySeedStore(store[input[0].id := input[0].state], input[1..])
+  }
+
+  function ApplySeedDocIds(ids: seq<DocId>, input: seq<SeedDoc>): seq<DocId>
+    decreases |input|
+  {
+    if |input| == 0 then ids
+    else ApplySeedDocIds(AppendDocIdIfMissing(ids, input[0].id), input[1..])
+  }
+
   function MaxInt(a: int, b: int): int {
     if a >= b then a else b
   }
@@ -351,6 +365,7 @@ module ThunderDbMutable {
       ensures this.pendingPairs == []
       ensures this.nextQueryId == 1
       ensures this.Ready()
+      ensures RefinesReference(EmptyState())
     {
       this.docs := Empty;
       this.store := map[];
@@ -368,6 +383,21 @@ module ThunderDbMutable {
       reads this
     {
       SumConsistent(this.docs)
+    }
+
+    ghost predicate RefinesReference(state: EngineState)
+      reads this
+    {
+      this.store == state.store &&
+      this.docIds == state.docIds &&
+      this.docs == state.treap &&
+      this.nextQueryId == state.nextQueryId &&
+      |state.queries| == |this.queries| &&
+      (forall runtime: QueryRuntime :: runtime in state.queries ==>
+        runtime.id in this.queries &&
+        this.queries[runtime.id].spec == runtime.spec) &&
+      (forall queryId: QueryId :: queryId in this.queries ==>
+        exists runtime: QueryRuntime :: runtime in state.queries && runtime.id == queryId)
     }
 
     method CollectQueriesForValue(value: Score, docId: DocId) returns (ids: seq<QueryId>)
@@ -644,16 +674,25 @@ module ThunderDbMutable {
 
     method SeedDocs(input: seq<SeedDoc>)
       requires this.Ready()
+      requires ValidTreap(this.docs)
       ensures this.Ready()
+      ensures ValidTreap(this.docs)
       modifies this
     {
       var i := 0;
       while i < |input|
         invariant 0 <= i <= |input|
         invariant SumConsistent(this.docs)
+        invariant ValidTreap(this.docs)
       {
+        if input[i].id in this.store {
+          var previousScore := GetScore(this.store[input[i].id]);
+          RemovePreservesValidTreap(this.docs, previousScore, input[i].id);
+          this.docs := Remove(this.docs, previousScore, input[i].id);
+        }
         this.store := this.store[input[i].id := input[i].state];
         this.docIds := AppendDocIdIfMissing(this.docIds, input[i].id);
+        AddPreservesValidTreap(this.docs, input[i].state.scoreValue, input[i].id, PriorityFor(input[i].state.scoreValue, input[i].id));
         this.docs := Add(this.docs, input[i].state.scoreValue, input[i].id, PriorityFor(input[i].state.scoreValue, input[i].id));
         i := i + 1;
       }
@@ -886,6 +925,7 @@ module ThunderDbMutable {
 
     method ProcessItemDeferred(item: StreamItem) returns (events: seq<DownstreamEvent>, queryId: QueryId)
       requires this.Ready()
+      requires ValidTreap(this.docs)
       ensures this.Ready()
       modifies this, this.queryIndex
     {
@@ -908,6 +948,7 @@ module ThunderDbMutable {
 
     method ProcessItem(item: StreamItem) returns (events: seq<DownstreamEvent>, queryId: QueryId)
       requires this.Ready()
+      requires ValidTreap(this.docs)
       ensures this.Ready()
       modifies this, this.queryIndex
     {
