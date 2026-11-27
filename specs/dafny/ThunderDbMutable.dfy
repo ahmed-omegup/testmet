@@ -944,6 +944,11 @@ module ThunderDbMutable {
         this.docIds := RemoveDocId(this.docIds, id);
       }
 
+      ghost var branchStore := this.store;
+      ghost var branchDocIds := this.docIds;
+      ghost var branchDocs := this.docs;
+      ghost var branchNextQueryId := this.nextQueryId;
+
       var oldMatchMap: map<QueryId, bool> := map[];
       var newMatchMap: map<QueryId, bool> := map[];
       var oi := 0;
@@ -982,6 +987,10 @@ module ThunderDbMutable {
       while li < |lostQueries|
         invariant 0 <= li <= |lostQueries|
         invariant SumConsistent(this.docs)
+        invariant this.store == branchStore
+        invariant this.docIds == branchDocIds
+        invariant this.docs == branchDocs
+        invariant this.nextQueryId == branchNextQueryId
       {
         var gapRetrievals := this.FillGap(lostQueries[li]);
         retrievals := retrievals + gapRetrievals;
@@ -992,6 +1001,10 @@ module ThunderDbMutable {
       while bi < |blockedCandidates|
         invariant 0 <= bi <= |blockedCandidates|
         invariant SumConsistent(this.docs)
+        invariant this.store == branchStore
+        invariant this.docIds == branchDocIds
+        invariant this.docs == branchDocs
+        invariant this.nextQueryId == branchNextQueryId
       {
         if !(blockedCandidates[bi] in oldMatchMap) {
           var evicted := this.PickOverflowDoc(blockedCandidates[bi]);
